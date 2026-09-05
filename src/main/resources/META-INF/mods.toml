@@ -1,0 +1,22 @@
+modLoader="javafml"
+loaderVersion="[50,)"
+license="Unlicense"
+issueTrackerURL="https://github.com/Asbestosstar/nativeacceleratorsmc/issues"
+
+[[mods]]
+modId="nativeaccelerator"
+version="${project.version}"
+displayName="Native Accelerator"
+authors="AsbestosStar"
+displayURL="https://github.com/Asbestosstar/nativeacceleratorsmc"
+description='''
+Panama-first, platform-specific native acceleration for Minecraft.
+This JAR also carries Fabric, NeoForge and FeatureCreep entrypoints.
+'''
+
+[[dependencies.nativeaccelerator]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.20.6,)"
+ordering="NONE"
+side="BOTH"

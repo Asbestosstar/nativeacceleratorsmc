@@ -1,0 +1,12 @@
+{
+  "required": false,
+  "minVersion": "0.8.7",
+  "package": "com.asbestosstar.nativeaccelerator.mixin",
+  "plugin": "com.asbestosstar.nativeaccelerator.mixinconfig.NativeAcceleratorMixinConfigPlugin",
+  "mixins": [],
+  "client": [],
+  "server": [],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

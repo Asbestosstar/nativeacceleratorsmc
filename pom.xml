@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.asbestosstar</groupId>
+    <artifactId>native-accelerator</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <name>Native Accelerator</name>
+    <description>Multi-loader Panama native acceleration layer for Minecraft</description>
+    <url>https://github.com/Asbestosstar/nativeacceleratorsmc</url>
+
+    <licenses>
+        <license>
+            <name>The Unlicense</name>
+            <url>https://unlicense.org/</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm>
+        <connection>scm:git:https://github.com/Asbestosstar/nativeacceleratorsmc.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/Asbestosstar/nativeacceleratorsmc.git</developerConnection>
+        <url>https://github.com/Asbestosstar/nativeacceleratorsmc</url>
+        <tag>HEAD</tag>
+    </scm>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>25</maven.compiler.release>
+
+        <minecraft.version>26.3-pre2</minecraft.version>
+        <minecraft.compatibility>&gt;=26.3-pre2 &lt;26.4-</minecraft.compatibility>
+
+        <!-- Fabric side -->
+        <fabric.loader.version>0.19.5</fabric.loader.version>
+        <fabric.api.version>0.159.4+26.3</fabric.api.version>
+
+        <!-- Compatibility compile APIs. The entrypoints use only @Mod/constructor-level APIs. -->
+        <forge.version>1.20.6-50.0.4</forge.version>
+        <forge.eventbus.version>6.2.6</forge.eventbus.version>
+        <forge.modlauncher.version>10.2.1</forge.modlauncher.version>
+        <neoforge.version>20.6.123</neoforge.version>
+
+        <!-- FeatureCreep versions from the existing project line. -->
+        <featurecreep.loader.version>6.0.0-am3</featurecreep.loader.version>
+        <featurecreep.api.version>7</featurecreep.api.version>
+        <featurecreep.bootstrap.version>7</featurecreep.bootstrap.version>
+
+        <maven.compiler.plugin.version>3.15.0</maven.compiler.plugin.version>
+        <maven.jar.plugin.version>3.5.1</maven.jar.plugin.version>
+        <exec.maven.plugin.version>3.5.0</exec.maven.plugin.version>
+        <mixin.config>nativeaccelerator.mixins.json</mixin.config>
+        <native.build>false</native.build>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>MCForge</id>
+            <url>https://maven.minecraftforge.net/</url>
+        </repository>
+        <repository>
+            <id>NeoForge</id>
+            <url>https://maven.neoforged.net/releases/</url>
+        </repository>
+        <repository>
+            <id>FabricMC</id>
+            <url>https://maven.fabricmc.net/</url>
+        </repository>
+        <repository>
+            <id>Minecraft</id>
+            <url>https://libraries.minecraft.net</url>
+        </repository>
+        <repository>
+            <id>jitpack</id>
+            <url>https://jitpack.io/</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <!-- Fabric compile-time API. Provided so loader libraries are not copied into the mod JAR. -->
+        <dependency>
+            <groupId>net.fabricmc</groupId>
+            <artifactId>fabric-loader</artifactId>
+            <version>${fabric.loader.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.fabricmc.fabric-api</groupId>
+            <artifactId>fabric-api</artifactId>
+            <version>${fabric.api.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Forge compatibility compile API. Kept deliberately old/minimal because this mod
+             only needs the stable @Mod entrypoint contract at this stage. -->
+        <dependency>
+            <groupId>net.minecraftforge</groupId>
+            <artifactId>eventbus</artifactId>
+            <version>${forge.eventbus.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.minecraftforge</groupId>
+            <artifactId>modlauncher</artifactId>
+            <version>${forge.modlauncher.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.minecraftforge</groupId>
+            <artifactId>fmlcore</artifactId>
+            <version>${forge.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.minecraftforge</groupId>
+            <artifactId>javafmllanguage</artifactId>
+            <version>${forge.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.minecraftforge</groupId>
+            <artifactId>fmlloader</artifactId>
+            <version>${forge.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- NeoForge 1.20.6 compatibility compile API. The universal jar contains the
+             net.neoforged.fml.common.Mod annotation used by our thin entrypoint. -->
+        <dependency>
+            <groupId>net.neoforged</groupId>
+            <artifactId>neoforge</artifactId>
+            <version>${neoforge.version}</version>
+            <classifier>universal</classifier>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- FeatureCreep is also a first-class loader in the same JAR. The entrypoint itself
+             intentionally has no hard API calls beyond the fcflat.properties mainclass. -->
+        <dependency>
+            <groupId>com.asbestosstar</groupId>
+            <artifactId>featurecreep-loader</artifactId>
+            <version>${featurecreep.loader.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.asbestosstar</groupId>
+            <artifactId>featurecreep-api</artifactId>
+            <version>${featurecreep.api.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.asbestosstar</groupId>
+            <artifactId>featurecreep-bootstrap</artifactId>
+            <version>${featurecreep.bootstrap.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Sponge Mixin companion-plugin API and ASM ClassNode access. Provided by loaders at runtime. -->
+        <dependency>
+            <groupId>net.fabricmc</groupId>
+            <artifactId>sponge-mixin</artifactId>
+            <version>0.16.5+mixin.0.8.7</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- No JNA: Java 25's java.lang.foreign API is the Panama interface. -->
+    </dependencies>
+
+    <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+            <resource>
+                <directory>${project.basedir}</directory>
+                <includes>
+                    <include>LICENSE</include>
+                </includes>
+                <targetPath>META-INF</targetPath>
+                <filtering>false</filtering>
+            </resource>
+        </resources>
+
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven.compiler.plugin.version}</version>
+                <configuration>
+                    <release>25</release>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>${maven.jar.plugin.version}</version>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <MixinConfigs>${mixin.config}</MixinConfigs>
+                            <Implementation-Title>Native Accelerator</Implementation-Title>
+                            <Implementation-Version>${project.version}</Implementation-Version>
+                            <Implementation-URL>https://github.com/Asbestosstar/nativeacceleratorsmc</Implementation-URL>
+                            <FMLModType>MOD</FMLModType>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native.build</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>${exec.maven.plugin.version}</version>
+                        <executions>
+                            <execution>
+                                <id>build-native-library</id>
+                                <phase>generate-resources</phase>
+                                <goals><goal>exec</goal></goals>
+                                <configuration>
+                                    <executable>sh</executable>
+                                    <arguments>
+                                        <argument>${project.basedir}/scripts/build-native.sh</argument>
+                                        <argument>${project.build.directory}</argument>
+                                        <argument>${project.build.outputDirectory}</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

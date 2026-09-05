@@ -1,0 +1,78 @@
+#version 460
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct DrawMeta {
+    uint indexCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+    uint materialMask;
+};
+
+struct DrawIndexedIndirectCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer BoundsMinBuffer {
+    vec4 boundsMin[];
+};
+layout(std430, set = 0, binding = 1) readonly buffer BoundsMaxBuffer {
+    vec4 boundsMax[];
+};
+layout(std430, set = 0, binding = 2) readonly buffer DrawMetaBuffer {
+    DrawMeta drawMeta[];
+};
+layout(std430, set = 0, binding = 3) writeonly buffer IndirectBuffer {
+    DrawIndexedIndirectCommand commands[];
+};
+layout(std430, set = 0, binding = 4) buffer CounterBuffer {
+    uint visibleCount;
+};
+
+layout(push_constant) uniform CullPushConstants {
+    vec4 frustumPlanes[6];
+    vec4 cameraAndMaxDistance; // xyz camera, w maxDistanceSquared; <=0 disables
+    uint sectionCount;
+    uint requiredMaterialMask; // zero accepts all
+} pc;
+
+bool visibleAabb(vec3 bmin, vec3 bmax) {
+    for (int i = 0; i < 6; ++i) {
+        vec3 positive = mix(bmin, bmax, greaterThanEqual(pc.frustumPlanes[i].xyz, vec3(0.0)));
+        if (dot(pc.frustumPlanes[i].xyz, positive) + pc.frustumPlanes[i].w < 0.0) {
+            return false;
+        }
+    }
+
+    if (pc.cameraAndMaxDistance.w > 0.0) {
+        vec3 nearestPoint = clamp(pc.cameraAndMaxDistance.xyz, bmin, bmax);
+        vec3 delta = nearestPoint - pc.cameraAndMaxDistance.xyz;
+        if (dot(delta, delta) > pc.cameraAndMaxDistance.w) return false;
+    }
+    return true;
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= pc.sectionCount) return;
+
+    DrawMeta meta = drawMeta[index];
+    if (meta.indexCount == 0) return;
+    if (pc.requiredMaterialMask != 0 && (meta.materialMask & pc.requiredMaterialMask) == 0) return;
+
+    vec3 bmin = boundsMin[index].xyz;
+    vec3 bmax = boundsMax[index].xyz;
+    if (!visibleAabb(bmin, bmax)) return;
+
+    uint outputIndex = atomicAdd(visibleCount, 1);
+    commands[outputIndex].indexCount = meta.indexCount;
+    commands[outputIndex].instanceCount = 1;
+    commands[outputIndex].firstIndex = meta.firstIndex;
+    commands[outputIndex].vertexOffset = meta.vertexOffset;
+    commands[outputIndex].firstInstance = meta.firstInstance;
+}

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "nativeaccelerator",
+  "version": "${project.version}",
+  "name": "Native Accelerator",
+  "description": "Panama-first, platform-specific native acceleration for Minecraft.",
+  "authors": [
+    "AsbestosStar"
+  ],
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.asbestosstar.nativeaccelerator.fabric.NativeAcceleratorFabric"
+    ]
+  },
+  "mixins": [
+    "nativeaccelerator.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "${minecraft.compatibility}",
+    "java": ">=25"
+  },
+  "license": "Unlicense",
+  "contact": {
+    "homepage": "https://github.com/Asbestosstar/nativeacceleratorsmc",
+    "sources": "https://github.com/Asbestosstar/nativeacceleratorsmc",
+    "issues": "https://github.com/Asbestosstar/nativeacceleratorsmc/issues"
+  }
+}
