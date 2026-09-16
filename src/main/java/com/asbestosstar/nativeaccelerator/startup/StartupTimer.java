@@ -96,7 +96,7 @@ public final class StartupTimer {
 
     /** Whether recording and output are enabled ({@value #ENABLED_PROPERTY}, default true). */
     public static boolean enabled() {
-        String value = System.getProperty(ENABLED_PROPERTY, "true");
+        String value = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.stringValue("startup.timing", "true");
         return !value.isBlank() && Boolean.parseBoolean(value.trim());
     }
 
@@ -191,7 +191,7 @@ public final class StartupTimer {
             System.out.println("  (startup timing reported at: " + reason + ")");
         }
         writeReportFile(reason);
-        if (Boolean.parseBoolean(System.getProperty(RECORD_PROPERTY, "false"))) {
+        if (Boolean.parseBoolean(com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.stringValue("startup.record", "false"))) {
             writeBaseline(baselinePath());
         }
     }

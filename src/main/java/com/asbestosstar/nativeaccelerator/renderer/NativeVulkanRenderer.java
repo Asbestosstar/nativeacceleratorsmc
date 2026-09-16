@@ -42,7 +42,7 @@ public final class NativeVulkanRenderer {
 
     public static void initializeIfEnabled() {
         if (!INITIALIZED.compareAndSet(false, true)) return;
-        String mode = System.getProperty("nativeaccelerator.renderer.vulkan", "auto")
+        String mode = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.stringValue("renderer.vulkan", "auto")
                 .trim().toLowerCase(Locale.ROOT);
         if (mode.equals("off") || mode.equals("false") || mode.equals("disabled")) return;
 
@@ -83,7 +83,7 @@ public final class NativeVulkanRenderer {
                         + "Client runs normally; native compute accelerator is unaffected.");
                 return;
             }
-            int workers = Integer.getInteger("nativeaccelerator.renderer.workers", 0);
+            int workers = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.intValue("renderer.workers", 0, 0);
             context = loaded.createContext(Math.max(0, workers));
             System.out.println("[Native Accelerator] Renderer backend: " + loaded.backendName());
             System.out.println("[Native Accelerator] Renderer evidence: " + loaded.rendererPlatformName()

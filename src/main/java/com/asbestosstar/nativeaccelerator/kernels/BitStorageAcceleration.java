@@ -70,7 +70,7 @@ public final class BitStorageAcceleration {
 
     /** Resolved element threshold, never negative. Invalid values fall back to the default. */
     static int minimumElements() {
-        String raw = System.getProperty(MIN_ELEMENTS_PROPERTY, "").trim();
+        String raw = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.stringValue("bits.minElements", "").trim();
         if (raw.isEmpty()) return DEFAULT_MIN_ELEMENTS;
         try {
             return Math.max(0, Integer.parseInt(raw));

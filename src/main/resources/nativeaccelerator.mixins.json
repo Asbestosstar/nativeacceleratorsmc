@@ -13,9 +13,11 @@
     "client.ClientMainMixin",
     "client.IntegratedServerMixin",
     "client.LoadingOverlayMixin",
+    "client.ModelManagerModelParseCacheMixin",
     "client.MinecraftStartupMixin",
     "client.ResourceLoadStateTrackerMixin",
-    "client.StitcherThroughputMixin"
+    "client.StitcherThroughputMixin",
+    "client.ReloadListenerProfilingMixin"
   ],
   "server": [
     "server.DedicatedServerReadyMixin",
