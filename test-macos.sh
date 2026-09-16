@@ -18,6 +18,10 @@
 #   JAVA=/path/to/java ./test-macos.sh
 #   MC_DIR=/path/to/minecraft ./test-macos.sh
 #   EXTRA_JVM_ARGS="-Dfoo=bar -Dbaz=1" ./test-macos.sh
+#   SMOKE_TEST=1 ./test-macos.sh  launch, wait for readiness, verify, and stop
+#   STARTUP_TIMEOUT=180 ./test-macos.sh  smoke-test timeout in seconds
+#   STARTUP_MAX_SECONDS=30 ./test-macos.sh  fail smoke test when readiness is slower
+#   STARTUP_LOG=/tmp/minecraft-startup.log ./test-macos.sh  smoke-test log path
 
 set -eu
 
@@ -125,7 +129,6 @@ set -- "$@" '-Dminecraft.launcher.brand=minecraft-launcher'
 set -- "$@" '-Dminecraft.launcher.version=2.3.173'
 set -- "$@" '-cp'
 set -- "$@" "$CP"
-set -- "$@" '-DFabricMcEmu= net.minecraft.client.main.Main'
 set -- "$@" '-Xms2G'
 set -- "$@" '-XX:+UseCompactObjectHeaders'
 set -- "$@" '-XX:+AlwaysPreTouch'
@@ -157,10 +160,10 @@ set -- "$@" '--xuid'
 set -- "$@" 'null'
 set -- "$@" '--versionType'
 set -- "$@" 'release'
-set -- "$@" '--width'
-set -- "$@" '925'
-set -- "$@" '--height'
-set -- "$@" '530'
+if [ "${FULLSCREEN:-1}" = "1" ]; then
+    set -- "$@" '--fullscreen'
+    set -- "$@" 'true'
+fi
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
     echo "[test-macos] game dir: $MC_DIR"
@@ -173,4 +176,70 @@ fi
 
 echo "[test-macos] launching Minecraft from $MC_DIR"
 cd "$MC_DIR"
+
+# Normal launches remain interactive. SMOKE_TEST provides a bounded, repeatable
+# startup check: wait for a readiness marker, scan for fatal signatures, then
+# stop the interactive client cleanly.
+if [ "${SMOKE_TEST:-0}" = "1" ]; then
+    STARTUP_TIMEOUT=${STARTUP_TIMEOUT:-180}
+    STARTUP_MAX_SECONDS=${STARTUP_MAX_SECONDS:-}
+    STARTUP_LOG=${STARTUP_LOG:-"$PROJECT_DIR/target/minecraft-startup.log"}
+    READY_PATTERN=${STARTUP_READY_PATTERN:-'Created window using SDL|\[Native Accelerator\] startup timing'}
+    mkdir -p "$(dirname "$STARTUP_LOG")"
+    : > "$STARTUP_LOG"
+    echo "[test-macos] smoke log: $STARTUP_LOG"
+    echo "[test-macos] waiting up to ${STARTUP_TIMEOUT}s for: $READY_PATTERN"
+
+    STARTED_AT=$(date +%s)
+    "$JAVA" "$@" >"$STARTUP_LOG" 2>&1 &
+    GAME_PID=$!
+    READY=0
+    elapsed=0
+    while kill -0 "$GAME_PID" 2>/dev/null; do
+        if grep -Eq "$READY_PATTERN" "$STARTUP_LOG" 2>/dev/null; then
+            if [ -n "$STARTUP_MAX_SECONDS" ] && [ "$elapsed" -gt "$STARTUP_MAX_SECONDS" ]; then
+                echo "[test-macos] startup exceeded ${STARTUP_MAX_SECONDS}s budget (reached after ${elapsed}s); see $STARTUP_LOG" >&2
+                kill "$GAME_PID" 2>/dev/null || true
+                wait "$GAME_PID" 2>/dev/null || true
+                exit 1
+            fi
+            READY=1
+            break
+        fi
+        if grep -Eq 'Mixin apply failed|Could not find required|NoSuchMethodError|NoClassDefFoundError|UnsatisfiedLinkError|致命' "$STARTUP_LOG" 2>/dev/null; then
+            echo "[test-macos] startup failure signature found; see $STARTUP_LOG" >&2
+            kill "$GAME_PID" 2>/dev/null || true
+            wait "$GAME_PID" 2>/dev/null || true
+            exit 1
+        fi
+        if [ "$elapsed" -ge "$STARTUP_TIMEOUT" ]; then
+            echo "[test-macos] startup timed out after ${STARTUP_TIMEOUT}s; see $STARTUP_LOG" >&2
+            kill "$GAME_PID" 2>/dev/null || true
+            wait "$GAME_PID" 2>/dev/null || true
+            exit 1
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    if [ "$READY" -ne 1 ]; then
+        GAME_STATUS=0
+        wait "$GAME_PID" 2>/dev/null || GAME_STATUS=$?
+        echo "[test-macos] Minecraft exited before readiness (status $GAME_STATUS); see $STARTUP_LOG" >&2
+        exit 1
+    fi
+
+    echo "[test-macos] startup readiness reached after ${elapsed}s"
+    if grep -Eq 'Mixin apply failed|Could not find required|NoSuchMethodError|NoClassDefFoundError|UnsatisfiedLinkError|致命' "$STARTUP_LOG" 2>/dev/null; then
+        echo "[test-macos] startup failure signature found; see $STARTUP_LOG" >&2
+        kill "$GAME_PID" 2>/dev/null || true
+        wait "$GAME_PID" 2>/dev/null || true
+        exit 1
+    fi
+    kill -TERM "$GAME_PID" 2>/dev/null || true
+    wait "$GAME_PID" 2>/dev/null || true
+    echo "[test-macos] smoke test passed"
+    exit 0
+fi
+
 exec "$JAVA" "$@"

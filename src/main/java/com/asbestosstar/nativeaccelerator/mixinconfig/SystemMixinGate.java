@@ -185,6 +185,15 @@ public final class SystemMixinGate {
      * {@code "client"}, {@code "server"}, or {@code null} when it cannot be decided safely. This runs
      * during class transformation, so a lookup that fails for an unusual reason must not stop the game:
      * uncertainty defers to the other rules.
+     *
+     * <p>Implementation note: the obvious probe is {@code Class.forName(CLIENT_ANCHOR_CLASS, false,
+     * loader)}. The {@code false} prevents initialization, but it does not prevent loading: the JVM
+     * still reads, parses and verifies the {@code Minecraft} class bytecode during this call. Once a
+     * class is loaded it cannot be transformed, so any mixin targeting {@code
+     * net.minecraft.client.Minecraft} would then be rejected by SpongePowered Mixin with a critical
+     * "loaded too early" problem during configuration, before the game has a chance to start.
+     * {@link ClassLoader#getResource(String)} is the classpath presence check that never touches the
+     * class itself, and that is the one used here.</p>
      */
     static String environment() {
         String forced = System.getProperty(ENVIRONMENT_PROPERTY, "").trim().toLowerCase(Locale.ROOT);
@@ -192,12 +201,27 @@ public final class SystemMixinGate {
 
         ClassLoader loader = LoaderEnvironment.contextClassLoader();
         try {
-            Class.forName(CLIENT_ANCHOR_CLASS, false, loader);
-            return "client";
-        } catch (ClassNotFoundException | LinkageError absent) {
-            return "server";
+            return minecraftClientClassResourcePresent(loader) ? "client" : "server";
         } catch (Throwable uncertain) {
             return null;
+        }
+    }
+
+    /**
+     * Whether the {@link #CLIENT_ANCHOR_CLASS} class file is reachable from {@code loader} (or any of its
+     * parents). This is a classpath check that never causes the class itself to be loaded, which is the
+     * reason {@link #environment()} uses it instead of {@code Class.forName}: loading
+     * {@code net.minecraft.client.Minecraft} during mixin configuration would mark the class as loaded
+     * before SpongePowered Mixin's transformer could hook in, and every mixin targeting Minecraft would
+     * then be rejected as "loaded too early".
+     */
+    private static boolean minecraftClientClassResourcePresent(ClassLoader loader) {
+        if (loader == null) return false;
+        try {
+            String resourceName = CLIENT_ANCHOR_CLASS.replace('.', '/') + ".class";
+            return loader.getResource(resourceName) != null;
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 

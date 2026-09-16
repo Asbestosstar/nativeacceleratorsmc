@@ -493,9 +493,25 @@ The first concrete Minecraft-oriented kernels are implemented under `native/src/
 Do not merge the two bit-storage layouts. They have different binary representations even though both
 store fixed-width integers in `long[]`.
 
-Keep concrete Minecraft interception separate from the kernels. Named 26.3-pre-2 targets are recorded in
-`Minecraft263AccelerationTargets`; do not hard-link the core native API to Minecraft classes. The universal
-loader build still needs an explicit mapping/remap policy before concrete named-source Mixins are enabled.
+The Java side of the runtime layout is `BitStorageAcceleration` (kernels package) plus the
+`SimpleBitStorageMixin` seam, which injects at `HEAD` of `SimpleBitStorage.unpack(int[])` and cancels only
+when the native path returns `true`. Keep that class Minecraft-free: it owns the eligibility checks (bit
+width 1..32, non-null arrays, size gate) and nothing else, so it stays unit-testable without the game.
+
+The size gate is `nativeaccelerator.bits.minElements` (default `DEFAULT_MIN_ELEMENTS = 2048`). It exists
+because heap arrays must be staged through direct buffers before the downcall, so below the crossover the
+plain Java loop wins. Measure it, do not assume it: `./run-bit-storage-harness.sh` runs the differential
+check against the vanilla loop for every 1..32 bit width and prints a suggested gate. The value is host-
+and backend-specific and the observed first-winning size is noisy (no width won below 512, but the same
+width was seen first winning at 768 and at 2048 across runs), so the gate is deliberately kept at the top
+of that band rather than tuned to a single measurement.
+
+Keep concrete Minecraft interception in its own layer, but **Mixins are allowed and encouraged**.
+Named 26.3-pre-2 targets are recorded in `Minecraft263AccelerationTargets`, and concrete named-source
+Mixins may target Minecraft classes directly: the build compiles against the named 26.3 classes, so
+`net.minecraft.*` targets are valid Mixin targets. Keeping the loader-neutral core (`NativeAccelerator`,
+`SystemMixinGate`, the native API) free of direct Minecraft linkage is a layering rule for the universal
+JAR, not a prohibition on Mixins. See **Mixins are allowed** below.
 
 For native/direct buffers, prefer zero-copy Panama calls. For heap arrays, ordinary downcalls cannot expose
 movable heap storage. Staging is acceptable when benchmarked, but do not misuse critical downcalls for
@@ -607,6 +623,29 @@ The native side mirrors this contract in `native/include/native_accelerator_rend
 `nar_renderer_set_role_override`. Implementation lives in `native/src/renderer/common/platform_policy.c`.
 Do not add an OS allow-list to either side.
 
+## Mixins are allowed
+
+Concrete Mixins are permitted in this project, including named-source Mixins that target Minecraft classes
+such as `net.minecraft.util.SimpleBitStorage`, `net.minecraft.world.level.levelgen.synth.PerlinNoise`, and
+`net.minecraft.server.MinecraftServer`.
+
+What that means in practice:
+
+1. **No remap-policy gate.** The earlier rule that a concrete Mixin could not be enabled until a deliberate
+   mapping/remap strategy existed for every loader is withdrawn. The build compiles against the named 26.3
+   classes, so Mixins may reference those names directly.
+2. **Layering still matters.** Share loader-neutral logic in the core classes. A Mixin is an interception
+   seam: it should do the minimum work (dispatch into a native kernel, size a pool, prewarm a cache) and hand
+   off to code that does not link against Minecraft, so the same logic stays reusable and unit-testable.
+3. **Config, not a new file.** Add new Mixins to `nativeaccelerator.mixins.json`. Entries go in `mixins`
+   (common), `client`, or `server` as appropriate. The package of the Mixin class decides which gate
+   applies, so no per-loader mixin config is required.
+4. **Stay reversible.** Every interception must degrade to vanilla behaviour when the native backend is
+   absent or a capability is missing, and must stay suppressible with the existing switches
+   (`-Dnativeaccelerator.mixins=false`, `-Dnativeaccelerator.mixins.disable=...`, package gates).
+5. **Document the seam.** When a Mixin is added, record the target class, the injected method, and the
+   observable effect next to the existing target list in the integration package.
+
 ## Mixin gating by package convention
 
 Native Accelerator ships one mixin configuration for every loader. Loader-specific mixins are not split
@@ -671,6 +710,11 @@ Keep these passing; they are the executable form of the rules above.
   stands down without re-initializing (16 checks).
 - `run-mixin-gate-test.sh` - client/server/renderer/loader gating, wildcard disables, explicit-enable
   precedence, and broken-rule isolation (22 checks).
+- `run-startup-timer-test.sh` - `StartupTimer` semantics that the startup Mixins depend on: the first
+  occurrence of a stage or milestone wins (so runs stay comparable), `finish(...)` reports exactly
+  once, and invalid stage names never throw (29 checks). The run-once guard is what makes the
+  server-ready probe safe on `MinecraftServer#runServer()` writing `isReady = true` every tick, and
+  the harness asserts that specifically.
 - `test-macos.sh` - builds, bundles the macOS native libraries as `META-INF/native/macos-amd64/`, installs
   the mod JAR, and launches the real client.
 

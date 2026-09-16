@@ -3,9 +3,24 @@
   "minVersion": "0.8.7",
   "package": "com.asbestosstar.nativeaccelerator.mixin",
   "plugin": "com.asbestosstar.nativeaccelerator.mixinconfig.NativeAcceleratorMixinConfigPlugin",
-  "mixins": [],
-  "client": [],
-  "server": [],
+  "mixins": [
+    "common.SimpleBitStorageMixin",
+    "common.BootstrapMixin",
+    "common.FireBlockBootstrapTimingMixin",
+    "common.MinecraftServerTimingMixin"
+  ],
+  "client": [
+    "client.ClientMainMixin",
+    "client.IntegratedServerMixin",
+    "client.LoadingOverlayMixin",
+    "client.MinecraftStartupMixin",
+    "client.ResourceLoadStateTrackerMixin",
+    "client.StitcherThroughputMixin"
+  ],
+  "server": [
+    "server.DedicatedServerReadyMixin",
+    "server.ServerMainMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

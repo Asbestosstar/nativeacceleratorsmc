@@ -118,6 +118,13 @@ int32_t na_packed_bits_repack(void *dst, uint32_t dst_bits, const void *src, uin
 /*
  * Runtime SimpleBitStorage layout. Each 64-bit cell contains floor(64/bits)
  * complete values; values never cross cell boundaries.
+ *
+ * These kernels iterate one 64-bit cell at a time, exactly like the vanilla
+ * Java loop they replace. An earlier revision derived the cell index per value
+ * with `i / values_per_long`; that 64-bit integer division ran once per element
+ * and made the native path several times slower than the Java loop for every
+ * size, so the acceleration gate could never be reached. Shifting a register
+ * across the values within a cell removes the division from the hot loop.
  */
 int32_t na_simple_bits_unpack_u32(void *dst, const void *src, uint32_t bits, uint64_t count) {
     if (dst == NULL || src == NULL || !na_valid_bits(bits)) return -1;
@@ -125,13 +132,27 @@ int32_t na_simple_bits_unpack_u32(void *dst, const void *src, uint32_t bits, uin
     const uint8_t *in = (const uint8_t *)src;
     const uint32_t values_per_long = 64u / bits;
     const uint64_t mask = na_mask_for_bits(bits);
+    if (count == 0u) return 0;
 
-    for (uint64_t i = 0; i < count; ++i) {
-        const uint64_t cell_index = i / values_per_long;
-        const uint32_t index_in_cell = (uint32_t)(i - cell_index * values_per_long);
-        const uint32_t shift = index_in_cell * bits;
-        const uint64_t cell = na_load_u64(in + cell_index * 8u);
-        na_store_u32(out + i * 4u, (uint32_t)((cell >> shift) & mask));
+    const uint64_t cells = (count + values_per_long - 1u) / values_per_long;
+    uint64_t index = 0;
+
+    for (uint64_t cell_index = 0; cell_index + 1u < cells; ++cell_index) {
+        uint64_t cell = na_load_u64(in + cell_index * 8u);
+        for (uint32_t i = 0; i < values_per_long; ++i) {
+            na_store_u32(out + index * 4u, (uint32_t)(cell & mask));
+            cell >>= bits;
+            ++index;
+        }
+    }
+
+    /* Final cell holds only the remaining values, which may be a full cell. */
+    const uint64_t remaining = count - index;
+    uint64_t cell = na_load_u64(in + (cells - 1u) * 8u);
+    for (uint64_t i = 0; i < remaining; ++i) {
+        na_store_u32(out + index * 4u, (uint32_t)(cell & mask));
+        cell >>= bits;
+        ++index;
     }
     return 0;
 }
@@ -145,14 +166,19 @@ int32_t na_simple_bits_pack_u32(void *dst, const void *src, uint32_t bits, uint6
     const uint64_t cells = (count + values_per_long - 1u) / values_per_long;
     memset(out, 0, (size_t)cells * 8u);
 
-    for (uint64_t i = 0; i < count; ++i) {
-        const uint32_t value = na_load_u32(in + i * 4u);
-        if ((uint64_t)value > mask) return -2;
-        const uint64_t cell_index = i / values_per_long;
-        const uint32_t index_in_cell = (uint32_t)(i - cell_index * values_per_long);
-        const uint32_t shift = index_in_cell * bits;
-        uint64_t cell = na_load_u64(out + cell_index * 8u);
-        cell |= ((uint64_t)value & mask) << shift;
+    uint64_t index = 0;
+    for (uint64_t cell_index = 0; cell_index < cells; ++cell_index) {
+        const uint64_t available = count - index;
+        const uint32_t n = (available < values_per_long) ? (uint32_t)available : values_per_long;
+        uint64_t cell = 0;
+        uint32_t shift = 0;
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint32_t value = na_load_u32(in + index * 4u);
+            if ((uint64_t)value > mask) return -2;
+            cell |= ((uint64_t)value & mask) << shift;
+            shift += bits;
+            ++index;
+        }
         na_store_u64(out + cell_index * 8u, cell);
     }
     return 0;
@@ -168,18 +194,32 @@ int32_t na_simple_bits_repack(void *dst, uint32_t dst_bits, const void *src, uin
     const uint64_t dst_mask = na_mask_for_bits(dst_bits);
     const uint64_t dst_cells = (count + dst_vpl - 1u) / dst_vpl;
     memset(out, 0, (size_t)dst_cells * 8u);
+    if (count == 0u) return 0;
 
-    for (uint64_t i = 0; i < count; ++i) {
-        const uint64_t src_cell_index = i / src_vpl;
-        const uint32_t src_index = (uint32_t)(i - src_cell_index * src_vpl);
-        const uint64_t value = (na_load_u64(in + src_cell_index * 8u) >> (src_index * src_bits)) & src_mask;
-        if (value > dst_mask) return -2;
+    uint64_t src_cell_index = 0;
+    uint64_t src_cell = na_load_u64(in);
+    uint32_t src_within = 0;
+    uint64_t index = 0;
 
-        const uint64_t dst_cell_index = i / dst_vpl;
-        const uint32_t dst_index = (uint32_t)(i - dst_cell_index * dst_vpl);
-        uint64_t cell = na_load_u64(out + dst_cell_index * 8u);
-        cell |= value << (dst_index * dst_bits);
-        na_store_u64(out + dst_cell_index * 8u, cell);
+    for (uint64_t dst_cell_index = 0; dst_cell_index < dst_cells; ++dst_cell_index) {
+        const uint64_t available = count - index;
+        const uint32_t n = (available < dst_vpl) ? (uint32_t)available : dst_vpl;
+        uint64_t packed = 0;
+        uint32_t shift = 0;
+        for (uint32_t i = 0; i < n; ++i) {
+            if (src_within == src_vpl) {
+                ++src_cell_index;
+                src_cell = na_load_u64(in + src_cell_index * 8u);
+                src_within = 0;
+            }
+            const uint64_t value = (src_cell >> (src_within * src_bits)) & src_mask;
+            if (value > dst_mask) return -2;
+            packed |= value << shift;
+            shift += dst_bits;
+            ++src_within;
+            ++index;
+        }
+        na_store_u64(out + dst_cell_index * 8u, packed);
     }
     return 0;
 }

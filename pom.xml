@@ -86,6 +86,19 @@
 
     <dependencies>
 
+        <!-- The client jar is downloaded from Mojang and installed by maven-install-plugin in the
+             initialize phase. Declaring it as a provided dependency (rather than
+             additionalClasspathElements, which maven-compiler-plugin 3.15.0 silently ignores) is what
+             actually puts the named net.minecraft.* classes on the compile classpath for Mixins.
+             provided: the classes ship with the game at runtime, so they must never be bundled. -->
+        <dependency>
+            <groupId>net.minecraft</groupId>
+            <artifactId>minecraft</artifactId>
+            <version>${minecraft.version}</version>
+            <classifier>client</classifier>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- https://mvnrepository.com/artifact/net.minecraftforge/eventbus -->
         <dependency>
             <groupId>net.minecraftforge</groupId>
@@ -293,9 +306,6 @@
                 <configuration>
                     <release>25</release>
                     <parameters>true</parameters>
-                    <additionalClasspathElements>
-                        <additionalClasspathElement>${minecraft.client.jar}</additionalClasspathElement>
-                    </additionalClasspathElements>
                 </configuration>
             </plugin>
 
