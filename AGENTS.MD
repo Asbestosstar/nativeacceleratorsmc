@@ -860,3 +860,10 @@ Automatic scheduler rules:
 - nominal clock may tune the mipmap serial/parallel threshold only on amd64/arm64. Never compare GHz across architectures to infer equivalent core performance.
 
 Profiler topology/capacity must be emitted as last-value gauges, not summed operation counters.
+
+## Pass 10 invariants
+- Content-addressed blockstate caches store loader-neutral syntax/unbaked data only; never retain BlockState/StateDefinition/reload registries.
+- Create a fresh blockstate UnbakedRoot on every bind so visual-equality/baking-key identity remains reload/resource scoped.
+- Decoded texture cache hits must always return a newly owned NativeImage; never share mutable pixel storage.
+- GUI, animation, texture-metadata, additional-metadata, and font-sensitive sprites stay outside decoded-pixel reuse unless separately parity-validated.
+- CPU cache information is advisory/diagnostic. Do not derive worker counts from GHz/cache size alone; physical topology and JVM-visible CPUs remain authoritative.
