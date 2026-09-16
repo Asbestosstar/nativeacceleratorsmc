@@ -15,17 +15,21 @@ import java.util.Map;
 
 @Mixin(ModelDiscovery.class)
 public abstract class ModelDiscoveryProfilingMixin {
-    @Unique private long nativeaccelerator$resolveStarted;
+    @Unique private long nativeaccelerator$resolveDagStarted;
+    @Unique private long nativeaccelerator$resolveCpuStarted;
 
     @Inject(method = "resolve", at = @At("HEAD"), require = 0)
     private void nativeaccelerator$resolveBegin(CallbackInfoReturnable<Map<Identifier, ResolvedModel>> cir) {
-        nativeaccelerator$resolveStarted = ModelDagProfiler.begin();
+        nativeaccelerator$resolveDagStarted = ModelDagProfiler.begin();
+        nativeaccelerator$resolveCpuStarted = ModelPipelineProfiler.start();
     }
 
     @Inject(method = "resolve", at = @At("RETURN"), require = 0)
     private void nativeaccelerator$resolveEnd(CallbackInfoReturnable<Map<Identifier, ResolvedModel>> cir) {
-        long elapsed = System.nanoTime() - nativeaccelerator$resolveStarted;
-        ModelDagProfiler.end("model-discovery.resolve", nativeaccelerator$resolveStarted);
-        ModelPipelineProfiler.record("model-discovery.resolve.cpu", elapsed, cir.getReturnValue().size());
+        ModelDagProfiler.end("model-discovery.resolve", nativeaccelerator$resolveDagStarted);
+        if (nativeaccelerator$resolveCpuStarted != 0L) {
+            ModelPipelineProfiler.record("model-discovery.resolve.cpu",
+                    System.nanoTime() - nativeaccelerator$resolveCpuStarted, cir.getReturnValue().size());
+        }
     }
 }

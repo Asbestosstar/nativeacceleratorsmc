@@ -19,6 +19,8 @@
     "client.ClientItemInfoLoaderBatchLoadingMixin",
     "client.ReloadResourceIndexLifecycleMixin",
     "client.FilePackResourcesIndexMixin",
+    "client.PathPackResourcesProfilingMixin",
+    "client.PathPackResourcesManifestMixin",
     "client.SpriteLoaderThroughputMixin",
     "client.SpriteLoaderParallelMipmapMixin",
     "client.SpriteResourceLoaderCacheMixin",

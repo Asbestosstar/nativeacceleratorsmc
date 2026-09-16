@@ -40,6 +40,7 @@ public final class FastCuboidModelDecoder {
 
     public static CuboidModel parse(Reader input) throws IOException {
         long started = ModelPipelineProfiler.start();
+        long cpuStarted = ModelPipelineProfiler.startThreadCpu();
         JsonReader reader = new JsonReader(input);
         reader.setLenient(false);
 
@@ -72,6 +73,7 @@ public final class FastCuboidModelDecoder {
 
         CuboidModel result = new CuboidModel(geometry, guiLight, ambientOcclusion, transforms, textures, parent);
         ModelPipelineProfiler.end("raw-model.fast.decode", started);
+        ModelPipelineProfiler.endThreadCpu("raw-model.fast.decode", cpuStarted);
         return result;
     }
 

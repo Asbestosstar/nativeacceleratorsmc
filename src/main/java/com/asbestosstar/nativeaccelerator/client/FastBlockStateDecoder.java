@@ -52,10 +52,12 @@ public final class FastBlockStateDecoder {
             StateDefinition<Block, BlockState> stateDefinition,
             String source) throws IOException {
         long totalStarted = ModelPipelineProfiler.start();
+        long totalCpuStarted = ModelPipelineProfiler.startThreadCpu();
         JsonReader reader = new JsonReader(input);
         reader.setLenient(false);
 
-        IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> matched = new IdentityHashMap<>();
+        List<BlockState> possibleStates = stateDefinition.getPossibleStates();
+        VariantAccumulator matched = new VariantAccumulator(possibleStates);
         List<MultiPartModel.Selector<BlockStateModel.Unbaked>> multipart = null;
         boolean sawVariants = false;
         boolean sawMultipart = false;
@@ -91,22 +93,25 @@ public final class FastBlockStateDecoder {
         if (multipart != null) {
             long started = ModelPipelineProfiler.start();
             MultiPartModel.Unbaked model = new MultiPartModel.Unbaked(multipart);
-            for (BlockState state : stateDefinition.getPossibleStates()) {
-                matched.putIfAbsent(state, model);
+            matched.fillEmpty(model);
+            if (started != 0L) {
+                ModelPipelineProfiler.record("blockstate.fast.multipart.install",
+                        System.nanoTime() - started, possibleStates.size());
             }
-            ModelPipelineProfiler.record("blockstate.fast.multipart.install",
-                    System.nanoTime() - started, stateDefinition.getPossibleStates().size());
         }
 
-        ModelPipelineProfiler.record("blockstate.fast.total", System.nanoTime() - totalStarted, 1);
-        return matched;
+        if (totalStarted != 0L) {
+            ModelPipelineProfiler.record("blockstate.fast.total", System.nanoTime() - totalStarted, 1);
+        }
+        ModelPipelineProfiler.endThreadCpu("blockstate.fast.total", totalCpuStarted);
+        return matched.toIdentityMap();
     }
 
     private static void parseVariants(
             JsonReader reader,
             StateDefinition<Block, BlockState> definition,
             String source,
-            IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> output) throws IOException {
+            VariantAccumulator output) throws IOException {
         require(reader.peek() == JsonToken.BEGIN_OBJECT, "'variants' must be an object");
         int variantCount = 0;
         reader.beginObject();
@@ -130,17 +135,35 @@ public final class FastBlockStateDecoder {
             StateDefinition<Block, BlockState> definition,
             String selector,
             BlockStateModel.UnbakedRoot root,
-            IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> output) {
+            VariantAccumulator output) {
         long started = ModelPipelineProfiler.start();
+        long cpuStarted = ModelPipelineProfiler.startThreadCpu();
+
+        // Empty variant selectors are common and mean "all states". They do not need the global
+        // StateDefinition layout or selector caches at all. Preserve vanilla overlap semantics: if this
+        // is the first root, fill the dense accumulator directly; otherwise write in state order until
+        // the first overlap throws.
+        if (selector.isEmpty()) {
+            long matchedCount = output.putAllNoOverlap(root);
+            if (started != 0L) {
+                ModelPipelineProfiler.record("blockstate.fast.variant.empty",
+                        System.nanoTime() - started, Math.max(1L, matchedCount));
+            }
+            ModelPipelineProfiler.endThreadCpu("blockstate.fast.variant.empty", cpuStarted,
+                    Math.max(1L, matchedCount));
+            return;
+        }
+
         SelectorLayout layout = SELECTOR_LAYOUTS.computeIfAbsent(definition, SelectorLayout::new);
         CompiledSelector compiled = layout.compile(selector);
-        long matchedCount = compiled.emit(layout.states, root, output);
-        String stage = compiled.constraintCount == 0
-                ? "blockstate.fast.variant.empty"
-                : compiled.constraintCount == layout.propertyCount
-                    ? "blockstate.fast.variant.direct"
-                    : "blockstate.fast.variant.partial";
-        ModelPipelineProfiler.record(stage, System.nanoTime() - started, Math.max(1L, matchedCount));
+        long matchedCount = compiled.emit(output, root);
+        String stage = compiled.constraintCount == layout.propertyCount
+                ? "blockstate.fast.variant.direct"
+                : "blockstate.fast.variant.partial";
+        if (started != 0L) {
+            ModelPipelineProfiler.record(stage, System.nanoTime() - started, Math.max(1L, matchedCount));
+        }
+        ModelPipelineProfiler.endThreadCpu(stage, cpuStarted, Math.max(1L, matchedCount));
     }
 
     /**
@@ -313,24 +336,82 @@ public final class FastBlockStateDecoder {
             this.largeMask = largeMask;
         }
 
-        long emit(List<BlockState> states, BlockStateModel.UnbakedRoot root,
-                IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> output) {
+        long emit(VariantAccumulator output, BlockStateModel.UnbakedRoot root) {
             long count = 0L;
             if (largeMask == null) {
                 long remaining = smallMask;
                 while (remaining != 0L) {
                     int index = Long.numberOfTrailingZeros(remaining);
-                    putNoOverlap(output, states.get(index), root);
+                    output.putNoOverlap(index, root);
                     remaining &= remaining - 1L;
                     count++;
                 }
                 return count;
             }
             for (int index = largeMask.nextSetBit(0); index >= 0; index = largeMask.nextSetBit(index + 1)) {
-                putNoOverlap(output, states.get(index), root);
+                output.putNoOverlap(index, root);
                 count++;
             }
             return count;
+        }
+    }
+
+    /**
+     * Dense state-index accumulator for one blockstate document.  Vanilla's dispatcher ultimately produces
+     * an IdentityHashMap, but doing an identity-hash lookup for every selector/state match is unnecessary
+     * because SelectorLayout already works in the StateDefinition's stable state-index space.  We preserve
+     * vanilla overlap semantics exactly: the new root is written first, then an overlap throws, so the
+     * current variant stops while the overlapping state retains the new value.
+     */
+    private static final class VariantAccumulator {
+        final List<BlockState> states;
+        final BlockStateModel.UnbakedRoot[] roots;
+        int populated;
+
+        VariantAccumulator(List<BlockState> states) {
+            this.states = states;
+            this.roots = new BlockStateModel.UnbakedRoot[states.size()];
+        }
+
+        void putNoOverlap(int index, BlockStateModel.UnbakedRoot root) {
+            BlockStateModel.UnbakedRoot previous = roots[index];
+            roots[index] = root;
+            if (previous == null) populated++;
+            if (previous != null) {
+                throw new IllegalArgumentException("Overlapping definition on state: " + states.get(index));
+            }
+        }
+
+        long putAllNoOverlap(BlockStateModel.UnbakedRoot root) {
+            if (populated == 0) {
+                java.util.Arrays.fill(roots, root);
+                populated = roots.length;
+                return roots.length;
+            }
+            long count = 0L;
+            for (int i = 0; i < roots.length; i++) {
+                putNoOverlap(i, root);
+                count++;
+            }
+            return count;
+        }
+
+        void fillEmpty(BlockStateModel.UnbakedRoot root) {
+            for (int i = 0; i < roots.length; i++) {
+                if (roots[i] != null) continue;
+                roots[i] = root;
+                populated++;
+            }
+        }
+
+        IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> toIdentityMap() {
+            IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> result =
+                    new IdentityHashMap<>(Math.max(4, populated));
+            for (int i = 0; i < roots.length; i++) {
+                BlockStateModel.UnbakedRoot root = roots[i];
+                if (root != null) result.put(states.get(i), root);
+            }
+            return result;
         }
     }
 
@@ -530,13 +611,6 @@ public final class FastBlockStateDecoder {
         };
     }
 
-    private static void putNoOverlap(
-            IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> output,
-            BlockState state,
-            BlockStateModel.UnbakedRoot root) {
-        BlockStateModel.UnbakedRoot previous = output.put(state, root);
-        if (previous != null) throw new IllegalArgumentException("Overlapping definition on state: " + state);
-    }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static Iterable<? extends Comparable<?>> comparableValues(Property<?> property) {

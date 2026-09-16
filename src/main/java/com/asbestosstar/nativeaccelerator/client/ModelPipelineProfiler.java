@@ -3,6 +3,8 @@ package com.asbestosstar.nativeaccelerator.client;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadMXBean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -16,6 +18,8 @@ import java.util.concurrent.atomic.LongAdder;
 public final class ModelPipelineProfiler {
     private static final ConcurrentHashMap<String, Counter> COUNTERS = new ConcurrentHashMap<>();
     private static final boolean ENABLED = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.profiler", false);
+    private static final ThreadMXBean THREAD_MX = ManagementFactory.getThreadMXBean();
+    private static final boolean THREAD_CPU_SUPPORTED = ENABLED && initializeThreadCpu();
 
     private ModelPipelineProfiler() {}
 
@@ -29,6 +33,24 @@ public final class ModelPipelineProfiler {
 
     public static long start() {
         return enabled() ? System.nanoTime() : 0L;
+    }
+
+    /** Returns current-thread CPU time for diagnostic separation of execution from scheduler stalls. */
+    public static long startThreadCpu() {
+        if (!enabled() || !THREAD_CPU_SUPPORTED) return 0L;
+        long value = THREAD_MX.getCurrentThreadCpuTime();
+        return value < 0L ? 0L : value;
+    }
+
+    public static void endThreadCpu(String stage, long startedCpuNanos) {
+        endThreadCpu(stage, startedCpuNanos, 1L);
+    }
+
+    public static void endThreadCpu(String stage, long startedCpuNanos, long operations) {
+        if (startedCpuNanos == 0L || !THREAD_CPU_SUPPORTED) return;
+        long ended = THREAD_MX.getCurrentThreadCpuTime();
+        if (ended < startedCpuNanos) return;
+        record(stage + ".thread-cpu", ended - startedCpuNanos, operations);
     }
 
     public static void end(String stage, long startedNanos) {
@@ -70,6 +92,17 @@ public final class ModelPipelineProfiler {
                     row.name(), millis, row.calls(), row.operations(), usPerOp));
         }
         return out.toString();
+    }
+
+
+    private static boolean initializeThreadCpu() {
+        try {
+            if (!THREAD_MX.isCurrentThreadCpuTimeSupported()) return false;
+            if (!THREAD_MX.isThreadCpuTimeEnabled()) THREAD_MX.setThreadCpuTimeEnabled(true);
+            return THREAD_MX.isThreadCpuTimeEnabled();
+        } catch (SecurityException | UnsupportedOperationException ignored) {
+            return false;
+        }
     }
 
     private static final class Counter {

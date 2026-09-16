@@ -11,12 +11,12 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Reload-scoped cache for repeated FileToIdConverter directory enumeration.
+ * Reload-scoped memoization for repeated FileToIdConverter queries.
  *
- * <p>Pass 5 stores Minecraft's authoritative result directly instead of eagerly cloning every first-touch
- * map/list. ResourceManager is immutable for the lifetime of one reload generation, and the cache is cleared
- * before the next generation is installed. This keeps reuse for genuinely repeated queries without adding a
- * full LinkedHashMap/List.copyOf pass to one-shot queries.</p>
+ * <p>The authoritative ResourceManager still resolves pack priority, filters and overrides. Pass 7 keeps the
+ * timing of that work separate from the tiny memoization lookup so profiler output no longer labels pack
+ * traversal as "resource.index" overhead. The returned authoritative map/list is stored directly: there is
+ * no first-touch copy or sort.</p>
  */
 public final class ReloadResourceIndex {
     private static final boolean ENABLED = NativeAcceleratorConfig.booleanValue("resource.index", true);
@@ -34,17 +34,17 @@ public final class ReloadResourceIndex {
 
     @SuppressWarnings("unchecked")
     public static Map<Identifier, Resource> resources(FileToIdConverter converter, ResourceManager manager) {
-        if (!enabled()) return manager.listResources(converter.prefix(), converter::extensionMatches);
+        if (!enabled()) return timedResources(converter, manager);
         Key key = new Key(manager, converter.prefix(), converter.extension(), false);
+        long lookupStarted = ModelPipelineProfiler.start();
         Object existing = CACHE.get(key);
+        if (lookupStarted != 0L) ModelPipelineProfiler.end("resource.index.lookup", lookupStarted);
         if (existing != null) {
             ModelPipelineProfiler.addCount("resource.index.hit", 1);
             return (Map<Identifier, Resource>) existing;
         }
 
-        long started = ModelPipelineProfiler.start();
-        Map<Identifier, Resource> live = manager.listResources(converter.prefix(), converter::extensionMatches);
-        ModelPipelineProfiler.end("resource.index.authoritative", started);
+        Map<Identifier, Resource> live = timedResources(converter, manager);
         Object raced = CACHE.putIfAbsent(key, live);
         if (raced != null) {
             ModelPipelineProfiler.addCount("resource.index.race-hit", 1);
@@ -56,17 +56,17 @@ public final class ReloadResourceIndex {
 
     @SuppressWarnings("unchecked")
     public static Map<Identifier, List<Resource>> stacks(FileToIdConverter converter, ResourceManager manager) {
-        if (!enabled()) return manager.listResourceStacks(converter.prefix(), converter::extensionMatches);
+        if (!enabled()) return timedStacks(converter, manager);
         Key key = new Key(manager, converter.prefix(), converter.extension(), true);
+        long lookupStarted = ModelPipelineProfiler.start();
         Object existing = CACHE.get(key);
+        if (lookupStarted != 0L) ModelPipelineProfiler.end("resource.index.stack-lookup", lookupStarted);
         if (existing != null) {
             ModelPipelineProfiler.addCount("resource.index.stack-hit", 1);
             return (Map<Identifier, List<Resource>>) existing;
         }
 
-        long started = ModelPipelineProfiler.start();
-        Map<Identifier, List<Resource>> live = manager.listResourceStacks(converter.prefix(), converter::extensionMatches);
-        ModelPipelineProfiler.end("resource.index.stack-authoritative", started);
+        Map<Identifier, List<Resource>> live = timedStacks(converter, manager);
         Object raced = CACHE.putIfAbsent(key, live);
         if (raced != null) {
             ModelPipelineProfiler.addCount("resource.index.stack-race-hit", 1);
@@ -74,6 +74,26 @@ public final class ReloadResourceIndex {
         }
         ModelPipelineProfiler.addCount("resource.index.stack-first-touch", 1);
         return live;
+    }
+
+    private static Map<Identifier, Resource> timedResources(FileToIdConverter converter, ResourceManager manager) {
+        long started = ModelPipelineProfiler.start();
+        Map<Identifier, Resource> result = manager.listResources(converter.prefix(), converter::extensionMatches);
+        if (started != 0L) {
+            ModelPipelineProfiler.record("resource.manager.list-resources",
+                    System.nanoTime() - started, Math.max(1, result.size()));
+        }
+        return result;
+    }
+
+    private static Map<Identifier, List<Resource>> timedStacks(FileToIdConverter converter, ResourceManager manager) {
+        long started = ModelPipelineProfiler.start();
+        Map<Identifier, List<Resource>> result = manager.listResourceStacks(converter.prefix(), converter::extensionMatches);
+        if (started != 0L) {
+            ModelPipelineProfiler.record("resource.manager.list-resource-stacks",
+                    System.nanoTime() - started, Math.max(1, result.size()));
+        }
+        return result;
     }
 
     private static final class Key {

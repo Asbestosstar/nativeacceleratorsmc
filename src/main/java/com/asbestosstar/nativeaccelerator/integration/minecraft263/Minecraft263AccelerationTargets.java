@@ -27,6 +27,7 @@ public final class Minecraft263AccelerationTargets {
     public static final String FILE_TO_ID_CONVERTER = "net.minecraft.resources.FileToIdConverter";
     public static final String CLIENT_ITEM_INFO_LOADER = "net.minecraft.client.resources.model.ClientItemInfoLoader";
     public static final String SPRITE_LOADER = "net.minecraft.client.renderer.texture.SpriteLoader";
+    public static final String STITCHER = "net.minecraft.client.renderer.texture.Stitcher";
     public static final String SPRITE_RESOURCE_LOADER = "net.minecraft.client.renderer.texture.atlas.SpriteResourceLoader";
     public static final String FILE_PACK_RESOURCES = "net.minecraft.server.packs.FilePackResources";
     public static final String MODEL_DISCOVERY = "net.minecraft.client.resources.model.ModelDiscovery";
@@ -96,7 +97,9 @@ public final class Minecraft263AccelerationTargets {
             new Target(CLIENT_ITEM_INFO_LOADER, "scheduleLoad(ResourceManager,Executor)",
                     "shared work-stealing item loader + streaming decoder (including common tint payloads) with codec fallback"),
             new Target(SPRITE_LOADER, "runSpriteSuppliers / loadAndStitch / stitch",
-                    "batched sprite-source work + warm decoded-texture/layout cache + deferred cold writes + parallel mipmaps + DAG profiler"),
+                    "bounded low-priority sprite-source/mipmap scheduler + live placement-compatible FastStitcher + warm non-GUI layout cache + DAG profiler"),
+            new Target(STITCHER, "registerSprite / stitch / gatherSprites",
+                    "FastStitcher preserves vanilla placement decisions while pruning impossible fragmented subtrees"),
             new Target(SPRITE_RESOURCE_LOADER, "create(Set) invoked by SpriteLoader#loadAndStitch",
                     "metadata-preserving atlas loader that restores cached RGBA on hits and falls back to vanilla STB decode"),
             new Target(NATIVE_IMAGE, "pixels field (Accessor)",

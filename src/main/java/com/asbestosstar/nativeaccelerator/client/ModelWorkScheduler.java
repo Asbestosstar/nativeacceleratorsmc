@@ -122,6 +122,7 @@ public final class ModelWorkScheduler {
         for (int worker = 0; worker < workers; worker++) {
             futures.add(CompletableFuture.runAsync(() -> {
                 long workerStarted = ModelPipelineProfiler.start();
+                long workerCpuStarted = ModelPipelineProfiler.startThreadCpu();
                 long completed = 0L;
                 while (true) {
                     int from = cursor.getAndAdd(chunk);
@@ -132,8 +133,11 @@ public final class ModelWorkScheduler {
                         completed++;
                     }
                 }
-                ModelPipelineProfiler.record(profilerPrefix + ".worker",
-                        System.nanoTime() - workerStarted, completed);
+                if (workerStarted != 0L) {
+                    ModelPipelineProfiler.record(profilerPrefix + ".worker",
+                            System.nanoTime() - workerStarted, completed);
+                }
+                ModelPipelineProfiler.endThreadCpu(profilerPrefix + ".worker", workerCpuStarted, completed);
             }, executor));
         }
         ModelPipelineProfiler.addCount(profilerPrefix + ".external-tasks", workers);
@@ -211,8 +215,12 @@ public final class ModelWorkScheduler {
             int length = to - from;
             if (length <= grain) {
                 long started = ModelPipelineProfiler.start();
+                long cpuStarted = ModelPipelineProfiler.startThreadCpu();
                 for (int i = from; i < to; i++) operation.accept(i);
-                ModelPipelineProfiler.record(profilerPrefix + ".leaf", System.nanoTime() - started, length);
+                if (started != 0L) {
+                    ModelPipelineProfiler.record(profilerPrefix + ".leaf", System.nanoTime() - started, length);
+                }
+                ModelPipelineProfiler.endThreadCpu(profilerPrefix + ".leaf", cpuStarted, length);
                 return;
             }
             int middle = from + (length >>> 1);
@@ -246,8 +254,12 @@ public final class ModelWorkScheduler {
             int length = to - from;
             if (length <= grain) {
                 long started = ModelPipelineProfiler.start();
+                long cpuStarted = ModelPipelineProfiler.startThreadCpu();
                 for (int i = from; i < to; i++) results[i] = operation.apply(i);
-                ModelPipelineProfiler.record(profilerPrefix + ".leaf", System.nanoTime() - started, length);
+                if (started != 0L) {
+                    ModelPipelineProfiler.record(profilerPrefix + ".leaf", System.nanoTime() - started, length);
+                }
+                ModelPipelineProfiler.endThreadCpu(profilerPrefix + ".leaf", cpuStarted, length);
                 return;
             }
             int middle = from + (length >>> 1);

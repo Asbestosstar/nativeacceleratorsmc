@@ -2,8 +2,10 @@ package com.asbestosstar.nativeaccelerator.mixin.client;
 
 import com.asbestosstar.nativeaccelerator.cache.PersistentAtlasLayoutCache;
 import com.asbestosstar.nativeaccelerator.client.CachedTextureAtlasSprite;
+import com.asbestosstar.nativeaccelerator.client.FastStitcher;
+import com.asbestosstar.nativeaccelerator.client.AtlasWorkScheduler;
 import com.asbestosstar.nativeaccelerator.client.ModelPipelineProfiler;
-import com.asbestosstar.nativeaccelerator.client.ModelWorkScheduler;
+import com.asbestosstar.nativeaccelerator.client.StitcherParityVerifier;
 import com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig;
 import com.mojang.logging.LogUtils;
 import net.minecraft.CrashReport;
@@ -41,14 +43,23 @@ import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 /**
- * Equivalent SpriteLoader.stitch path with mipmap generation split over the shared work-stealing pool.
- * The stitch placement algorithm itself remains vanilla.
+ * High-throughput SpriteLoader.stitch replacement.
+ *
+ * <p>FastStitcher preserves vanilla placement semantics while pruning fragmented subtrees. GUI uses
+ * the fast live stitcher too, but deliberately never replays a persistent layout: every GUI reload
+ * computes fresh coordinates from the current sprite set and metadata.</p>
  */
 @Mixin(SpriteLoader.class)
 public abstract class SpriteLoaderParallelMipmapMixin {
     private static final Logger NATIVEACCELERATOR_LOGGER = LogUtils.getLogger();
+    private static final Identifier NATIVEACCELERATOR_GUI_ATLAS =
+            Identifier.withDefaultNamespace("textures/atlas/gui.png");
+    private static final boolean NATIVEACCELERATOR_FAST_STITCHER =
+            NativeAcceleratorConfig.booleanValue("atlas.fastStitcher", true);
     private static final boolean NATIVEACCELERATOR_PARALLEL_MIPS =
             NativeAcceleratorConfig.booleanValue("atlas.parallelMipmaps", true);
+    private static final boolean NATIVEACCELERATOR_VERIFY_FAST_STITCHER =
+            NativeAcceleratorConfig.booleanValue("atlas.verifyFastStitcher", false);
 
     @Shadow @Final private Identifier location;
     @Shadow @Final private int maxSupportedTextureSize;
@@ -59,7 +70,8 @@ public abstract class SpriteLoaderParallelMipmapMixin {
     @Inject(method = "stitch", at = @At("HEAD"), cancellable = true, require = 0)
     private void nativeaccelerator$parallelMipmaps(List<SpriteContents> sprites, int maxMipmapLevels,
             Executor executor, CallbackInfoReturnable<SpriteLoader.Preparations> cir) {
-        if (!NATIVEACCELERATOR_PARALLEL_MIPS) return;
+        if (!NATIVEACCELERATOR_FAST_STITCHER && !NATIVEACCELERATOR_PARALLEL_MIPS) return;
+
         long totalStarted = ModelPipelineProfiler.start();
         try (Zone ignored = Profiler.get().zone(() -> "stitch " + this.location)) {
             int maxTextureSize = this.maxSupportedTextureSize;
@@ -75,6 +87,7 @@ public abstract class SpriteLoaderParallelMipmapMixin {
                         Mth.log2(lowestOneBit), Mth.log2(lowestTextureBit));
                 lowestOneBit = lowestTextureBit;
             }
+
             int minSize = Math.min(minTexelSize, lowestOneBit);
             int minPowerOfTwo = Mth.log2(minSize);
             int mipLevel;
@@ -89,12 +102,17 @@ public abstract class SpriteLoaderParallelMipmapMixin {
             Options options = Minecraft.getInstance().options;
             int anisotropyBit = options.textureFiltering().get() != TextureFilteringMethod.ANISOTROPIC
                     ? 0 : options.maxAnisotropyBit().get();
-            PersistentAtlasLayoutCache.Layout cachedLayout = PersistentAtlasLayoutCache.load(
+            boolean guiAtlas = NATIVEACCELERATOR_GUI_ATLAS.equals(this.location);
+
+            // Persistent placement replay remains disabled for GUI. The fast stitcher itself is safe for GUI
+            // because it computes a fresh vanilla-compatible placement from the live sprites every reload.
+            PersistentAtlasLayoutCache.Layout cachedLayout = guiAtlas ? null : PersistentAtlasLayoutCache.load(
                     this.location, sprites, maxTextureSize, mipLevel, anisotropyBit);
             int padding = 1 << mipLevel << Mth.clamp(anisotropyBit - 1, 0, 4);
             int width;
             int height;
             Map<Identifier, TextureAtlasSprite> result;
+
             if (cachedLayout != null) {
                 width = cachedLayout.width();
                 height = cachedLayout.height();
@@ -122,12 +140,34 @@ public abstract class SpriteLoaderParallelMipmapMixin {
             }
 
             if (result == null) {
-                Stitcher<SpriteContents> stitcher = new Stitcher<>(maxTextureSize, maxTextureSize, mipLevel, anisotropyBit);
+                Stitcher<SpriteContents> stitcher = NATIVEACCELERATOR_FAST_STITCHER
+                        ? new FastStitcher<>(maxTextureSize, maxTextureSize, mipLevel, anisotropyBit)
+                        : new Stitcher<>(maxTextureSize, maxTextureSize, mipLevel, anisotropyBit);
                 for (SpriteContents spriteInfo : sprites) stitcher.registerSprite(spriteInfo);
                 try {
                     long stitchStarted = ModelPipelineProfiler.start();
                     stitcher.stitch();
-                    ModelPipelineProfiler.end("atlas.stitch.placement", stitchStarted);
+                    ModelPipelineProfiler.end(NATIVEACCELERATOR_FAST_STITCHER
+                            ? "atlas.fast-stitcher.placement" : "atlas.stitch.placement", stitchStarted);
+                    if (NATIVEACCELERATOR_FAST_STITCHER) {
+                        ModelPipelineProfiler.addCount("atlas.fast-stitcher.sprites", sprites.size());
+                    }
+
+                    if (NATIVEACCELERATOR_FAST_STITCHER && NATIVEACCELERATOR_VERIFY_FAST_STITCHER) {
+                        Stitcher<SpriteContents> vanilla = new Stitcher<>(
+                                maxTextureSize, maxTextureSize, mipLevel, anisotropyBit);
+                        for (SpriteContents spriteInfo : sprites) vanilla.registerSprite(spriteInfo);
+                        vanilla.stitch();
+                        if (StitcherParityVerifier.equivalent(stitcher, vanilla)) {
+                            ModelPipelineProfiler.addCount("atlas.fast-stitcher.parity-match", 1);
+                        } else {
+                            NATIVEACCELERATOR_LOGGER.warn(
+                                    "FastStitcher parity mismatch for {}; using vanilla placement for this atlas",
+                                    this.location);
+                            ModelPipelineProfiler.addCount("atlas.fast-stitcher.parity-mismatch", 1);
+                            stitcher = vanilla;
+                        }
+                    }
                 } catch (StitcherException exception) {
                     CrashReport report = CrashReport.forThrowable(exception, "Stitching");
                     CrashReportCategory category = report.addCategory("Stitcher");
@@ -140,15 +180,25 @@ public abstract class SpriteLoaderParallelMipmapMixin {
                 width = stitcher.getWidth();
                 height = stitcher.getHeight();
                 result = this.nativeaccelerator$invokeGetStitchedSprites(stitcher, width, height);
-                PersistentAtlasLayoutCache.store(this.location, sprites, maxTextureSize, mipLevel, anisotropyBit,
-                        width, height, padding, result);
+                if (!guiAtlas) {
+                    PersistentAtlasLayoutCache.store(this.location, sprites, maxTextureSize, mipLevel, anisotropyBit,
+                            width, height, padding, result);
+                }
             }
+
             TextureAtlasSprite missingSprite = result.get(MissingTextureAtlasSprite.getLocation());
-            ArrayList<TextureAtlasSprite> mipTargets = new ArrayList<>(result.values());
-            CompletableFuture<Void> readyForUpload = ModelWorkScheduler.runIndexed(
-                    mipTargets.size(), executor,
-                    i -> mipTargets.get(i).contents().increaseMipLevel(mipLevel),
-                    "atlas.mipmap.dynamic");
+            CompletableFuture<Void> readyForUpload;
+            if (NATIVEACCELERATOR_PARALLEL_MIPS) {
+                ArrayList<TextureAtlasSprite> mipTargets = new ArrayList<>(result.values());
+                readyForUpload = AtlasWorkScheduler.runMipmaps(
+                        mipTargets, mipLevel, executor, "atlas.mipmap.dynamic");
+            } else {
+                Map<Identifier, TextureAtlasSprite> finalResult = result;
+                readyForUpload = CompletableFuture.runAsync(
+                        () -> finalResult.values().forEach(sprite -> sprite.contents().increaseMipLevel(mipLevel)),
+                        executor);
+            }
+
             ModelPipelineProfiler.end("atlas.stitch.setup", totalStarted);
             cir.setReturnValue(new SpriteLoader.Preparations(width, height, mipLevel, missingSprite, result, readyForUpload));
         }

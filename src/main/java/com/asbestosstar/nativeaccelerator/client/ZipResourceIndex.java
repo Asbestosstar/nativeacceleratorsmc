@@ -5,30 +5,29 @@ import com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /**
- * Optional directory-prefix index over a ZipFile central directory.
+ * Lazy per-ZipFile resource manifest used by {@code FilePackResources}.
  *
- * <p>This is disabled by default in pass 5 because cold-start profiling showed that eagerly building the full
- * prefix index moved too much central-directory work onto the first model query. When explicitly enabled,
- * {@code FilePackResources} normally walks the entire ZIP central directory for every namespace and
- * resource-directory query.  We scan it once per open {@link ZipFile} and append each entry to the bucket
- * for every slash-delimited directory prefix in its name.  Buckets therefore retain <em>exact central
- * directory order</em> while a later {@code assets/minecraft/models/} query is O(number of matching entries)
- * rather than O(total ZIP entries).</p>
+ * <p>The older implementation eagerly expanded every central-directory entry into every slash-prefix
+ * bucket.  That made later lookups cheap but imposed a large cold-start allocation/string tax on the first
+ * query.  Pass 7 instead performs exactly one lightweight central-directory scan per open ZipFile, retaining
+ * the entry and its already-normalized name. Prefix result lists are materialized only when Minecraft
+ * actually asks for that directory, and are then reused by every FileToIdConverter/listener in the reload.</p>
  *
- * <p>Directory entries are retained deliberately. Vanilla {@code getNamespaces()} can observe them even
- * though {@code listResources()} later ignores them.</p>
+ * <p>Central-directory order is preserved exactly. Directory entries are retained because vanilla namespace
+ * discovery can observe them.  The original FilePackResources code remains responsible for path validation,
+ * Identifier construction and ResourceOutput ordering; this class only narrows the Enumeration.</p>
  */
 public final class ZipResourceIndex {
-    private static final boolean ENABLED = NativeAcceleratorConfig.booleanValue("resource.zipIndex", false);
-    private static final Map<ZipFile, Index> INDEXES = Collections.synchronizedMap(new WeakHashMap<>());
+    private static final boolean ENABLED = NativeAcceleratorConfig.booleanValue("resource.zipIndex", true);
+    private static final Map<ZipFile, Manifest> MANIFESTS = Collections.synchronizedMap(new WeakHashMap<>());
 
     private ZipResourceIndex() {}
 
@@ -37,55 +36,73 @@ public final class ZipResourceIndex {
     }
 
     public static void clear() {
-        synchronized (INDEXES) {
-            INDEXES.clear();
+        synchronized (MANIFESTS) {
+            MANIFESTS.clear();
         }
     }
 
     public static Enumeration<? extends ZipEntry> entries(ZipFile zip, String directoryPrefix) {
         if (!enabled()) return zip.entries();
-        Index index;
-        synchronized (INDEXES) {
-            index = INDEXES.get(zip);
-            if (index == null) {
+        Manifest manifest;
+        synchronized (MANIFESTS) {
+            manifest = MANIFESTS.get(zip);
+            if (manifest == null) {
                 long started = ModelPipelineProfiler.start();
-                index = new Index(zip);
-                INDEXES.put(zip, index);
-                ModelPipelineProfiler.record("resource.zip-index.build", System.nanoTime() - started, index.entryCount);
+                manifest = new Manifest(zip);
+                MANIFESTS.put(zip, manifest);
+                if (started != 0L) {
+                    ModelPipelineProfiler.record("resource.pack.zip.manifest-build",
+                            System.nanoTime() - started, manifest.entries.length);
+                }
+                ModelPipelineProfiler.addCount("resource.pack.zip.manifest-entries", manifest.entries.length);
             } else {
-                ModelPipelineProfiler.addCount("resource.zip-index.hit", 1);
+                ModelPipelineProfiler.addCount("resource.pack.zip.manifest-hit", 1);
             }
         }
-        List<ZipEntry> matches = index.byDirectory.get(directoryPrefix);
-        int count = matches == null ? 0 : matches.size();
-        ModelPipelineProfiler.addCount("resource.zip-index.candidates", count);
-        return matches == null ? Collections.emptyEnumeration() : Collections.enumeration(matches);
+        return Collections.enumeration(manifest.forPrefix(directoryPrefix));
     }
 
-    private static final class Index {
-        final Map<String, List<ZipEntry>> byDirectory;
-        final int entryCount;
+    private static final class Manifest {
+        final EntryRef[] entries;
+        final ConcurrentHashMap<String, List<ZipEntry>> prefixes = new ConcurrentHashMap<>();
 
-        Index(ZipFile zip) {
-            HashMap<String, ArrayList<ZipEntry>> mutable = new HashMap<>();
+        Manifest(ZipFile zip) {
+            ArrayList<EntryRef> refs = new ArrayList<>(Math.max(64, zip.size()));
             Enumeration<? extends ZipEntry> enumeration = zip.entries();
-            int count = 0;
             while (enumeration.hasMoreElements()) {
                 ZipEntry entry = enumeration.nextElement();
-                count++;
-                String name = entry.getName();
-                int slash = name.indexOf('/');
-                while (slash >= 0) {
-                    String prefix = name.substring(0, slash + 1);
-                    mutable.computeIfAbsent(prefix, ignored -> new ArrayList<>()).add(entry);
-                    slash = name.indexOf('/', slash + 1);
-                }
+                refs.add(new EntryRef(entry.getName(), entry));
             }
-            HashMap<String, List<ZipEntry>> frozen = new HashMap<>(Math.max(16, mutable.size() * 4 / 3 + 1));
-            mutable.forEach((prefix, entries) -> frozen.put(prefix, List.copyOf(entries)));
-            this.byDirectory = Map.copyOf(frozen);
-            this.entryCount = count;
-            ModelPipelineProfiler.addCount("resource.zip-index.prefix-buckets", byDirectory.size());
+            this.entries = refs.toArray(EntryRef[]::new);
+        }
+
+        List<ZipEntry> forPrefix(String prefix) {
+            List<ZipEntry> existing = prefixes.get(prefix);
+            if (existing != null) {
+                ModelPipelineProfiler.addCount("resource.pack.zip.prefix-hit", 1);
+                ModelPipelineProfiler.addCount("resource.pack.zip.candidates", existing.size());
+                return existing;
+            }
+
+            long started = ModelPipelineProfiler.start();
+            ArrayList<ZipEntry> matched = new ArrayList<>();
+            for (EntryRef ref : entries) {
+                if (ref.name.startsWith(prefix)) matched.add(ref.entry);
+            }
+            List<ZipEntry> frozen = List.copyOf(matched);
+            List<ZipEntry> raced = prefixes.putIfAbsent(prefix, frozen);
+            List<ZipEntry> result = raced == null ? frozen : raced;
+            if (started != 0L) {
+                ModelPipelineProfiler.record("resource.pack.zip.prefix-filter",
+                        System.nanoTime() - started, entries.length);
+            }
+            ModelPipelineProfiler.addCount(raced == null
+                    ? "resource.pack.zip.prefix-first-touch"
+                    : "resource.pack.zip.prefix-race-hit", 1);
+            ModelPipelineProfiler.addCount("resource.pack.zip.candidates", result.size());
+            return result;
         }
     }
+
+    private record EntryRef(String name, ZipEntry entry) {}
 }

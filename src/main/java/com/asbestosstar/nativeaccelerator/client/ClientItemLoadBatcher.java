@@ -1,8 +1,8 @@
 package com.asbestosstar.nativeaccelerator.client;
 
+import com.google.gson.JsonElement;
 import com.mojang.logging.LogUtils;
 import com.asbestosstar.nativeaccelerator.cache.PersistentResourceCache;
-import com.google.gson.JsonElement;
 import com.mojang.serialization.JsonOps;
 import net.minecraft.client.multiplayer.ClientRegistryLayer;
 import net.minecraft.client.renderer.item.ClientItem;
@@ -108,6 +108,7 @@ public final class ClientItemLoadBatcher {
 
     private static ClientItem vanillaParse(Identifier id, Resource resource, RegistryAccess.Frozen staticRegistries) throws Exception {
         long started = ModelPipelineProfiler.start();
+        long cpuStarted = ModelPipelineProfiler.startThreadCpu();
         try (Reader reader = PersistentResourceCache.reader("items", LISTER.idToFile(id), resource)) {
             PlaceholderLookupProvider lookup = new PlaceholderLookupProvider(staticRegistries);
             RegistryOps<JsonElement> ops = lookup.createSerializationContext(JsonOps.INSTANCE);
@@ -121,6 +122,7 @@ public final class ClientItemLoadBatcher {
             return parsed;
         } finally {
             ModelPipelineProfiler.end("item.vanilla-codec", started);
+            ModelPipelineProfiler.endThreadCpu("item.vanilla-codec", cpuStarted);
         }
     }
 

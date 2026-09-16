@@ -774,7 +774,7 @@ The 26.3 client model pipeline now has a second layer of throughput work after t
 
 - `ClientItemLoadBatcher` replaces `ClientItemInfoLoader`'s future-per-item scheduling with `ModelWorkScheduler` and uses `FastClientItemDecoder` only for item-model shapes it can construct exactly. Unsupported shapes always reopen the resource and use the vanilla registry-aware codec.
 - `ReloadResourceIndex` caches authoritative `ResourceManager` enumeration results for the duration of one reload. It never reconstructs pack priority/filter semantics itself.
-- `ZipResourceIndex` indexes each open ZIP central directory once into slash-prefix buckets. Buckets preserve original ZIP entry order and include directory entries, because `FilePackResources#getNamespaces` observes them.
+- `ZipResourceIndex` keeps a lazy per-open-ZipFile manifest: one lightweight central-directory scan, then only requested directory prefixes are materialized. Central-directory order and directory entries are preserved.
 - `SpriteLoaderThroughputMixin` replaces future-per-sprite-source scheduling with the shared work-stealing pool. Atlas stitching itself remains vanilla.
 - `FastBlockStateDecoder` caches per-`StateDefinition` property/value state masks so partial selectors become bit-mask intersections rather than recursive state transitions and temporary selector maps.
 - `ModelDiscoveryParentOrderMixin` reverses only the unresolved validation list before vanilla propagation. Discovery adds a parent after its child, so this makes the ordinary case parent-first without replacing vanilla cycle handling.
@@ -793,8 +793,70 @@ Pass 4 proved that persistent caches can help unchanged launches, but the first 
 - source-byte caching is off by default (`cache.resourceBytes=false`); if enabled, misses stream live through a tee and only stage deferred writes;
 - the recursive `mods/` + `resourcepacks/` generation manifest remains mandatory before any persistent cache reuse;
 - `ReloadResourceIndex` may reuse the authoritative ResourceManager result but must not eagerly clone one-shot first-touch results;
-- the eager full `ZipResourceIndex` is opt-in (`resource.zipIndex=false` by default) because its cold-build cost regressed first-touch model enumeration;
+- do not restore the old eager all-prefix ZIP index. Pass 7 uses the lazy manifest form (`resource.zipIndex=true` by default): one entry/name array plus requested-prefix caches only;
 - normal throughput runs keep `model.profiler=false` and `model.dagProfiler=false`; enable them only for diagnostic profiles;
-- item fast decoding may grow only with exact parity. Pass 5 adds the seven standard item tint payloads; transformation/property model types still fall back to vanilla.
+- item fast decoding may grow only with exact parity. Pass 7 adds exact Transformation.EXTENDED_CODEC representations plus common condition/range/select property dispatchers; unsupported/context-heavy forms still fall back to vanilla.
 
 The desired invariant is: an invalidated/new cache generation should behave approximately like the proven live fast-decoder path, while an unchanged generation may be faster. Never require a user to pay a large startup penalty merely because they added a mod/resource pack and correctly invalidated the cache.
+
+## GUI atlas cache correctness rule
+
+`minecraft:textures/atlas/gui.png` is a correctness exclusion from persistent decoded-texture and atlas-layout **replay** caching. GUI sprites carry scaling metadata and tiny UV/padding differences are visually obvious. `SpriteResourceLoaderCacheMixin` therefore keeps GUI PNG decoding on Minecraft's ordinary `SpriteResourceLoader`, and `SpriteLoaderParallelMipmapMixin` never restores a cached GUI placement.
+
+The GUI atlas is still allowed to use `FastStitcher`: unlike cached-layout replay, `FastStitcher` computes a fresh placement from the current live sprite set on every reload and is deliberately placement-compatible with vanilla 26.3 (same padded holder sizes, sort order, first-fit child order, split order, power-of-two growth decision and gathered coordinates). Do not compensate for cache artifacts by changing vanilla widget/nine-slice rendering.
+
+`nativeaccelerator.atlas.fastStitcher=false` is the rollback switch. `nativeaccelerator.atlas.verifyFastStitcher=true` is an expensive diagnostic mode that runs vanilla beside the fast implementation and falls back on any dimension/coordinate/padding mismatch. Keep GUI persistent placement replay disabled until an image/UV parity harness proves it safe.
+
+
+## Model/resource throughput pass 7 — lazy manifests and dispatcher fast paths
+
+Pass 7 follows the post-safety profile rather than reverting cache correctness:
+
+- Model-discovery DAG and aggregate CPU timers use separate timestamps. Never subtract a `ModelDagProfiler.begin()` value unless DAG profiling is actually enabled; a disabled DAG profiler returns zero.
+- `ReloadResourceIndex` reports its tiny memoization lookup separately from `resource.manager.list-resources` / `resource.manager.list-resource-stacks`. Do not label authoritative pack traversal as index overhead.
+- ZIP-backed packs use a lazy per-open-ZipFile manifest. The first query copies each central-directory entry/name once; only requested prefixes are filtered/cached. Retain the weak manifest across reloads because it is keyed to the exact open ZipFile.
+- Jar/non-default-filesystem `PathPackResources` use `PathResourceIndex`: one namespace scan, prebuilt `Identifier`s, then prefix filtering. Ordinary default-filesystem directory resource packs stay on Minecraft's live walker by default (`resource.pathManifest.defaultFs=false`) to avoid a cold whole-tree scan.
+- `FastClientItemDecoder` supports common `condition`, `range_dispatch`, and `select` models plus exact Transformation.EXTENDED_CODEC object/matrix encodings. Any unsupported property/value/field still reopens and uses the vanilla registry codec.
+- `FastBlockStateDecoder` accumulates variant output in dense StateDefinition index space and materializes the final IdentityHashMap once. Preserve vanilla overlap behavior: write the new root, then throw/stop the current variant if a state was already defined.
+- Keep GUI decoded/layout replay exclusions and `FastStitcher` placement-parity rules from pass 6 unchanged.
+
+Relevant resource switches:
+
+- `resource.index=true` — reload-scoped authoritative query memoization;
+- `resource.zipIndex=true` — lazy per-open-ZipFile manifest;
+- `resource.pathManifest=true` — lazy manifest for jar/non-default-filesystem paths;
+- `resource.pathManifest.defaultFs=false` — do not whole-tree index ordinary directory packs unless explicitly requested.
+
+
+## Model/resource throughput pass 8 — scheduler isolation and CPU-time profiling
+
+Pass 8 keeps the pass-7 lazy pack manifests, item decoder coverage, dense blockstate emission, safe texture cache semantics, and placement-compatible FastStitcher. The change is scheduling: atlas sprite-source and mipmap work no longer share `ModelWorkScheduler`'s CPU-wide pool. `AtlasWorkScheduler` uses a separate bounded, lower-priority daemon pool so atlas preparation can overlap without consuming every core needed by ModelManager.
+
+Mipmap scheduling is pixel-weighted rather than sprite-count weighted. Small atlases run as one low-priority task; larger atlases are greedily balanced into a small number of bins by estimated mip texel work. This avoids treating a tiny 16x16 sprite as equal to a large texture and avoids the 64+ fine-grained mip leaves observed in the pass-7 regression.
+
+Relevant switches (all with the `nativeaccelerator.` prefix):
+
+- `atlas.dedicatedPool=true` — isolate atlas work from the model work-stealing pool;
+- `atlas.workers=0` — automatic bounded atlas parallelism (`min(4, availableProcessors/4)`, at least one);
+- `atlas.workerPriority=4` — lower OS/JVM priority than normal model workers;
+- `atlas.dynamicChunkSize=2` — sprite-source pull chunk;
+- `atlas.mipmapSerialPixels=393216` — estimated generated mip pixels below which one atlas task is used;
+- `atlas.mipmapSerialSprites=24` — small-sprite-count serial threshold;
+- `atlas.mipmapChunksPerWorker=2` — upper bin count multiplier for large atlases;
+- `atlas.parallelMipmaps=true` — master optimized mip path, still independently A/B switchable.
+
+`ModelPipelineProfiler` also reports `.thread-cpu` companion counters on supported JVMs. Elapsed aggregate time can include descheduling/CPU contention; current-thread CPU time does not. Use the pair to distinguish genuinely slower decoding from workers being preempted. Thread CPU accounting is not enabled at all when `model.profiler=false`.
+
+Empty blockstate variant selectors now bypass the global selector-layout/syntax caches entirely and fill the dense state accumulator directly when there is no prior overlap. Preserve vanilla overlap semantics when an empty selector follows an earlier variant.
+
+## Model/resource throughput pass 9 — topology-aware scheduling
+
+Pass 9 replaces `Runtime.availableProcessors()`-only atlas heuristics with native OS topology detection. Do not add OSHI to this path. Preserve package/physical/logical/JVM-visible counts separately; JVM visibility is the hard process budget. Solaris/SPARC topology comes from `kstat cpu_info`, so hardware strands must never be treated as independent physical cores.
+
+Automatic scheduler rules:
+- ordinary SMT1/2: model pool may use JVM-visible logical CPUs; atlas pool uses effective physical cores capped at 8;
+- SMT4+ / high-strand CPUs: model pool defaults to two strands per effective physical core; atlas pool uses a bounded physical-core subset capped at 16;
+- explicit `model.workers` / `atlas.workers` remain authoritative;
+- nominal clock may tune the mipmap serial/parallel threshold only on amd64/arm64. Never compare GHz across architectures to infer equivalent core performance.
+
+Profiler topology/capacity must be emitted as last-value gauges, not summed operation counters.

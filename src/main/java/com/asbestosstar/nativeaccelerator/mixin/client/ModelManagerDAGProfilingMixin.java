@@ -28,7 +28,8 @@ import java.util.concurrent.Executor;
 /** Fine-grained wall-clock probes for the remaining ModelManager DAG nodes. */
 @Mixin(ModelManager.class)
 public abstract class ModelManagerDAGProfilingMixin {
-    @Unique private static final ThreadLocal<Long> nativeaccelerator$discoveryStarted = new ThreadLocal<>();
+    @Unique private static final ThreadLocal<Long> nativeaccelerator$discoveryDagStarted = new ThreadLocal<>();
+    @Unique private static final ThreadLocal<Long> nativeaccelerator$discoveryCpuStarted = new ThreadLocal<>();
     @Unique private static final ThreadLocal<Long> nativeaccelerator$groupsStarted = new ThreadLocal<>();
     @Unique private static final ThreadLocal<Long> nativeaccelerator$loadModelsStarted = new ThreadLocal<>();
     @Unique private static final ThreadLocal<Long> nativeaccelerator$dispatchStarted = new ThreadLocal<>();
@@ -37,18 +38,21 @@ public abstract class ModelManagerDAGProfilingMixin {
     private static void nativeaccelerator$discoveryBegin(Map<Identifier, UnbakedModel> models,
             BlockStateModelLoader.LoadedModels blockstates, ClientItemInfoLoader.LoadedClientInfos items,
             CallbackInfoReturnable<?> cir) {
-        nativeaccelerator$discoveryStarted.set(ModelDagProfiler.begin());
+        nativeaccelerator$discoveryDagStarted.set(ModelDagProfiler.begin());
+        nativeaccelerator$discoveryCpuStarted.set(ModelPipelineProfiler.start());
     }
 
     @Inject(method = "discoverModelDependencies", at = @At("RETURN"), require = 0)
     private static void nativeaccelerator$discoveryEnd(Map<Identifier, UnbakedModel> models,
             BlockStateModelLoader.LoadedModels blockstates, ClientItemInfoLoader.LoadedClientInfos items,
             CallbackInfoReturnable<?> cir) {
-        Long started = nativeaccelerator$discoveryStarted.get();
-        nativeaccelerator$discoveryStarted.remove();
-        if (started != null) {
-            ModelDagProfiler.end("model-discovery.total", started);
-            ModelPipelineProfiler.record("model-discovery.total.cpu", System.nanoTime() - started, models.size());
+        Long dagStarted = nativeaccelerator$discoveryDagStarted.get();
+        Long cpuStarted = nativeaccelerator$discoveryCpuStarted.get();
+        nativeaccelerator$discoveryDagStarted.remove();
+        nativeaccelerator$discoveryCpuStarted.remove();
+        if (dagStarted != null) ModelDagProfiler.end("model-discovery.total", dagStarted);
+        if (cpuStarted != null && cpuStarted != 0L) {
+            ModelPipelineProfiler.record("model-discovery.total.cpu", System.nanoTime() - cpuStarted, models.size());
         }
     }
 

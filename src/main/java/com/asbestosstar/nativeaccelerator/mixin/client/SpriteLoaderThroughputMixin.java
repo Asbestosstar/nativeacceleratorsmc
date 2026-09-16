@@ -1,8 +1,8 @@
 package com.asbestosstar.nativeaccelerator.mixin.client;
 
+import com.asbestosstar.nativeaccelerator.client.AtlasWorkScheduler;
 import com.asbestosstar.nativeaccelerator.client.ModelDagProfiler;
 import com.asbestosstar.nativeaccelerator.client.ModelPipelineProfiler;
-import com.asbestosstar.nativeaccelerator.client.ModelWorkScheduler;
 import net.minecraft.client.renderer.texture.SpriteContents;
 import net.minecraft.client.renderer.texture.SpriteLoader;
 import net.minecraft.client.renderer.texture.atlas.SpriteResourceLoader;
@@ -35,7 +35,7 @@ public abstract class SpriteLoaderThroughputMixin {
             List<SpriteSource.Loader> sprites, Executor executor,
             CallbackInfoReturnable<CompletableFuture<List<SpriteContents>>> cir) {
         if (!nativeaccelerator$BATCH_SPRITES) return;
-        CompletableFuture<List<SpriteContents>> future = ModelWorkScheduler.mapIndexed(
+        CompletableFuture<List<SpriteContents>> future = AtlasWorkScheduler.mapIndexed(
                 sprites.size(), executor, i -> sprites.get(i).get(resourceLoader), "atlas.sprite-source.dynamic")
                 .thenApply(values -> {
                     ArrayList<SpriteContents> result = new ArrayList<>(values.size());
