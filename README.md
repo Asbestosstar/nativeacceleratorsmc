@@ -316,6 +316,10 @@ Useful measurements will include:
 - Native voxel face-mask batches.
 - Renderer test suite.
 - Java/Panama renderer wrapper classes.
+- High-throughput client resource/model preparation: direct raw-model, blockstate, and compatible item decoding; reload-scoped authoritative resource indexing; lazy ZIP and non-default-filesystem path manifests; and bounded atlas sprite/mipmap scheduling.
+- Fresh, parity-compatible fast atlas stitching with an optional vanilla side-by-side verifier.
+- Safe decoded-texture staging and deferred cache writes; GUI atlas placement replay remains intentionally disabled.
+- CPU topology-aware worker defaults plus best-effort Linux/macOS cache discovery, with safe fallbacks when host information is unavailable.
 
 ### Foundation present, Minecraft replacement not complete
 
@@ -643,6 +647,36 @@ Current source trees explicitly account for combinations involving:
 Additional architectures such as PPC64/PPC64LE and ARM64 are intended to fit the same composition model.
 
 A platform appearing in the architecture does **not** mean every optimized kernel or renderer feature has already been implemented or tested there. See the platform matrix for the actual current status.
+
+### Current native-platform focus
+
+The native build and validation effort is currently focused on:
+
+- **Linux AMD64**;
+- **Solaris SPARCv9**; and
+- **macOS AMD64, server only**.
+
+“Server only” for macOS AMD64 means the native compute accelerator is the current focus there; it does **not** imply supported client Vulkan rendering or a completed client renderer path. Other OS/architecture combinations remain part of the portable source design, but should be treated as experimental until they have dedicated native artifacts and validation.
+
+---
+
+## Client resource-loading acceleration
+
+The Minecraft 26.3 client path includes a Java-side startup/reload acceleration layer in addition to the native compute ABI. It preserves Minecraft semantics by using fast paths only for supported resource forms and returning to vanilla decoding whenever a resource is unsupported, malformed, or fails verification.
+
+Current components include:
+
+- direct decoding for ordinary cuboid raw models, blockstates, and compatible client-item model forms;
+- reload-scoped memoization of authoritative `ResourceManager` enumeration, preserving pack priority and filtering semantics;
+- lazy ZIP manifests and manifests for JAR/non-default-filesystem path packs, avoiding repeated full traversal for requested prefixes;
+- state-definition selector masks and dense blockstate output construction to reduce temporary parsing/state-transition work;
+- a dedicated, bounded atlas worker domain for sprite-source loading and mip generation so atlas work does not consume the model-loading critical path;
+- fresh `FastStitcher` placement compatible with vanilla 26.3, with an optional side-by-side parity verifier; and
+- deferred cache writes and copy-safe decoded-texture staging. The GUI atlas is excluded from persistent decoded-texture and placement replay caching because GUI scaling/UV correctness takes priority over cache reuse.
+
+Worker defaults use detected CPU topology where available. The policy is intentionally conservative on high-strand systems: model parsing can use a controlled subset of hardware threads, while atlas work remains bounded. Cache-size detection is best-effort (`sysctl` on macOS and sysfs on Linux); absence or failure simply selects safe defaults.
+
+Useful diagnostic/rollback properties use the `nativeaccelerator.` prefix, including `model.profiler`, `atlas.workers`, `atlas.dedicatedPool`, `atlas.parallelMipmaps`, `atlas.fastStitcher`, and `atlas.verifyFastStitcher`. Validation modes are deliberately more expensive and are not representative of throughput measurements.
 
 ---
 
