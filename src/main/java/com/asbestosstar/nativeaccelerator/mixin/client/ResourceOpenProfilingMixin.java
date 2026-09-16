@@ -13,15 +13,19 @@ import java.io.InputStream;
 /** Measures resource-stream creation cost without wrapping or changing the returned stream. */
 @Mixin(Resource.class)
 public abstract class ResourceOpenProfilingMixin {
+    @Unique private static final boolean nativeaccelerator$PROFILE_OPEN =
+            com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.resourceOpenProfiler", false);
     @Unique private static final ThreadLocal<Long> nativeaccelerator$openStarted = new ThreadLocal<>();
 
     @Inject(method = "open", at = @At("HEAD"), require = 0)
     private void nativeaccelerator$openBegin(CallbackInfoReturnable<InputStream> cir) {
+        if (!nativeaccelerator$PROFILE_OPEN) return;
         nativeaccelerator$openStarted.set(ModelPipelineProfiler.start());
     }
 
     @Inject(method = "open", at = @At("RETURN"), require = 0)
     private void nativeaccelerator$openEnd(CallbackInfoReturnable<InputStream> cir) {
+        if (!nativeaccelerator$PROFILE_OPEN) return;
         Long started = nativeaccelerator$openStarted.get();
         nativeaccelerator$openStarted.remove();
         if (started != null && started != 0L) {

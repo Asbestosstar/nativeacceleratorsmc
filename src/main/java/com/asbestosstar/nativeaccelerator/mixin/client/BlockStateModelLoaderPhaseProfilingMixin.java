@@ -1,5 +1,6 @@
 package com.asbestosstar.nativeaccelerator.mixin.client;
 
+import com.asbestosstar.nativeaccelerator.client.ModelDagProfiler;
 import com.asbestosstar.nativeaccelerator.startup.StartupTimer;
 import net.minecraft.client.resources.model.BlockStateModelLoader;
 import net.minecraft.server.packs.resources.ResourceManager;
@@ -29,6 +30,7 @@ public abstract class BlockStateModelLoaderPhaseProfilingMixin {
         Long started = NATIVEACCELERATOR_BLOCKSTATE_LOAD_STARTED.get();
         NATIVEACCELERATOR_BLOCKSTATE_LOAD_STARTED.remove();
         if (started == null) return;
+        ModelDagProfiler.track("blockstates", cir.getReturnValue(), started);
         cir.getReturnValue().whenComplete((result, failure) -> {
             if (failure == null) StartupTimer.recordDuration("client.model-manager.phase.blockstate-load.wall", System.nanoTime() - started);
         });

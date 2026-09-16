@@ -1,5 +1,6 @@
 package com.asbestosstar.nativeaccelerator.mixin.client;
 
+import com.asbestosstar.nativeaccelerator.cache.DeferredCacheWriter;
 import com.asbestosstar.nativeaccelerator.startup.StartupStages;
 import com.asbestosstar.nativeaccelerator.startup.StartupTimer;
 import net.minecraft.client.Minecraft;
@@ -54,5 +55,6 @@ public abstract class MinecraftStartupMixin {
         StartupTimer.end(StartupStages.CLIENT_LOADING);
         StartupTimer.mark(StartupStages.CLIENT_TITLE_SCREEN);
         StartupTimer.finish("client load finished (first screen shown)");
+        DeferredCacheWriter.startupComplete();
     }
 }

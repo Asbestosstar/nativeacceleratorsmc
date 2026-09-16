@@ -1,6 +1,7 @@
 package com.asbestosstar.nativeaccelerator.mixin.client;
 
 import com.asbestosstar.nativeaccelerator.client.ModelPipelineProfiler;
+import com.asbestosstar.nativeaccelerator.client.ReloadResourceIndex;
 import net.minecraft.resources.FileToIdConverter;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.Resource;
@@ -19,12 +20,21 @@ import java.util.Map;
 @Mixin(FileToIdConverter.class)
 public abstract class FileToIdConverterProfilingMixin {
     @Shadow public abstract String prefix();
+    @Shadow public abstract String extension();
     @Unique private static final ThreadLocal<Long> nativeaccelerator$resourceListStart = new ThreadLocal<>();
     @Unique private static final ThreadLocal<Long> nativeaccelerator$stackListStart = new ThreadLocal<>();
 
-    @Inject(method = "listMatchingResources", at = @At("HEAD"), require = 0)
+    @Inject(method = "listMatchingResources", at = @At("HEAD"), cancellable = true, require = 0)
     private void nativeaccelerator$listBegin(ResourceManager manager,
             CallbackInfoReturnable<Map<Identifier, Resource>> cir) {
+        if (ReloadResourceIndex.enabled()) {
+            long started = ModelPipelineProfiler.start();
+            Map<Identifier, Resource> result = ReloadResourceIndex.resources((FileToIdConverter)(Object)this, manager);
+            ModelPipelineProfiler.record("resource.converter." + nativeaccelerator$prefixName(),
+                    started == 0L ? 0L : System.nanoTime() - started, result.size());
+            cir.setReturnValue(result);
+            return;
+        }
         nativeaccelerator$resourceListStart.set(ModelPipelineProfiler.start());
     }
 
@@ -39,9 +49,17 @@ public abstract class FileToIdConverterProfilingMixin {
         }
     }
 
-    @Inject(method = "listMatchingResourceStacks", at = @At("HEAD"), require = 0)
+    @Inject(method = "listMatchingResourceStacks", at = @At("HEAD"), cancellable = true, require = 0)
     private void nativeaccelerator$stackBegin(ResourceManager manager,
             CallbackInfoReturnable<Map<Identifier, List<Resource>>> cir) {
+        if (ReloadResourceIndex.enabled()) {
+            long started = ModelPipelineProfiler.start();
+            Map<Identifier, List<Resource>> result = ReloadResourceIndex.stacks((FileToIdConverter)(Object)this, manager);
+            ModelPipelineProfiler.record("resource.converter-stacks." + nativeaccelerator$prefixName(),
+                    started == 0L ? 0L : System.nanoTime() - started, result.size());
+            cir.setReturnValue(result);
+            return;
+        }
         nativeaccelerator$stackListStart.set(ModelPipelineProfiler.start());
     }
 

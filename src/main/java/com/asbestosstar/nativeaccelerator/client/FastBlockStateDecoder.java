@@ -22,11 +22,14 @@ import org.slf4j.Logger;
 import java.io.IOException;
 import java.io.Reader;
 import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Predicate;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Streaming decoder/compiler for Minecraft blockstate JSON.
@@ -39,6 +42,8 @@ import java.util.function.Predicate;
  */
 public final class FastBlockStateDecoder {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final ConcurrentHashMap<StateDefinition<?, ?>, SelectorLayout> SELECTOR_LAYOUTS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, ParsedSelector> PARSED_SELECTORS = new ConcurrentHashMap<>();
 
     private FastBlockStateDecoder() {}
 
@@ -127,73 +132,206 @@ public final class FastBlockStateDecoder {
             BlockStateModel.UnbakedRoot root,
             IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> output) {
         long started = ModelPipelineProfiler.start();
-        IdentityHashMap<Property<?>, Comparable<?>> constraints = parseSelector(definition, selector);
-        int propertyCount = definition.getProperties().size();
-
-        if (constraints.isEmpty()) {
-            for (BlockState state : definition.getPossibleStates()) putNoOverlap(output, state, root);
-            ModelPipelineProfiler.record("blockstate.fast.variant.empty", System.nanoTime() - started,
-                    definition.getPossibleStates().size());
-            return;
-        }
-
-        // Full selectors are by far the common case in vanilla assets. StateHolder's neighbour table turns
-        // each property assignment into an O(1) transition, avoiding an O(variants * states) predicate scan.
-        if (constraints.size() == propertyCount) {
-            BlockState state = definition.any();
-            for (Map.Entry<Property<?>, Comparable<?>> entry : constraints.entrySet()) {
-                state = setValue(state, entry.getKey(), entry.getValue());
-            }
-            putNoOverlap(output, state, root);
-            ModelPipelineProfiler.record("blockstate.fast.variant.direct", System.nanoTime() - started, 1);
-            return;
-        }
-
-        // A StateDefinition is the Cartesian product of its properties.  Enumerating only unconstrained
-        // properties visits exactly the matching states instead of rescanning every state for every selector.
-        BlockState base = definition.any();
-        for (Map.Entry<Property<?>, Comparable<?>> entry : constraints.entrySet()) {
-            base = setValue(base, entry.getKey(), entry.getValue());
-        }
-        ArrayList<Property<?>> free = new ArrayList<>(Math.max(0, propertyCount - constraints.size()));
-        for (Property<?> property : definition.getProperties()) {
-            if (!constraints.containsKey(property)) free.add(property);
-        }
-        long matchedCount = emitCombinations(base, free, 0, root, output);
-        ModelPipelineProfiler.record("blockstate.fast.variant.partial", System.nanoTime() - started,
-                Math.max(1, matchedCount));
+        SelectorLayout layout = SELECTOR_LAYOUTS.computeIfAbsent(definition, SelectorLayout::new);
+        CompiledSelector compiled = layout.compile(selector);
+        long matchedCount = compiled.emit(layout.states, root, output);
+        String stage = compiled.constraintCount == 0
+                ? "blockstate.fast.variant.empty"
+                : compiled.constraintCount == layout.propertyCount
+                    ? "blockstate.fast.variant.direct"
+                    : "blockstate.fast.variant.partial";
+        ModelPipelineProfiler.record(stage, System.nanoTime() - started, Math.max(1L, matchedCount));
     }
 
-    private static IdentityHashMap<Property<?>, Comparable<?>> parseSelector(
-            StateDefinition<Block, BlockState> definition, String selector) {
-        IdentityHashMap<Property<?>, Comparable<?>> result = new IdentityHashMap<>();
-        int length = selector.length();
-        int start = 0;
-        while (start <= length) {
-            int comma = selector.indexOf(',', start);
-            int end = comma < 0 ? length : comma;
-            if (end > start) {
-                int equals = selector.indexOf('=', start);
-                if (equals < 0 || equals >= end) {
-                    throw new RuntimeException("Unknown blockstate property: '" + selector.substring(start, end) + "'");
-                }
-                String propertyName = selector.substring(start, equals);
-                String valueName = selector.substring(equals + 1, end);
-                Property<?> property = definition.getProperty(propertyName);
-                if (property == null) {
-                    throw new RuntimeException("Unknown blockstate property: '" + propertyName + "'");
-                }
-                Comparable<?> value = propertyValue(property, valueName);
-                if (value == null) {
-                    throw new RuntimeException("Unknown value: '" + valueName + "' for blockstate property: '"
-                            + propertyName + "' " + property.getPossibleValues());
-                }
-                result.put(property, value);
-            } // Empty comma-separated terms are ignored by vanilla VariantSelector.
-            if (comma < 0) break;
-            start = comma + 1;
+    /**
+     * Precomputed state masks for one StateDefinition. Most definitions have at most 64 states, so a
+     * partial selector becomes a handful of long ANDs plus trailing-zero iteration. Large definitions use
+     * the same scheme with BitSet. This removes per-selector IdentityHashMap/ArrayList allocation and
+     * recursive StateHolder transitions from the hot path.
+     */
+    private static final class SelectorLayout {
+        final List<BlockState> states;
+        final int propertyCount;
+        final boolean small;
+        final long allSmall;
+        final BitSet allLarge;
+        final Map<String, PropertySlot> propertiesByName;
+        final ConcurrentHashMap<String, CompiledSelector> compiled = new ConcurrentHashMap<>();
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        SelectorLayout(StateDefinition<?, ?> rawDefinition) {
+            StateDefinition<Block, BlockState> definition = (StateDefinition) rawDefinition;
+            this.states = List.copyOf(definition.getPossibleStates());
+            this.propertyCount = definition.getProperties().size();
+            this.small = states.size() <= Long.SIZE;
+            this.allSmall = small ? (states.size() == Long.SIZE ? -1L : ((1L << states.size()) - 1L)) : 0L;
+            this.allLarge = small ? null : new BitSet(states.size());
+            if (allLarge != null) allLarge.set(0, states.size());
+
+            HashMap<String, PropertySlot> byName = new HashMap<>(Math.max(4, propertyCount * 2));
+            int propertyIndex = 0;
+            for (Property<?> property : definition.getProperties()) {
+                PropertySlot slot = new PropertySlot(propertyIndex++, property, states, small);
+                byName.put(property.getName(), slot);
+            }
+            this.propertiesByName = Map.copyOf(byName);
+            ModelPipelineProfiler.addCount("blockstate.selector-layout.states", states.size());
         }
-        return result;
+
+        CompiledSelector compile(String selector) {
+            CompiledSelector cached = compiled.get(selector);
+            if (cached != null) {
+                ModelPipelineProfiler.addCount("blockstate.selector-cache.hit", 1);
+                return cached;
+            }
+            CompiledSelector created = compileNew(selector);
+            CompiledSelector previous = compiled.putIfAbsent(selector, created);
+            if (previous == null) ModelPipelineProfiler.addCount("blockstate.selector-cache.miss", 1);
+            else ModelPipelineProfiler.addCount("blockstate.selector-cache.race-hit", 1);
+            return previous == null ? created : previous;
+        }
+
+        private CompiledSelector compileNew(String selector) {
+            ValueMask[] selected = new ValueMask[propertyCount];
+            ParsedSelector parsed = PARSED_SELECTORS.get(selector);
+            if (parsed == null) {
+                ParsedSelector created = ParsedSelector.parse(selector);
+                ParsedSelector raced = PARSED_SELECTORS.putIfAbsent(selector, created);
+                parsed = raced == null ? created : raced;
+                ModelPipelineProfiler.addCount(raced == null
+                        ? "blockstate.selector-syntax-cache.miss"
+                        : "blockstate.selector-syntax-cache.race-hit", 1);
+            } else {
+                ModelPipelineProfiler.addCount("blockstate.selector-syntax-cache.hit", 1);
+            }
+            for (SelectorTerm term : parsed.terms) {
+                PropertySlot slot = propertiesByName.get(term.propertyName);
+                if (slot == null) throw new RuntimeException("Unknown blockstate property: '" + term.propertyName + "'");
+                ValueMask value = slot.valuesByText.get(term.valueName);
+                if (value == null) {
+                    throw new RuntimeException("Unknown value: '" + term.valueName + "' for blockstate property: '"
+                            + term.propertyName + "' " + slot.property.getPossibleValues());
+                }
+                // Match vanilla selector-map behavior: a repeated property keeps its last term.
+                selected[slot.index] = value;
+            }
+
+            int constraints = 0;
+            if (small) {
+                long mask = allSmall;
+                for (ValueMask value : selected) {
+                    if (value == null) continue;
+                    constraints++;
+                    mask &= value.smallMask;
+                }
+                return new CompiledSelector(constraints, mask, null);
+            }
+            BitSet mask = (BitSet) allLarge.clone();
+            for (ValueMask value : selected) {
+                if (value == null) continue;
+                constraints++;
+                mask.and(value.largeMask);
+            }
+            return new CompiledSelector(constraints, 0L, mask);
+        }
+    }
+
+    private record SelectorTerm(String propertyName, String valueName) {}
+
+    private static final class ParsedSelector {
+        final List<SelectorTerm> terms;
+
+        private ParsedSelector(List<SelectorTerm> terms) {
+            this.terms = terms;
+        }
+
+        static ParsedSelector parse(String selector) {
+            if (selector.isEmpty()) return new ParsedSelector(List.of());
+            ArrayList<SelectorTerm> terms = new ArrayList<>(4);
+            int length = selector.length();
+            int start = 0;
+            while (start <= length) {
+                int comma = selector.indexOf(',', start);
+                int end = comma < 0 ? length : comma;
+                if (end > start) {
+                    int equals = selector.indexOf('=', start);
+                    if (equals < 0 || equals >= end) {
+                        throw new RuntimeException("Unknown blockstate property: '"
+                                + selector.substring(start, end) + "'");
+                    }
+                    terms.add(new SelectorTerm(selector.substring(start, equals),
+                            selector.substring(equals + 1, end)));
+                }
+                if (comma < 0) break;
+                start = comma + 1;
+            }
+            return new ParsedSelector(List.copyOf(terms));
+        }
+    }
+
+    private static final class PropertySlot {
+        final int index;
+        final Property<?> property;
+        final Map<String, ValueMask> valuesByText;
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        PropertySlot(int index, Property<?> property, List<BlockState> states, boolean small) {
+            this.index = index;
+            this.property = property;
+            HashMap<String, ValueMask> values = new HashMap<>();
+            for (Comparable<?> candidate : comparableValues(property)) {
+                long smallMask = 0L;
+                BitSet largeMask = small ? null : new BitSet(states.size());
+                for (int stateIndex = 0; stateIndex < states.size(); stateIndex++) {
+                    if (!candidate.equals(getValue(states.get(stateIndex), property))) continue;
+                    if (small) smallMask |= 1L << stateIndex;
+                    else largeMask.set(stateIndex);
+                }
+                String serialized = ((Property) property).getName(candidate);
+                values.put(serialized, new ValueMask(smallMask, largeMask));
+            }
+            this.valuesByText = Map.copyOf(values);
+        }
+    }
+
+    private static final class ValueMask {
+        final long smallMask;
+        final BitSet largeMask;
+        ValueMask(long smallMask, BitSet largeMask) {
+            this.smallMask = smallMask;
+            this.largeMask = largeMask;
+        }
+    }
+
+    private static final class CompiledSelector {
+        final int constraintCount;
+        final long smallMask;
+        final BitSet largeMask;
+        CompiledSelector(int constraintCount, long smallMask, BitSet largeMask) {
+            this.constraintCount = constraintCount;
+            this.smallMask = smallMask;
+            this.largeMask = largeMask;
+        }
+
+        long emit(List<BlockState> states, BlockStateModel.UnbakedRoot root,
+                IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> output) {
+            long count = 0L;
+            if (largeMask == null) {
+                long remaining = smallMask;
+                while (remaining != 0L) {
+                    int index = Long.numberOfTrailingZeros(remaining);
+                    putNoOverlap(output, states.get(index), root);
+                    remaining &= remaining - 1L;
+                    count++;
+                }
+                return count;
+            }
+            for (int index = largeMask.nextSetBit(0); index >= 0; index = largeMask.nextSetBit(index + 1)) {
+                putNoOverlap(output, states.get(index), root);
+                count++;
+            }
+            return count;
+        }
     }
 
     private static List<MultiPartModel.Selector<BlockStateModel.Unbaked>> parseMultipart(
@@ -367,7 +505,7 @@ public final class FastBlockStateDecoder {
         while (reader.hasNext()) {
             String field = reader.nextName();
             switch (field) {
-                case "model" -> model = Identifier.parse(reader.nextString());
+                case "model" -> model = IdentifierInterner.parse(reader.nextString());
                 case "x" -> x = quadrant(reader.nextInt());
                 case "y" -> y = quadrant(reader.nextInt());
                 case "z" -> z = quadrant(reader.nextInt());
@@ -400,32 +538,9 @@ public final class FastBlockStateDecoder {
         if (previous != null) throw new IllegalArgumentException("Overlapping definition on state: " + state);
     }
 
-    private static long emitCombinations(
-            BlockState state,
-            List<Property<?>> freeProperties,
-            int index,
-            BlockStateModel.UnbakedRoot root,
-            IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> output) {
-        if (index == freeProperties.size()) {
-            putNoOverlap(output, state, root);
-            return 1L;
-        }
-        Property<?> property = freeProperties.get(index);
-        long emitted = 0L;
-        for (Comparable<?> value : comparableValues(property)) {
-            emitted += emitCombinations(setValue(state, property, value), freeProperties, index + 1, root, output);
-        }
-        return emitted;
-    }
-
     @SuppressWarnings({"rawtypes", "unchecked"})
     private static Iterable<? extends Comparable<?>> comparableValues(Property<?> property) {
         return (Iterable) property.getPossibleValues();
-    }
-
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    private static BlockState setValue(BlockState state, Property<?> property, Comparable<?> value) {
-        return state.setValue((Property) property, (Comparable) value);
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

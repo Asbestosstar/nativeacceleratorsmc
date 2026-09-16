@@ -25,6 +25,12 @@ public final class Minecraft263AccelerationTargets {
     public static final String BLOCKSTATE_MODEL_DISPATCHER = "net.minecraft.client.renderer.block.dispatch.BlockStateModelDispatcher";
     public static final String CUBOID_MODEL = "net.minecraft.client.resources.model.cuboid.CuboidModel";
     public static final String FILE_TO_ID_CONVERTER = "net.minecraft.resources.FileToIdConverter";
+    public static final String CLIENT_ITEM_INFO_LOADER = "net.minecraft.client.resources.model.ClientItemInfoLoader";
+    public static final String SPRITE_LOADER = "net.minecraft.client.renderer.texture.SpriteLoader";
+    public static final String SPRITE_RESOURCE_LOADER = "net.minecraft.client.renderer.texture.atlas.SpriteResourceLoader";
+    public static final String FILE_PACK_RESOURCES = "net.minecraft.server.packs.FilePackResources";
+    public static final String MODEL_DISCOVERY = "net.minecraft.client.resources.model.ModelDiscovery";
+    public static final String MODEL_GROUP_COLLECTOR = "net.minecraft.client.resources.model.ModelGroupCollector";
 
     /** Base class shared by the dedicated server and the client's single-player integrated server. */
     public static final String MINECRAFT_SERVER = "net.minecraft.server.MinecraftServer";
@@ -86,7 +92,21 @@ public final class Minecraft263AccelerationTargets {
             new Target(CUBOID_MODEL, "fromStream(Reader)",
                     "vanilla fallback and profiler seam"),
             new Target(FILE_TO_ID_CONVERTER, "listMatchingResources / listMatchingResourceStacks",
-                    "resource-discovery profiler seam")
+                    "reload-scoped authoritative enumeration reuse without first-touch map copying + profiler seam"),
+            new Target(CLIENT_ITEM_INFO_LOADER, "scheduleLoad(ResourceManager,Executor)",
+                    "shared work-stealing item loader + streaming decoder (including common tint payloads) with codec fallback"),
+            new Target(SPRITE_LOADER, "runSpriteSuppliers / loadAndStitch / stitch",
+                    "batched sprite-source work + warm decoded-texture/layout cache + deferred cold writes + parallel mipmaps + DAG profiler"),
+            new Target(SPRITE_RESOURCE_LOADER, "create(Set) invoked by SpriteLoader#loadAndStitch",
+                    "metadata-preserving atlas loader that restores cached RGBA on hits and falls back to vanilla STB decode"),
+            new Target(NATIVE_IMAGE, "pixels field (Accessor)",
+                    "bulk mapped RGBA restore plus bounded staging copy; persistent writes deferred until after startup"),
+            new Target(FILE_PACK_RESOURCES, "listResources / getNamespaces",
+                    "optional per-ZipFile prefix index (off by default after cold-start profiling); source-byte cache also off by default"),
+            new Target(MODEL_DISCOVERY, "resolve / getOrCreateModel",
+                    "parent-first validity propagation order + fast cache-hit path + DAG profiler"),
+            new Target(MODEL_GROUP_COLLECTOR, "build",
+                    "allocation-reduced grouping with vanilla-compatible group semantics")
     );
 
     public record Target(String className, String methods, String nativeKernel) {}

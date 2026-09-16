@@ -767,3 +767,34 @@ Do not add a native call per JSON document merely to claim native acceleration. 
 and their outputs are Minecraft Java objects. Native parsing is appropriate only as a bulk tokenizer/decoder with many
 documents per crossing after profiling demonstrates a remaining crossover.
 
+
+## Model reload throughput pass 3 (26.3)
+
+The 26.3 client model pipeline now has a second layer of throughput work after the direct blockstate/raw-model decoders:
+
+- `ClientItemLoadBatcher` replaces `ClientItemInfoLoader`'s future-per-item scheduling with `ModelWorkScheduler` and uses `FastClientItemDecoder` only for item-model shapes it can construct exactly. Unsupported shapes always reopen the resource and use the vanilla registry-aware codec.
+- `ReloadResourceIndex` caches authoritative `ResourceManager` enumeration results for the duration of one reload. It never reconstructs pack priority/filter semantics itself.
+- `ZipResourceIndex` indexes each open ZIP central directory once into slash-prefix buckets. Buckets preserve original ZIP entry order and include directory entries, because `FilePackResources#getNamespaces` observes them.
+- `SpriteLoaderThroughputMixin` replaces future-per-sprite-source scheduling with the shared work-stealing pool. Atlas stitching itself remains vanilla.
+- `FastBlockStateDecoder` caches per-`StateDefinition` property/value state masks so partial selectors become bit-mask intersections rather than recursive state transitions and temporary selector maps.
+- `ModelDiscoveryParentOrderMixin` reverses only the unresolved validation list before vanilla propagation. Discovery adds a parent after its child, so this makes the ordinary case parent-first without replacing vanilla cycle handling.
+- `FastModelGroupCollector` preserves the 26.3 grouping rules while reducing identity-set and temporary allocation overhead.
+- `ModelDagProfiler` records actual asynchronous wall-clock completion offsets. Do not confuse these with `ProfiledReloadInstance` preparation counters, which are accumulated task CPU and may overlap.
+
+All pass-3 rewrites remain individually suppressible through the existing global mixin disable plus their feature properties. `model.verifyFastPaths=true` is an intentionally expensive validation mode: it reparses supported raw/item resources through vanilla and validates blockstate state coverage/dependency/equality-group partitions, falling back to vanilla on a mismatch. Do not enable it for throughput measurements.
+
+## Model/resource throughput pass 5 — cold-cache safety
+
+Pass 4 proved that persistent caches can help unchanged launches, but the first real cold-cache profile showed that synchronous write-through defeats the fast model decoders. Preserve these pass-5 rules:
+
+- persistent cache **hits** may remain on startup's critical path;
+- persistent cache **misses must not perform disk writes** on resource/model/sprite workers;
+- decoded-texture/layout cache writes go through `DeferredCacheWriter` and are held until the first playable screen; later reloads hold them until reload completion;
+- source-byte caching is off by default (`cache.resourceBytes=false`); if enabled, misses stream live through a tee and only stage deferred writes;
+- the recursive `mods/` + `resourcepacks/` generation manifest remains mandatory before any persistent cache reuse;
+- `ReloadResourceIndex` may reuse the authoritative ResourceManager result but must not eagerly clone one-shot first-touch results;
+- the eager full `ZipResourceIndex` is opt-in (`resource.zipIndex=false` by default) because its cold-build cost regressed first-touch model enumeration;
+- normal throughput runs keep `model.profiler=false` and `model.dagProfiler=false`; enable them only for diagnostic profiles;
+- item fast decoding may grow only with exact parity. Pass 5 adds the seven standard item tint payloads; transformation/property model types still fall back to vanilla.
+
+The desired invariant is: an invalidated/new cache generation should behave approximately like the proven live fast-decoder path, while an unchanged generation may be faster. Never require a user to pay a large startup penalty merely because they added a mod/resource pack and correctly invalidated the cache.

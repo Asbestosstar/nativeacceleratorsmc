@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.LongAdder;
  */
 public final class ModelPipelineProfiler {
     private static final ConcurrentHashMap<String, Counter> COUNTERS = new ConcurrentHashMap<>();
-    private static final boolean ENABLED = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.profiler", true);
+    private static final boolean ENABLED = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.profiler", false);
 
     private ModelPipelineProfiler() {}
 

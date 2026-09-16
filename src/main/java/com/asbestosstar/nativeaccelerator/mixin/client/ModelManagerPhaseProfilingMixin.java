@@ -1,5 +1,6 @@
 package com.asbestosstar.nativeaccelerator.mixin.client;
 
+import com.asbestosstar.nativeaccelerator.client.ModelDagProfiler;
 import com.asbestosstar.nativeaccelerator.startup.StartupTimer;
 import net.minecraft.client.resources.model.ModelManager;
 import net.minecraft.server.packs.resources.ResourceManager;
@@ -30,6 +31,7 @@ public abstract class ModelManagerPhaseProfilingMixin {
         Long started = NATIVEACCELERATOR_RAW_LOAD_STARTED.get();
         NATIVEACCELERATOR_RAW_LOAD_STARTED.remove();
         if (started == null) return;
+        ModelDagProfiler.track("raw-models", cir.getReturnValue(), started);
         cir.getReturnValue().whenComplete((result, failure) -> {
             if (failure == null) StartupTimer.recordDuration("client.model-manager.phase.raw-model-load.wall", System.nanoTime() - started);
         });

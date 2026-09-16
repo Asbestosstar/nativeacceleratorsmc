@@ -1,5 +1,6 @@
 package com.asbestosstar.nativeaccelerator;
 
+import com.asbestosstar.nativeaccelerator.cache.PersistentResourceCache;
 import com.asbestosstar.nativeaccelerator.nativeapi.Capabilities;
 import com.asbestosstar.nativeaccelerator.nativeapi.NativeApi;
 import com.asbestosstar.nativeaccelerator.nativeapi.PanamaNativeApi;
@@ -64,6 +65,7 @@ public final class NativeAccelerator {
             // The loader already knows where Minecraft keeps options.txt; adopt that real location so the
             // backend evidence is read from the actual game directory instead of a guessed path.
             RendererPlatformPolicy.adoptLoaderGameDirectory();
+            PersistentResourceCache.initialize();
             NativeVulkanRenderer.initializeIfEnabled();
         }
     }

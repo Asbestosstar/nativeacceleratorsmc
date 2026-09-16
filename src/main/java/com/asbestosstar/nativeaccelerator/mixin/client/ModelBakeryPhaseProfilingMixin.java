@@ -1,5 +1,6 @@
 package com.asbestosstar.nativeaccelerator.mixin.client;
 
+import com.asbestosstar.nativeaccelerator.client.ModelDagProfiler;
 import com.asbestosstar.nativeaccelerator.startup.StartupTimer;
 import net.minecraft.client.resources.model.ModelBakery;
 import net.minecraft.client.resources.model.sprite.MaterialBaker;
@@ -27,6 +28,7 @@ public abstract class ModelBakeryPhaseProfilingMixin {
     private void nativeaccelerator$finishBake(MaterialBaker materials, Executor executor,
             CallbackInfoReturnable<CompletableFuture<ModelBakery.BakingResult>> cir) {
         long started = nativeaccelerator$bakeStartedNanos;
+        ModelDagProfiler.track("model-bakery.bake", cir.getReturnValue(), started);
         cir.getReturnValue().whenComplete((result, failure) -> {
             if (failure == null && started != 0L) {
                 StartupTimer.recordDuration("client.model-manager.phase.bake.wall", System.nanoTime() - started);

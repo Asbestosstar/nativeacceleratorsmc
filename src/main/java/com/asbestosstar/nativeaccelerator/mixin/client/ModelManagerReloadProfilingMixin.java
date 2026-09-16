@@ -1,5 +1,6 @@
 package com.asbestosstar.nativeaccelerator.mixin.client;
 
+import com.asbestosstar.nativeaccelerator.client.ModelDagProfiler;
 import com.asbestosstar.nativeaccelerator.client.ModelJsonParseCache;
 import com.asbestosstar.nativeaccelerator.client.ModelPipelineProfiler;
 import com.asbestosstar.nativeaccelerator.startup.StartupTimer;
@@ -21,6 +22,7 @@ import java.util.concurrent.CompletableFuture;
  */
 @Mixin(ModelManager.class)
 public abstract class ModelManagerReloadProfilingMixin {
+    private long nativeaccelerator$reloadStarted;
     private static final String PREFIX = "client.model-manager.json.";
 
     @Inject(method = "reload", at = @At("HEAD"), require = 0)
@@ -32,6 +34,8 @@ public abstract class ModelManagerReloadProfilingMixin {
             CallbackInfoReturnable<CompletableFuture<Void>> cir) {
         ModelJsonParseCache.beginReload();
         ModelPipelineProfiler.reset();
+        ModelDagProfiler.beginReload();
+        nativeaccelerator$reloadStarted = ModelDagProfiler.begin();
     }
 
     @Inject(method = "reload", at = @At("RETURN"), require = 0)
@@ -42,6 +46,7 @@ public abstract class ModelManagerReloadProfilingMixin {
             java.util.concurrent.Executor applyExecutor,
             CallbackInfoReturnable<CompletableFuture<Void>> cir) {
         cir.getReturnValue().whenComplete((ignored, failure) -> {
+            ModelDagProfiler.end("model-manager.total", nativeaccelerator$reloadStarted);
             if (failure != null) return;
             ModelJsonParseCache.Snapshot snapshot = ModelJsonParseCache.snapshot();
             if (snapshot.readNanos() != 0L || snapshot.parseNanos() != 0L
@@ -55,6 +60,8 @@ public abstract class ModelManagerReloadProfilingMixin {
             }
             String pipelineReport = ModelPipelineProfiler.report();
             if (!pipelineReport.isBlank()) System.out.print(pipelineReport);
+            String dagReport = ModelDagProfiler.report();
+            if (!dagReport.isBlank()) System.out.print(dagReport);
         });
     }
 }

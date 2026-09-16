@@ -1,5 +1,6 @@
 package com.asbestosstar.nativeaccelerator.mixin.client;
 
+import com.asbestosstar.nativeaccelerator.cache.DeferredCacheWriter;
 import com.asbestosstar.nativeaccelerator.startup.StartupStages;
 import com.asbestosstar.nativeaccelerator.startup.StartupTimer;
 import net.minecraft.client.ResourceLoadStateTracker;
@@ -24,11 +25,13 @@ public abstract class ResourceLoadStateTrackerMixin {
 
     @Inject(method = {"startReload"}, at = @At("HEAD"), require = 0)
     private void nativeaccelerator$reloadBegin(CallbackInfo ci) {
+        DeferredCacheWriter.beginReload();
         StartupTimer.begin(StartupStages.CLIENT_RESOURCE_RELOAD);
     }
 
     @Inject(method = {"finishReload"}, at = @At("HEAD"), require = 0)
     private void nativeaccelerator$reloadEnd(CallbackInfo ci) {
         StartupTimer.end(StartupStages.CLIENT_RESOURCE_RELOAD);
+        DeferredCacheWriter.endReload();
     }
 }

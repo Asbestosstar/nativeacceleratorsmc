@@ -1,6 +1,7 @@
 package com.asbestosstar.nativeaccelerator.client;
 
 import com.google.gson.JsonElement;
+import com.asbestosstar.nativeaccelerator.cache.PersistentResourceCache;
 import com.google.gson.JsonParseException;
 import com.mojang.logging.LogUtils;
 import com.mojang.serialization.JsonOps;
@@ -27,9 +28,12 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Function;
@@ -49,20 +53,26 @@ public final class ModelLoadBatcher {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final FileToIdConverter MODEL_LISTER = FileToIdConverter.json("models");
     private static final FileToIdConverter BLOCKSTATE_LISTER = FileToIdConverter.json("blockstates");
+    private static final boolean BATCH_LOADING = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.batchLoading", true);
+    private static final boolean FAST_CUBOID_JSON = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.fastCuboidJson", true);
+    private static final boolean FAST_BLOCKSTATE_JSON = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.fastBlockstateJson", true);
+    private static final boolean IO_PROFILER = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.ioProfiler", false);
+    private static final boolean VERIFY_FAST_PATHS = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.verifyFastPaths", false);
 
     private ModelLoadBatcher() {}
 
     public static boolean enabled() {
-        return com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.batchLoading", true);
+        return BATCH_LOADING;
     }
 
     public static CompletableFuture<Map<Identifier, UnbakedModel>> loadBlockModels(
             ResourceManager manager, Executor minecraftExecutor) {
         long wallStarted = ModelPipelineProfiler.start();
+        long dagStarted = ModelDagProfiler.begin();
         Executor workerExecutor = ModelWorkScheduler.executor(minecraftExecutor);
-        return CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<Map<Identifier, UnbakedModel>> future = CompletableFuture.supplyAsync(() -> {
             long started = ModelPipelineProfiler.start();
-            Map<Identifier, Resource> resources = MODEL_LISTER.listMatchingResources(manager);
+            Map<Identifier, Resource> resources = ReloadResourceIndex.resources(MODEL_LISTER, manager);
             ModelPipelineProfiler.end("raw-model.enumerate", started);
             ModelPipelineProfiler.addCount("raw-model.resources", resources.size());
             return new ArrayList<>(resources.entrySet());
@@ -76,6 +86,8 @@ public final class ModelLoadBatcher {
                     ModelPipelineProfiler.end("raw-model.wall", wallStarted);
                     return Map.copyOf(models);
                 });
+        ModelDagProfiler.track("raw-models", future, dagStarted);
+        return future;
     }
 
     private static ModelResult parseModel(Map.Entry<Identifier, Resource> entry) {
@@ -84,20 +96,33 @@ public final class ModelLoadBatcher {
         long totalStarted = ModelPipelineProfiler.start();
         try {
             CuboidModel model;
-            if (com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.fastCuboidJson", true)) {
-                try (Reader reader = reader(resource)) {
+            if (FAST_CUBOID_JSON) {
+                try (Reader reader = reader("models", entry.getKey(), resource)) {
                     model = FastCuboidModelDecoder.parse(reader);
                     ModelPipelineProfiler.addCount("raw-model.fast-hit-count", 1);
+                    if (VERIFY_FAST_PATHS) {
+                        CuboidModel vanilla;
+                        try (Reader verifyReader = reader("models", entry.getKey(), resource)) {
+                            vanilla = CuboidModel.fromStream(verifyReader);
+                        }
+                        if (!model.equals(vanilla)) {
+                            ModelPipelineProfiler.addCount("raw-model.verify-mismatch", 1);
+                            model = vanilla;
+                        } else {
+                            ModelPipelineProfiler.addCount("raw-model.verify-match", 1);
+                        }
+                    }
                 } catch (Exception fastFailure) {
+                    FastPathFallbacks.record("raw-model", fastFailure, entry.getKey().toString());
                     long fallbackStarted = ModelPipelineProfiler.start();
-                    try (Reader reader = reader(resource)) {
+                    try (Reader reader = reader("models", entry.getKey(), resource)) {
                         model = CuboidModel.fromStream(reader);
                     }
                     ModelPipelineProfiler.end("raw-model.vanilla-fallback", fallbackStarted);
                     ModelPipelineProfiler.addCount("raw-model.fast-fallback-count", 1);
                 }
             } else {
-                try (Reader reader = reader(resource)) {
+                try (Reader reader = reader("models", entry.getKey(), resource)) {
                     model = CuboidModel.fromStream(reader);
                 }
             }
@@ -115,11 +140,12 @@ public final class ModelLoadBatcher {
         Function<Identifier, StateDefinition<Block, BlockState>> definitionToBlockState =
                 BlockStateDefinitions.definitionLocationToBlockStateMapper();
         long wallStarted = ModelPipelineProfiler.start();
+        long dagStarted = ModelDagProfiler.begin();
         Executor workerExecutor = ModelWorkScheduler.executor(minecraftExecutor);
 
-        return CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<BlockStateModelLoader.LoadedModels> future = CompletableFuture.supplyAsync(() -> {
             long started = ModelPipelineProfiler.start();
-            Map<Identifier, List<Resource>> resources = BLOCKSTATE_LISTER.listMatchingResourceStacks(manager);
+            Map<Identifier, List<Resource>> resources = ReloadResourceIndex.stacks(BLOCKSTATE_LISTER, manager);
             ModelPipelineProfiler.end("blockstate.enumerate", started);
             ModelPipelineProfiler.addCount("blockstate.resources", resources.size());
             return new ArrayList<>(resources.entrySet());
@@ -135,6 +161,8 @@ public final class ModelLoadBatcher {
                     ModelPipelineProfiler.end("blockstate.wall", wallStarted);
                     return new BlockStateModelLoader.LoadedModels(result);
                 });
+        ModelDagProfiler.track("blockstates", future, dagStarted);
+        return future;
     }
 
     private static IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> parseBlockStateStack(
@@ -153,11 +181,22 @@ public final class ModelLoadBatcher {
             String source = stateDefinitionId + "/" + resource.sourcePackId();
             try {
                 IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> decoded;
-                if (com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.fastBlockstateJson", true)) {
-                    try (Reader reader = reader(resource)) {
+                if (FAST_BLOCKSTATE_JSON) {
+                    try (Reader reader = reader("blockstates", entry.getKey(), resource)) {
                         decoded = FastBlockStateDecoder.decodeAndInstantiate(reader, stateDefinition, source);
                         ModelPipelineProfiler.addCount("blockstate.fast-hit-count", 1);
+                        if (VERIFY_FAST_PATHS) {
+                            IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> vanilla =
+                                    vanillaBlockState(resource, stateDefinitionId, stateDefinition);
+                            if (!blockstateEquivalent(decoded, vanilla, stateDefinition)) {
+                                ModelPipelineProfiler.addCount("blockstate.verify-mismatch", 1);
+                                decoded = vanilla;
+                            } else {
+                                ModelPipelineProfiler.addCount("blockstate.verify-match", 1);
+                            }
+                        }
                     } catch (Exception fastFailure) {
+                        FastPathFallbacks.record("blockstate", fastFailure, source);
                         long fallbackStarted = ModelPipelineProfiler.start();
                         decoded = vanillaBlockState(resource, stateDefinitionId, stateDefinition);
                         ModelPipelineProfiler.end("blockstate.vanilla-fallback", fallbackStarted);
@@ -182,8 +221,8 @@ public final class ModelLoadBatcher {
             Resource resource,
             Identifier stateDefinitionId,
             StateDefinition<Block, BlockState> stateDefinition) throws Exception {
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(profiled(resource.open()), StandardCharsets.UTF_8))) {
+        try (BufferedReader reader = new BufferedReader(PersistentResourceCache.reader(
+                "blockstates", BLOCKSTATE_LISTER.idToFile(stateDefinitionId), resource))) {
             long parseStarted = ModelPipelineProfiler.start();
             JsonElement element = StrictJsonParser.parse(reader);
             BlockStateModelDispatcher dispatcher = BlockStateModelDispatcher.CODEC
@@ -202,15 +241,46 @@ public final class ModelLoadBatcher {
         }
     }
 
-    private static InputStream profiled(InputStream input) {
-        return com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.ioProfiler", false)
-                ? new ProfiledResourceInputStream(input)
-                : input;
+
+    private static boolean blockstateEquivalent(
+            IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> fast,
+            IdentityHashMap<BlockState, BlockStateModel.UnbakedRoot> vanilla,
+            StateDefinition<Block, BlockState> definition) {
+        if (fast.size() != vanilla.size()) return false;
+        HashMap<Object, Integer> fastGroups = new HashMap<>();
+        HashMap<Object, Integer> vanillaGroups = new HashMap<>();
+        int nextFast = 1;
+        int nextVanilla = 1;
+        for (BlockState state : definition.getPossibleStates()) {
+            BlockStateModel.UnbakedRoot a = fast.get(state);
+            BlockStateModel.UnbakedRoot b = vanilla.get(state);
+            if ((a == null) != (b == null)) return false;
+            if (a == null) continue;
+            if (!dependencies(a).equals(dependencies(b))) return false;
+            Object ag = a.visualEqualityGroup(state);
+            Object bg = b.visualEqualityGroup(state);
+            Integer ai = fastGroups.get(ag);
+            if (ai == null) { ai = nextFast++; fastGroups.put(ag, ai); }
+            Integer bi = vanillaGroups.get(bg);
+            if (bi == null) { bi = nextVanilla++; vanillaGroups.put(bg, bi); }
+            if (!ai.equals(bi)) return false;
+        }
+        return true;
     }
 
-    private static Reader reader(Resource resource) throws Exception {
+    private static Set<Identifier> dependencies(BlockStateModel.UnbakedRoot root) {
+        LinkedHashSet<Identifier> ids = new LinkedHashSet<>();
+        root.resolveDependencies(ids::add);
+        return ids;
+    }
+
+    private static InputStream profiled(InputStream input) {
+        return IO_PROFILER ? new ProfiledResourceInputStream(input) : input;
+    }
+
+    private static Reader reader(String family, Identifier resourceId, Resource resource) throws Exception {
         long started = ModelPipelineProfiler.start();
-        Reader reader = new InputStreamReader(profiled(resource.open()), StandardCharsets.UTF_8);
+        Reader reader = PersistentResourceCache.reader(family, resourceId, resource);
         ModelPipelineProfiler.end("resource.reader.open", started);
         return reader;
     }

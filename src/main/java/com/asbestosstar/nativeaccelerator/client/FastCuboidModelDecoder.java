@@ -62,7 +62,7 @@ public final class FastCuboidModelDecoder {
                 case "textures" -> textures = parseTextures(reader);
                 case "parent" -> {
                     String parentName = reader.nextString();
-                    parent = parentName.isEmpty() ? null : Identifier.parse(parentName);
+                    parent = parentName.isEmpty() ? null : IdentifierInterner.parse(parentName);
                 }
                 default -> reader.skipValue();
             }
@@ -219,7 +219,7 @@ public final class FastCuboidModelDecoder {
             if (reader.peek() == JsonToken.STRING) {
                 String value = reader.nextString();
                 if (value.startsWith("#")) builder.addReference(slot, value.substring(1));
-                else builder.addTexture(slot, new Material(Identifier.parse(value)));
+                else builder.addTexture(slot, new Material(IdentifierInterner.parse(value)));
             } else if (reader.peek() == JsonToken.BEGIN_OBJECT) {
                 Identifier sprite = null;
                 boolean forceTranslucent = false;
@@ -227,7 +227,7 @@ public final class FastCuboidModelDecoder {
                 while (reader.hasNext()) {
                     String field = reader.nextName();
                     switch (field) {
-                        case "sprite" -> sprite = Identifier.parse(reader.nextString());
+                        case "sprite" -> sprite = IdentifierInterner.parse(reader.nextString());
                         case "force_translucent" -> forceTranslucent = reader.nextBoolean();
                         default -> reader.skipValue();
                     }
