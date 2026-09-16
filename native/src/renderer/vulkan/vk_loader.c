@@ -15,6 +15,14 @@ static nar_library_handle nar_open_library(const char *name) { return dlopen(nam
 static void *nar_find_symbol(nar_library_handle h, const char *name) { return dlsym(h, name); }
 #endif
 
+#if !defined(_WIN32)
+#include <errno.h>
+#include <poll.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 typedef int32_t (*nar_vk_enumerate_instance_version_fn)(uint32_t *version);
 /* Minimal core Vulkan ABI declarations from the public API specification. */
 typedef void *nar_vk_instance;
@@ -56,14 +64,37 @@ typedef struct nar_vulkan_loader_state {
 
 static nar_vulkan_loader_state g_loader;
 
+/*
+ * MoltenVK configuration defaults.
+ *
+ * MoltenVK advertises and uses Metal argument buffers (a Metal 2 feature) by default. On some Metal
+ * drivers -- notably older/OCLP-patched stacks -- the Apple Metal driver does not provide indirect
+ * argument encoders and aborts inside
+ * -[MTLIOAccelDevice newIndirectArgumentEncoderWithLayout:] while MoltenVK is creating its devices.
+ * abort() cannot be caught, so the whole process dies even though Vulkan would otherwise work.
+ *
+ * Disabling MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS makes MoltenVK avoid that code path; on the
+ * affected machines vkCreateInstance then succeeds and enumerates the physical devices normally.
+ * The setting is only a default: an explicit value from the environment (or the layer-settings
+ * file) always wins. The environment is read lazily by MoltenVK, so setting it here -- after
+ * dlopen() but before the first Vulkan call -- takes effect.
+ */
+static void nar_apply_moltenvk_defaults(void) {
+#if defined(__APPLE__)
+    if (getenv("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS") == NULL) {
+        setenv("MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS", "0", 0);
+    }
+#endif
+}
+
 static void nar_probe_loader(void) {
     if (g_loader.initialized) return;
     g_loader.initialized = 1;
 
     const char *override_name = getenv("NATIVE_ACCELERATOR_VULKAN_LIBRARY");
-    const char *candidates[8];
+    const char *candidates[10];
     size_t count = 0;
-    if (override_name != NULL && override_name[0] != '\0') candidates[count++] = override_name;
+    if (override_name != NULL && override_name[0] != '0') candidates[count++] = override_name;
 #if defined(_WIN32)
     candidates[count++] = "vulkan-1.dll";
 #elif defined(__APPLE__)
@@ -71,9 +102,26 @@ static void nar_probe_loader(void) {
     candidates[count++] = "libvulkan.dylib";
     candidates[count++] = "libMoltenVK.dylib";
 #else
+    /* Names the Unix families use: Solaris/illumos, the BSDs, Linux and AIX ship .so, HP-UX uses
+     * .sl, and AIX also provides shared libraries as .a archives. */
     candidates[count++] = "libvulkan.so.1";
     candidates[count++] = "libvulkan.so";
+    candidates[count++] = "libvulkan.sl";
+    candidates[count++] = "libvulkan.sl.1";
+    candidates[count++] = "libvulkan.a";
 #endif
+
+    /* Unix-family hosts commonly carry several Mesa trees; select the newest Vulkan-enabled one
+     * before anything is opened so the system loader and VK_DRIVER_FILES agree on that tree. */
+    nar_vulkan_mesa_apply_selection();
+
+    nar_apply_moltenvk_defaults();
+
+    /* Prefer the Vulkan loader shipped inside the selected Mesa tree when it has one. */
+    char mesa_loader[256];
+    if (nar_vulkan_mesa_loader(mesa_loader, sizeof(mesa_loader)) > 0 && mesa_loader[0] != '\0') {
+        candidates[count++] = mesa_loader;
+    }
 
     for (size_t i = 0; i < count; ++i) {
         nar_library_handle h = nar_open_library(candidates[i]);
@@ -118,7 +166,7 @@ uint64_t nar_vulkan_loader_name(char *dst, uint64_t capacity) {
     return length;
 }
 
-uint32_t nar_vulkan_physical_device_count(void) {
+static uint32_t nar_enumerate_devices_inprocess(void) {
     nar_probe_loader();
     if (g_loader.handle == 0) return 0;
 
@@ -151,3 +199,119 @@ uint32_t nar_vulkan_physical_device_count(void) {
     destroy_instance(instance, NULL);
     return count;
 }
+
+/*
+ * Physical-device count.
+ *
+ * Creating a Vulkan instance is not a safe operation on every driver. A MoltenVK build can abort()
+ * inside the Apple Metal driver -- observed as the Metal symbol
+ * -[MTLIOAccelDevice newIndirectArgumentEncoderWithLayout:] aborting on a GPU without
+ * indirect-argument-encoder support. abort() cannot be caught in-process, so on POSIX the probe runs
+ * in a forked child that reports the count over a pipe and then exits.
+ *
+ * nar_apply_moltenvk_defaults() avoids that driver path on macOS by disabling MoltenVK's Metal
+ * argument buffers. The isolation below remains as a second line of defence for other drivers that
+ * may abort or hang while creating an instance.
+ *
+ * If the child aborts, hangs, or exits abnormally the parent survives, reports zero devices, and the
+ * Vulkan client renderer is simply not selected; the game still launches and plays with its own
+ * renderer plus the native compute accelerator.
+ *
+ * The strategy is platform-specific (see nar_probe_use_inprocess()): on macOS the accurate in-process
+ * probe is the default because fork() is unreliable in a threaded graphical process, while on other
+ * POSIX systems the fork-isolated probe remains the default. Set NATIVE_ACCELERATOR_VULKAN_PROBE_INPROCESS
+ * or NATIVE_ACCELERATOR_VULKAN_PROBE_ISOLATED to force a specific strategy.
+ */
+#if defined(_WIN32)
+
+uint32_t nar_vulkan_physical_device_count(void) {
+    nar_probe_loader();
+    if (g_loader.handle == 0) return 0;
+    return nar_enumerate_devices_inprocess();
+}
+
+#else
+
+#define NAR_VULKAN_PROBE_TIMEOUT_MS 5000
+
+/*
+ * Decide the probe strategy.
+ *
+ * Fork isolation protects against a driver that abort()s while creating a Vulkan instance. On macOS,
+ * however, fork() is not a safe isolation primitive for a graphical process: Minecraft (and this repos
+ * test harness) run worker threads, and forking a multithreaded process while the Objective-C runtime
+ * is initializing makes the child abort inside the ObjC runtime (objc_initializeAfterForkError). The
+ * parent then misreads that as "no Vulkan device" -- a false negative on machines where Vulkan works.
+ * Setting OBJC_DISABLE_INITIALIZE_FORK_SAFETY from inside the library cannot help, because the ObjC
+ * runtime reads it once, at process start, before main().
+ *
+ * The specific abort that motivated isolation -- MoltenVK building a Metal argument-buffer encoder on
+ * a GPU without indirect-argument-encoder support -- is already disabled by nar_apply_moltenvk_defaults().
+ * So on macOS the accurate in-process probe is preferred, and the fork path stays available as an
+ * explicit opt-in for other drivers that may abort or hang.
+ */
+static int nar_probe_use_inprocess(void) {
+    if (getenv("NATIVE_ACCELERATOR_VULKAN_PROBE_INPROCESS") != NULL) return 1;
+#if defined(__APPLE__)
+    if (getenv("NATIVE_ACCELERATOR_VULKAN_PROBE_ISOLATED") == NULL) return 1;
+#endif
+    return 0;
+}
+
+static uint32_t nar_probe_device_count_isolated(void) {
+    if (nar_probe_use_inprocess()) {
+        return nar_enumerate_devices_inprocess();
+    }
+
+    int fds[2];
+    if (pipe(fds) != 0) return 0;
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(fds[0]);
+        close(fds[1]);
+        return 0;
+    }
+    if (pid == 0) {
+        close(fds[0]);
+        uint32_t child_count = nar_enumerate_devices_inprocess();
+        ssize_t written = write(fds[1], &child_count, sizeof(child_count));
+        (void)written;
+        close(fds[1]);
+        _exit(0);
+    }
+
+    close(fds[1]);
+    uint32_t count = 0;
+    struct pollfd pfd;
+    pfd.fd = fds[0];
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    int ready = poll(&pfd, 1, NAR_VULKAN_PROBE_TIMEOUT_MS);
+    if (ready > 0) {
+        unsigned char *dst = (unsigned char *)&count;
+        size_t got = 0;
+        while (got < sizeof(count)) {
+            ssize_t n = read(fds[0], dst + got, sizeof(count) - got);
+            if (n <= 0) break;
+            got += (size_t)n;
+        }
+        if (got != sizeof(count)) count = 0;
+    } else {
+        kill(pid, SIGKILL);
+    }
+    close(fds[0]);
+
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) { }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) count = 0;
+    return count;
+}
+
+uint32_t nar_vulkan_physical_device_count(void) {
+    nar_probe_loader();
+    if (g_loader.handle == 0) return 0;
+    return nar_probe_device_count_isolated();
+}
+
+#endif

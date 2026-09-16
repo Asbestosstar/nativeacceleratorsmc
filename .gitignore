@@ -15,3 +15,7 @@ buildNumber.properties
 .project
 # JDT-specific (Eclipse Java Development Tools)
 .classpath
+
+# Captured TLauncher launch log; reference for test-macos.sh arguments, not a build input.
+tl console.log
+26_3_src_pre3.txt

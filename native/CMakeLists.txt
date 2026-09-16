@@ -5,6 +5,21 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# POSIX declarations (setenv, unsetenv, dlopen, pthread_*, dirent, mkdir...) are
+# only exposed once the matching feature-test macro is defined. Linux and macOS
+# default builds happen to expose them, but the strict toolchains used by the
+# other Unix families (HP-UX cc, AIX xlC, Solaris Studio) and a strict -std=c11
+# do not, so name the level we actually depend on here instead of relying on the
+# compiler default.
+set(NA_POSIX_DEFINITIONS)
+if(NOT WIN32)
+    if(APPLE)
+        list(APPEND NA_POSIX_DEFINITIONS _DARWIN_C_SOURCE)
+    else()
+        list(APPEND NA_POSIX_DEFINITIONS _XOPEN_SOURCE=700)
+    endif()
+endif()
+
 # Reference/distribution builds can keep normal symbol visibility and debug
 # information so the bundled native binaries remain inspectable. This is not
 # required for correctness; it is enabled by scripts/build-native.sh.
@@ -21,6 +36,7 @@ add_library(nativeaccelerator SHARED
 )
 
 target_include_directories(nativeaccelerator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(nativeaccelerator PRIVATE ${NA_POSIX_DEFINITIONS})
 
 # Optional Vulkan renderer companion library. It deliberately has no compile-time
 # dependency on a particular window system or Vulkan SDK: the bootstrap probes
@@ -33,13 +49,16 @@ add_library(nativeaccelerator_renderer_vulkan SHARED
     src/renderer/common/scene.c
     src/renderer/common/voxel_mesh.c
     src/renderer/common/pipeline_cache.c
+    src/renderer/common/platform_policy.c
     src/renderer/vulkan/vk_loader.c
+    src/renderer/vulkan/mesa_select.c
 )
 
 target_include_directories(nativeaccelerator_renderer_vulkan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/common
 )
+target_compile_definitions(nativeaccelerator_renderer_vulkan PRIVATE ${NA_POSIX_DEFINITIONS})
 
 if(WIN32)
     target_sources(nativeaccelerator_renderer_vulkan PRIVATE src/renderer/jobs/jobs_serial.c)
@@ -177,10 +196,12 @@ if(BUILD_TESTING)
     add_executable(nativeaccelerator_kernel_tests tests/kernel_tests.c)
     target_include_directories(nativeaccelerator_kernel_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(nativeaccelerator_kernel_tests PRIVATE nativeaccelerator)
+    target_compile_definitions(nativeaccelerator_kernel_tests PRIVATE ${NA_POSIX_DEFINITIONS})
     add_test(NAME nativeaccelerator-kernels COMMAND nativeaccelerator_kernel_tests)
 
     add_executable(nativeaccelerator_renderer_tests tests/renderer_tests.c)
     target_include_directories(nativeaccelerator_renderer_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(nativeaccelerator_renderer_tests PRIVATE nativeaccelerator_renderer_vulkan)
+    target_compile_definitions(nativeaccelerator_renderer_tests PRIVATE ${NA_POSIX_DEFINITIONS})
     add_test(NAME nativeaccelerator-renderer COMMAND nativeaccelerator_renderer_tests)
 endif()

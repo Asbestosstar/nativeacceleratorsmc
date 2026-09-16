@@ -11,7 +11,7 @@ public final class Minecraft263AccelerationTargets {
     private Minecraft263AccelerationTargets() {}
 
     public static final String SIMPLE_BIT_STORAGE = "net.minecraft.util.SimpleBitStorage";
-    public static final String DATAFIX_PACKED_BIT_STORAGE = "net.minecraft.util.datafix.fixes.PackedBitStorage";
+    public static final String DATAFIX_PACKED_BIT_STORAGE = "net.minecraft.util.datafix.PackedBitStorage";
     public static final String MESH_DATA = "com.mojang.blaze3d.vertex.MeshData";
     public static final String NATIVE_IMAGE = "com.mojang.blaze3d.platform.NativeImage";
     public static final String PERLIN_NOISE = "net.minecraft.world.level.levelgen.synth.PerlinNoise";

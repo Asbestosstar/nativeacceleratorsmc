@@ -11,7 +11,7 @@ public final class Minecraft263RendererTargets {
 
     public static final String FRONTEND_COMMAND_ENCODER = "com.mojang.renderpearl.frontend.FrontendCommandEncoder";
     public static final String FRONTEND_RENDER_PASS = "com.mojang.renderpearl.frontend.FrontendRenderPass";
-    public static final String STAGED_VERTEX_BUFFER = "com.mojang.blaze3d.vertex.StagedVertexBuffer";
+    public static final String STAGED_VERTEX_BUFFER = "net.minecraft.client.renderer.StagedVertexBuffer";
     public static final String BUFFER_BUILDER = "com.mojang.blaze3d.vertex.BufferBuilder";
     public static final String MESH_DATA = "com.mojang.blaze3d.vertex.MeshData";
     public static final String RENDER_SYSTEM = "com.mojang.blaze3d.systems.RenderSystem";

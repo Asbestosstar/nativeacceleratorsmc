@@ -4,7 +4,9 @@ import com.asbestosstar.nativeaccelerator.nativeapi.Capabilities;
 import com.asbestosstar.nativeaccelerator.nativeapi.NativeApi;
 import com.asbestosstar.nativeaccelerator.nativeapi.PanamaNativeApi;
 import com.asbestosstar.nativeaccelerator.platform.Platform;
+import com.asbestosstar.nativeaccelerator.platform.ProcessInitializationGuard;
 import com.asbestosstar.nativeaccelerator.renderer.NativeVulkanRenderer;
+import com.asbestosstar.nativeaccelerator.renderer.RendererPlatformPolicy;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -19,8 +21,27 @@ public final class NativeAccelerator {
 
     private NativeAccelerator() {}
 
+    /**
+     * Idempotent mod initialization.
+     *
+     * <p>Native Accelerator ships one JAR that several loaders may all discover. The local
+     * {@link AtomicBoolean} only protects against a second call in the same classloader, so a host with
+     * two or more loaders installed could otherwise initialise the mod twice. The claim taken here lives
+     * in the JVM system property table, which every classloader shares, so whichever loader arrives first
+     * wins and any later loader entrypoint returns without duplicating the native load, the renderer probe
+     * or the hooks.</p>
+     */
     public static void initialize() {
         if (!INITIALIZED.compareAndSet(false, true)) return;
+
+        // Cross-loader guard: a copy of this class loaded by another classloader has its own INITIALIZED
+        // flag, but the shared system properties let it see that initialization already ran in this JVM.
+        if (!ProcessInitializationGuard.claim(ProcessInitializationGuard.MOD_INITIALIZATION)) {
+            System.out.println("[Native Accelerator] Mod is already initialized in this JVM ("
+                    + ProcessInitializationGuard.claimDescription(ProcessInitializationGuard.MOD_INITIALIZATION)
+                    + "); this loader entrypoint stands down to avoid a duplicate mod instance.");
+            return;
+        }
 
         Platform platform = Platform.current();
         System.out.println("[Native Accelerator] Platform: " + platform.id());
@@ -40,6 +61,9 @@ public final class NativeAccelerator {
         // Keep the renderer client-only without binding the common core to any loader API.
         // Class lookup is non-initializing; dedicated-server jars normally do not contain this class.
         if (minecraftClientClassPresent()) {
+            // The loader already knows where Minecraft keeps options.txt; adopt that real location so the
+            // backend evidence is read from the actual game directory instead of a guessed path.
+            RendererPlatformPolicy.adoptLoaderGameDirectory();
             NativeVulkanRenderer.initializeIfEnabled();
         }
     }

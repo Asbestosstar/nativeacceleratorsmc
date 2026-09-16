@@ -30,134 +30,156 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
 
-        <minecraft.version>26.3-pre2</minecraft.version>
-        <minecraft.compatibility>&gt;=26.3-pre2 &lt;26.4-</minecraft.compatibility>
-
-        <!-- Fabric side -->
-        <fabric.loader.version>0.19.5</fabric.loader.version>
-        <fabric.api.version>0.159.4+26.3</fabric.api.version>
-
-        <!-- Compatibility compile APIs. The entrypoints use only @Mod/constructor-level APIs. -->
-        <forge.version>1.20.6-50.0.4</forge.version>
-        <forge.eventbus.version>6.2.6</forge.eventbus.version>
-        <forge.modlauncher.version>10.2.1</forge.modlauncher.version>
-        <neoforge.version>20.6.123</neoforge.version>
-
-        <!-- FeatureCreep versions from the existing project line. -->
-        <featurecreep.loader.version>6.0.0-am3</featurecreep.loader.version>
-        <featurecreep.api.version>7</featurecreep.api.version>
-        <featurecreep.bootstrap.version>7</featurecreep.bootstrap.version>
+       
 
         <maven.compiler.plugin.version>3.15.0</maven.compiler.plugin.version>
         <maven.jar.plugin.version>3.5.1</maven.jar.plugin.version>
         <exec.maven.plugin.version>3.5.0</exec.maven.plugin.version>
+        <download.maven.plugin.version>1.13.0</download.maven.plugin.version>
+        <install.maven.plugin.version>3.1.4</install.maven.plugin.version>
+        <minecraft.version>26.3</minecraft.version>
+        <minecraft.compatibility>&gt;=26.3</minecraft.compatibility>
         <mixin.config>nativeaccelerator.mixins.json</mixin.config>
         <native.build>false</native.build>
+        <minecraft.client.url>https://piston-data.mojang.com/v1/objects/e877b6a07acd633fb3bb475002175cec036e7b87/client.jar</minecraft.client.url>
+        <minecraft.client.jar>${project.build.directory}/minecraft/client.jar</minecraft.client.jar>
     </properties>
 
-    <repositories>
+     <repositories>
         <repository>
             <id>MCForge</id>
+            <name>MCForge</name>
             <url>https://maven.minecraftforge.net/</url>
         </repository>
         <repository>
-            <id>NeoForge</id>
-            <url>https://maven.neoforged.net/releases/</url>
-        </repository>
-        <repository>
-            <id>FabricMC</id>
-            <url>https://maven.fabricmc.net/</url>
-        </repository>
-        <repository>
             <id>Minecraft</id>
+            <name>Minecraft</name>
             <url>https://libraries.minecraft.net</url>
         </repository>
         <repository>
+            <id>TLauncher</id>
+            <name>TLauncher</name>
+            <url>https://res.tlauncher.org</url>
+        </repository>
+        <repository>
+            <id>NeoForge</id>
+            <name>NeoForge</name>
+            <url>https://maven.neoforged.net/</url>
+        </repository>
+
+
+        <repository>
+            <id>FabricMC</id>
+            <name>FabricMC</name>
+            <url>https://maven.fabricmc.net/</url>
+        </repository>
+
+
+        <repository>
             <id>jitpack</id>
+            <name>jitpack</name>
             <url>https://jitpack.io/</url>
         </repository>
+
+
     </repositories>
 
     <dependencies>
-        <!-- Fabric compile-time API. Provided so loader libraries are not copied into the mod JAR. -->
-        <dependency>
-            <groupId>net.fabricmc</groupId>
-            <artifactId>fabric-loader</artifactId>
-            <version>${fabric.loader.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.fabricmc.fabric-api</groupId>
-            <artifactId>fabric-api</artifactId>
-            <version>${fabric.api.version}</version>
-            <scope>provided</scope>
-        </dependency>
 
-        <!-- Forge compatibility compile API. Kept deliberately old/minimal because this mod
-             only needs the stable @Mod entrypoint contract at this stage. -->
+        <!-- https://mvnrepository.com/artifact/net.minecraftforge/eventbus -->
         <dependency>
             <groupId>net.minecraftforge</groupId>
             <artifactId>eventbus</artifactId>
-            <version>${forge.eventbus.version}</version>
+            <version>6.2.6</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna-platform</artifactId>
+            <version>5.14.0</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>5.14.0</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
             <groupId>net.minecraftforge</groupId>
             <artifactId>modlauncher</artifactId>
-            <version>${forge.modlauncher.version}</version>
+            <version>10.2.1</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>net.minecraftforge</groupId>
             <artifactId>fmlcore</artifactId>
-            <version>${forge.version}</version>
+            <version>1.20.6-50.0.4</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>net.minecraftforge</groupId>
             <artifactId>javafmllanguage</artifactId>
-            <version>${forge.version}</version>
+            <version>1.20.6-50.0.4</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.minecraftforge</groupId>
+            <artifactId>lowcodelanguage</artifactId>
+            <version>1.20.6-50.0.4</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.minecraftforge</groupId>
+            <artifactId>mclanguage</artifactId>
+            <version>1.20.6-50.0.4</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>net.minecraftforge</groupId>
             <artifactId>fmlloader</artifactId>
-            <version>${forge.version}</version>
+            <version>1.20.6-50.0.4</version>
             <scope>provided</scope>
         </dependency>
 
-        <!-- NeoForge 1.20.6 compatibility compile API. The universal jar contains the
-             net.neoforged.fml.common.Mod annotation used by our thin entrypoint. -->
+        <!-- https://mvnrepository.com/artifact/cpw.mods/securejarhandler -->
         <dependency>
-            <groupId>net.neoforged</groupId>
-            <artifactId>neoforge</artifactId>
-            <version>${neoforge.version}</version>
-            <classifier>universal</classifier>
+            <groupId>cpw.mods</groupId>
+            <artifactId>securejarhandler</artifactId>
+            <version>1.0.1</version>
             <scope>provided</scope>
         </dependency>
 
-        <!-- FeatureCreep is also a first-class loader in the same JAR. The entrypoint itself
-             intentionally has no hard API calls beyond the fcflat.properties mainclass. -->
+
+        <!-- https://mvnrepository.com/artifact/cpw.mods/securejarhandler -->
         <dependency>
-            <groupId>com.asbestosstar</groupId>
-            <artifactId>featurecreep-loader</artifactId>
-            <version>${featurecreep.loader.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.asbestosstar</groupId>
-            <artifactId>featurecreep-api</artifactId>
-            <version>${featurecreep.api.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.asbestosstar</groupId>
-            <artifactId>featurecreep-bootstrap</artifactId>
-            <version>${featurecreep.bootstrap.version}</version>
+            <groupId>cpw.mods</groupId>
+            <artifactId>modlauncher</artifactId>
+            <version>10.1.10</version>
             <scope>provided</scope>
         </dependency>
 
-        <!-- Sponge Mixin companion-plugin API and ASM ClassNode access. Provided by loaders at runtime. -->
+
+        <!-- https://mvnrepository.com/artifact/net.fabricmc/fabric-loader -->
+        <dependency>
+            <groupId>net.fabricmc</groupId>
+            <artifactId>fabric-loader</artifactId>
+            <version>0.17.3</version>
+            <scope>provided</scope>
+        </dependency>
+
+
+        <dependency>
+            <groupId>net.neoforged.fancymodloader</groupId>
+            <artifactId>loader</artifactId>
+            <version>10.0.14</version>
+            <scope>provided</scope>
+        </dependency>
+
+
+        <!-- https://mvnrepository.com/artifact/net.fabricmc/sponge-mixin -->
         <dependency>
             <groupId>net.fabricmc</groupId>
             <artifactId>sponge-mixin</artifactId>
@@ -165,7 +187,47 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- No JNA: Java 25's java.lang.foreign API is the Panama interface. -->
+
+
+
+
+        <dependency>
+            <groupId>com.mojang</groupId>
+            <artifactId>datafixerupper</artifactId>
+            <version>7.0.14</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.10.1</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- End of Do not include these in fat jar -->
+
+
+        <dependency>
+            <groupId>com.asbestosstar</groupId>
+            <artifactId>featurecreep-loader</artifactId>
+            <version>6.0.0-am3</version>
+        </dependency>
+
+
+      
+
+
+
+        <dependency>
+            <groupId>com.asbestosstar</groupId>
+            <artifactId>comoraclestream-dax-stub</artifactId>
+            <version>0.0.1</version>
+        </dependency>
+
+
+
+
     </dependencies>
 
     <build>
@@ -186,12 +248,54 @@
 
         <plugins>
             <plugin>
+                <groupId>com.googlecode.maven-download-plugin</groupId>
+                <artifactId>download-maven-plugin</artifactId>
+                <version>${download.maven.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>download-minecraft-client</id>
+                        <phase>initialize</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>${minecraft.client.url}</url>
+                            <outputDirectory>${project.build.directory}/minecraft</outputDirectory>
+                            <outputFileName>client.jar</outputFileName>
+                            <overwrite>false</overwrite>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-install-plugin</artifactId>
+                <version>${install.maven.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>install-minecraft-client</id>
+                        <phase>initialize</phase>
+                        <goals><goal>install-file</goal></goals>
+                        <configuration>
+                            <file>${minecraft.client.jar}</file>
+                            <groupId>net.minecraft</groupId>
+                            <artifactId>minecraft</artifactId>
+                            <version>${minecraft.version}</version>
+                            <classifier>client</classifier>
+                            <packaging>jar</packaging>
+                            <generatePom>true</generatePom>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>${maven.compiler.plugin.version}</version>
                 <configuration>
                     <release>25</release>
                     <parameters>true</parameters>
+                    <additionalClasspathElements>
+                        <additionalClasspathElement>${minecraft.client.jar}</additionalClasspathElement>
+                    </additionalClasspathElements>
                 </configuration>
             </plugin>
 

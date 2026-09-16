@@ -4,6 +4,20 @@ set -eu
 TARGET_DIR=${1:-target}
 OUTPUT_DIR=${2:-target/classes}
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+# The reference-source copy below changes into native/, and CMake may be run from
+# any working directory, so anchor every generated path at the project root.
+# Leaving these relative silently wrote the reference sources to native/target/...
+# and made the "Bundled N native reference source files" count read 0.
+case "$OUTPUT_DIR" in
+    /*) ;;
+    *) OUTPUT_DIR="$PROJECT_DIR/$OUTPUT_DIR" ;;
+esac
+case "$TARGET_DIR" in
+    /*) ;;
+    *) TARGET_DIR="$PROJECT_DIR/$TARGET_DIR" ;;
+esac
+
 BUILD_DIR="$TARGET_DIR/native-build"
 BUILD_TYPE=${NA_BUILD_TYPE:-RelWithDebInfo}
 
@@ -16,6 +30,7 @@ normalize_os() {
         OpenBSD) echo openbsd ;;
         Darwin) echo macos ;;
         Haiku) echo haiku ;;
+        HP-UX) echo hpux ;;
         MINGW*|MSYS*|CYGWIN*) echo windows ;;
         *) uname -s | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-$//' ;;
     esac
@@ -57,6 +72,7 @@ mkdir -p "$DEST" "$DEBUG_DEST"
 
 case "$OS" in
     macos) LIB="libnativeaccelerator.dylib" ;;
+    hpux) LIB="libnativeaccelerator.sl" ;;
     windows) LIB="nativeaccelerator.dll" ;;
     *) LIB="libnativeaccelerator.so" ;;
 esac
@@ -72,6 +88,7 @@ echo "Bundled unstripped $DEST/$LIB"
 
 case "$OS" in
     macos) RENDERER_LIB="libnativeaccelerator_renderer_vulkan.dylib" ;;
+    hpux) RENDERER_LIB="libnativeaccelerator_renderer_vulkan.sl" ;;
     windows) RENDERER_LIB="nativeaccelerator_renderer_vulkan.dll" ;;
     *) RENDERER_LIB="libnativeaccelerator_renderer_vulkan.so" ;;
 esac
@@ -145,7 +162,9 @@ mkdir -p "$SOURCE_DEST"
 
 (
     cd "$PROJECT_DIR/native"
-    find . -type f \
+    find . \
+        -path './target' -prune -o \
+        -type f \
         \( -name '*.c' -o -name '*.h' -o -name '*.s' -o -name '*.S' \) \
         -print | while IFS= read -r SOURCE; do
         RELATIVE=${SOURCE#./}

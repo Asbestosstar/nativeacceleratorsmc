@@ -76,3 +76,38 @@ the core JAR link to Minecraft classes.
 
 For direct-memory targets, prefer one large native call over per-element Panama calls. For heap-backed
 targets, benchmark staging-copy cost before enabling an interception by default.
+
+### Mixin selection gate (already in place)
+
+`nativeaccelerator.mixins.json` ships with empty `mixins`/`client`/`server` lists on purpose, but it
+already declares an `IMixinConfigPlugin`:
+`com.asbestosstar.nativeaccelerator.mixinconfig.NativeAcceleratorMixinConfigPlugin`.
+`SystemMixinGate` registers the built-in rules from the plugin `onLoad`, so conditional suppression
+works as soon as the first concrete mixin is added - no config change is needed for that.
+
+A mixin package is its own gate. Put a new mixin in the matching package and it is filtered
+automatically:
+
+- `...mixin.client.*` - applied only where a Minecraft client is present; skipped on a dedicated server.
+- `...mixin.server.*` - applied only on a dedicated server; skipped on a client.
+- `...mixin.renderer.*` - GPU hooks; skipped when `-Dnativeaccelerator.mixins.renderer=false` or when
+  `-Dnativeaccelerator.renderer.platform.role=server`.
+
+Switches, all early-startup safe (system properties and non-initializing class lookups only):
+
+- `-Dnativeaccelerator.mixins=false` - disable this whole mixin config.
+- `-Dnativeaccelerator.mixins.disable=Name,*Pattern` - suppress by simple name, FQN, or wildcard.
+- `-Dnativeaccelerator.mixins.renderer=false` - hard-disable the renderer group.
+- `-Dnativeaccelerator.mixins.environment=client|server` - force the environment assumption.
+- `-Dnativeaccelerator.renderer.platform.role=client|server` - the project-wide renderer role.
+
+Precedence: global off > explicit enable/disable in code > `mixins.disable` patterns > registered
+rules (in order) > apply. A rule that throws is logged and skipped rather than aborting startup.
+
+Registration API for code that must decide before mixins are selected:
+`NativeAcceleratorMixinConfigPlugin.registerRule(...)`, `registerClassNodeHook(...)`,
+`enableMixin(...)`, `disableMixin(...)`, `clearMixinDecision(...)`.
+
+`src/test/java/.../SystemMixinGateTest.java` is a plain-main harness (no JUnit dependency) that
+exercises every switch and the precedence order; run it with `./run-mixin-gate-test.sh`. There is
+still no remapping strategy, so per the policy above no concrete mixin is registered yet.

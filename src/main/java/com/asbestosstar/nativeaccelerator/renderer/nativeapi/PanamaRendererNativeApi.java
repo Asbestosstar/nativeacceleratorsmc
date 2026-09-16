@@ -25,6 +25,13 @@ public final class PanamaRendererNativeApi implements RendererNativeApi, AutoClo
     private final MethodHandle vulkanApiVersion;
     private final MethodHandle vulkanLoaderName;
     private final MethodHandle vulkanPhysicalDeviceCount;
+    private final MethodHandle rendererPlatformRole;
+    private final MethodHandle rendererClientEligible;
+    private final MethodHandle rendererPlatformName;
+    private final MethodHandle rendererPlatformEvidence;
+    private final MethodHandle rendererRoleOverride;
+    private final MethodHandle rendererOptionsPathSet;
+    private final MethodHandle rendererOptionsPathGet;
     private final MethodHandle contextCreate;
     private final MethodHandle contextDestroy;
     private final MethodHandle contextWorkerCount;
@@ -55,6 +62,20 @@ public final class PanamaRendererNativeApi implements RendererNativeApi, AutoClo
                 FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
         vulkanPhysicalDeviceCount = downcall(linker, lookup, "nar_vulkan_physical_device_count",
                 FunctionDescriptor.of(ValueLayout.JAVA_INT));
+        rendererPlatformRole = downcall(linker, lookup, "nar_renderer_platform_role",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT));
+        rendererClientEligible = downcall(linker, lookup, "nar_renderer_client_eligible",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT));
+        rendererPlatformName = downcall(linker, lookup, "nar_renderer_platform_name",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        rendererPlatformEvidence = downcall(linker, lookup, "nar_renderer_platform_evidence",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT));
+        rendererRoleOverride = downcall(linker, lookup, "nar_renderer_set_role_override",
+                FunctionDescriptor.ofVoid(ValueLayout.JAVA_INT));
+        rendererOptionsPathSet = downcall(linker, lookup, "nar_renderer_set_options_path",
+                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
+        rendererOptionsPathGet = downcall(linker, lookup, "nar_renderer_options_path",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
         contextCreate = downcall(linker, lookup, "nar_context_create",
                 FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
         contextDestroy = downcall(linker, lookup, "nar_context_destroy",
@@ -121,6 +142,26 @@ public final class PanamaRendererNativeApi implements RendererNativeApi, AutoClo
     @Override public int vulkanPhysicalDeviceCount() { return invokeInt(vulkanPhysicalDeviceCount); }
     @Override public String vulkanLoaderName() { return readString(vulkanLoaderName, "unavailable"); }
 
+    @Override public int rendererPlatformRole() { return invokeInt(rendererPlatformRole); }
+    @Override public boolean rendererClientEligible() { return invokeInt(rendererClientEligible) != 0; }
+    @Override public int rendererPlatformEvidence() { return invokeInt(rendererPlatformEvidence); }
+    @Override public String rendererPlatformName() { return readString(rendererPlatformName, "unknown"); }
+    @Override public void setRendererRoleOverride(int role) {
+        if (role != ROLE_AUTO && role != ROLE_CLIENT && role != ROLE_SERVER_ONLY) {
+            throw new IllegalArgumentException("role must be ROLE_AUTO, ROLE_CLIENT or ROLE_SERVER_ONLY");
+        }
+        invokeVoid(rendererRoleOverride, role);
+    }
+    @Override public void setMinecraftOptionsPath(String path) {
+        if (path == null || path.isEmpty()) {
+            invokeVoidAddress(rendererOptionsPathSet, MemorySegment.NULL);
+            return;
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            invokeVoidAddress(rendererOptionsPathSet, allocateUtf8(arena, path));
+        }
+    }
+    @Override public String minecraftOptionsPath() { return readString(rendererOptionsPathGet, ""); }
     @Override public MemorySegment createContext(int workerCount) {
         if (workerCount < 0) throw new IllegalArgumentException("workerCount must be >= 0");
         try {
@@ -277,6 +318,23 @@ public final class PanamaRendererNativeApi implements RendererNativeApi, AutoClo
             if (rc != 0) throw new IllegalArgumentException(operation + " rejected input (native status " + rc + ")");
         } catch (RuntimeException | Error e) { throw e; }
         catch (Throwable t) { throw rethrow(t); }
+    }
+    /** Allocate a NUL-terminated UTF-8 native string without depending on newer Arena helpers. */
+    private static MemorySegment allocateUtf8(Arena arena, String value) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        MemorySegment segment = arena.allocate(bytes.length + 1L, 1L);
+        if (bytes.length > 0) {
+            MemorySegment.copy(bytes, 0, segment, ValueLayout.JAVA_BYTE, 0L, bytes.length);
+        }
+        segment.set(ValueLayout.JAVA_BYTE, bytes.length, (byte) 0);
+        return segment;
+    }
+    private static void invokeVoidAddress(MethodHandle handle, MemorySegment arg) {
+        try { handle.invokeExact(arg); } catch (Throwable t) { throw rethrow(t); }
+    }
+
+    private static void invokeVoid(MethodHandle handle, int arg) {
+        try { handle.invokeExact(arg); } catch (Throwable t) { throw rethrow(t); }
     }
     private static void invokeVoid(MethodHandle handle, MemorySegment arg) {
         try { handle.invokeExact(arg); } catch (Throwable t) { throw rethrow(t); }

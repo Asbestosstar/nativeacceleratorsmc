@@ -3,18 +3,22 @@ package com.asbestosstar.nativeaccelerator.renderer.nativeapi;
 import java.util.ArrayList;
 import java.util.List;
 
+/** Bit names for the renderer companion library capability mask (mirrors the native header). */
 public final class RendererCapabilities {
     private RendererCapabilities() {}
 
-    public static final long VULKAN_LOADER       = 1L << 0;
-    public static final long SCENE_DATABASE      = 1L << 1;
-    public static final long ARENA_ALLOCATOR     = 1L << 2;
-    public static final long CPU_FRUSTUM_CULL    = 1L << 3;
-    public static final long INDIRECT_COMMANDS   = 1L << 4;
-    public static final long VOXEL_FACE_MASKS    = 1L << 5;
-    public static final long NATIVE_WORKERS      = 1L << 6;
-    public static final long PIPELINE_CACHE_IO   = 1L << 7;
-    public static final long VULKAN_DEVICE       = 1L << 8;
+    public static final long VULKAN_LOADER     = 1L << 0;
+    public static final long SCENE_DATABASE    = 1L << 1;
+    public static final long ARENA_ALLOCATOR   = 1L << 2;
+    public static final long CPU_FRUSTUM_CULL  = 1L << 3;
+    public static final long INDIRECT_COMMANDS = 1L << 4;
+    public static final long VOXEL_FACE_MASKS  = 1L << 5;
+    public static final long NATIVE_WORKERS    = 1L << 6;
+    public static final long PIPELINE_CACHE_IO = 1L << 7;
+    public static final long VULKAN_DEVICE     = 1L << 8;
+    public static final long CLIENT_RENDERER   = 1L << 9;
+    /** The runtime evidence says the client Vulkan renderer gives no benefit on this machine. */
+    public static final long SERVER_ONLY_HOST  = 1L << 10;
 
     public static List<String> names(long mask) {
         List<String> out = new ArrayList<>();
@@ -27,6 +31,8 @@ public final class RendererCapabilities {
         add(out, mask, NATIVE_WORKERS, "native-workers");
         add(out, mask, PIPELINE_CACHE_IO, "pipeline-cache-io");
         add(out, mask, VULKAN_DEVICE, "vulkan-device");
+        add(out, mask, CLIENT_RENDERER, "client-renderer");
+        add(out, mask, SERVER_ONLY_HOST, "server-only-host");
         return List.copyOf(out);
     }
 

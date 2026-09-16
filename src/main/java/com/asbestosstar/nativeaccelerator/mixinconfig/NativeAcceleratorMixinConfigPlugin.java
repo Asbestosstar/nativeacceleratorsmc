@@ -82,6 +82,9 @@ public final class NativeAcceleratorMixinConfigPlugin implements IMixinConfigPlu
     @Override
     public void onLoad(String mixinPackage) {
         reloadPropertyRules();
+        // Make the plugin effective by default: without this the rule list stays empty and every
+        // Native Accelerator mixin is applied on every system.
+        SystemMixinGate.installDefaults();
     }
 
     @Override

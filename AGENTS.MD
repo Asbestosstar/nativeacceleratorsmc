@@ -367,6 +367,29 @@ forcing the native core to track every loader API revision.
 All loader entrypoints should converge on the same core initialization rather than implementing
 native probing separately.
 
+### One JAR, several loaders: duplicate-initialization guard
+
+Because one JAR advertises Fabric, Forge, NeoForge, and FeatureCreep metadata, a host with more than one
+loader installed can have more than one loader discover the same JAR and invoke its entrypoint, possibly
+from different classloaders. Ordinary static state (including `NativeAccelerator.INITIALIZED`) is
+per-classloader and cannot see the other copy, so it is not sufficient protection on its own.
+
+`com.asbestosstar.nativeaccelerator.platform.ProcessInitializationGuard` provides the process-wide
+run-once claim. It stores the claim in the JVM system property table, which every classloader shares,
+under an atomic read-check-write, so the first loader entrypoint wins and every later one stands down
+without repeating the native library load, the renderer probe, or any hook/benchmark/counter setup.
+
+Rules to preserve:
+
+1. Every loader entrypoint (`NativeAcceleratorFabric`, `NativeAcceleratorForge`,
+   `NativeAcceleratorNeoForge`, `NativeAcceleratorFeatureCreep`) calls `NativeAccelerator.initialize()`
+   and does nothing else. Never add per-loader initialization work that bypasses this path.
+2. New run-once work goes through `ProcessInitializationGuard.claim(...)` with its own key rather than a
+   fresh static `AtomicBoolean`, so it is protected across classloaders too.
+3. `initialize()` must stay idempotent in both directions: a second call in the same classloader and a
+   call from a second classloader must both be no-ops.
+4. `run-duplicate-loader-test.sh` exercises this with two isolated classloaders and must keep passing.
+
 ## Panama and JNI
 
 Modern Minecraft/Java branches use Project Panama / the Java Foreign Function & Memory API as the
@@ -529,3 +552,141 @@ See `docs/CLEAN_ROOM_RENDERER.md`.
 
 Distribution/native-reference builds must remain inspectable. `scripts/build-native.sh` uses `RelWithDebInfo`, enables `NA_REFERENCE_SYMBOLS`, and must not strip the packaged native libraries. Where platform tooling permits, also package split debug information beneath `META-INF/native-debug/<platform>/` (`.debug` on ELF/toolchains supporting objcopy, `.dSYM` on macOS, and `.pdb` on MSVC Windows). Human-readable symbol inventories may also be bundled. The split files are supplemental; do not strip debug data from the runtime library merely because a companion debug artifact exists.
 
+
+## Loader identity: one place, early-safe
+
+`com.asbestosstar.nativeaccelerator.platform.LoaderEnvironment` is the single place in the universal JAR
+that knows mod-loader identities. Fabric, Forge, NeoForge, and FeatureCreep anchors are referenced only
+as strings and resolved with a non-initializing `Class.forName(String, boolean, ClassLoader)`; no shared
+code links against a loader API. That is what keeps the per-loader entrypoints trivial and removes any
+need for per-loader mixin configuration.
+
+This class must stay early-startup safe. The mixin config plugin runs before Minecraft or any loader
+entrypoint is initialized, so nothing here may depend on initialized game state. Public surface:
+`Loader` (FABRIC, FORGE, NEOFORGE, FEATURECREEP, UNKNOWN), `Loader.id()`, `present(String)`,
+`current()`, `id()`, `gameDirectory()`, and `contextClassLoader()`.
+
+Do not add loader knowledge elsewhere in shared code. If a new loader arrives, add its anchor class here
+and to the entrypoint set; do not fork the initialization path.
+
+## Renderer selection is evidence-based, never OS-based
+
+`com.asbestosstar.nativeaccelerator.renderer.RendererPlatformPolicy` owns the client-renderer decision and
+the single lazily loaded `RendererNativeApi` instance (reused by `NativeVulkanRenderer`). Two questions are
+answered at runtime:
+
+1. **Does this computer support Vulkan?** The renderer companion library opens a Vulkan loader and
+   enumerates physical devices. A Mesa, vendor, or translation-layer build compiled without usable Vulkan
+   support answers no even on an OS where Vulkan is common, and a machine that does provide Vulkan answers
+   yes even when that is unusual for its OS.
+2. **Which backend is Minecraft itself using?** The game own `options.txt` is parsed for the configured
+   graphics backend. Native Accelerator has no OpenGL surface path, so a non-Vulkan backend means the client
+   renderer rewrite has nothing to attach to.
+
+`Role.SERVER_ONLY` means the evidence says the Vulkan client renderer gives no benefit on this machine. It
+does **not** mean the operating system is unsupported. A server-only host still starts the client, still
+plays normally, and keeps the full native compute accelerator; the renderer companion library still builds
+and remains usable for headless/dedicated-server workloads. Preserve that distinction in code comments and
+diagnostics.
+
+Properties:
+
+- `nativeaccelerator.renderer.platform.role` = `auto` (evidence), `client`, or `server`;
+- `nativeaccelerator.renderer.minecraft.options` - explicit `options.txt` path for backend evidence;
+- `nativeaccelerator.renderer.minecraft.gamedir` - game directory whose `options.txt` is used.
+
+An explicit override is always honoured, so a user is never blocked by a wrong guess. Useful accessors:
+`role()`, `clientEligible()`, `evidence()`, `describe()`, `vulkanDeviceDetected()`,
+`minecraftOptionsDetected()`, `overridden()`, `setMinecraftGameDirectory(Path)`,
+`setMinecraftOptionsPath(Path)`, and `adoptLoaderGameDirectory()`.
+
+The native side mirrors this contract in `native/include/native_accelerator_renderer.h`:
+`NAR_RENDERER_ROLE_CLIENT`/`SERVER_ONLY`/`AUTO`, the `NAR_RENDERER_EVIDENCE_*` bits, and
+`nar_renderer_platform_role`, `nar_renderer_client_eligible`, `nar_renderer_platform_evidence`,
+`nar_renderer_platform_name`, `nar_renderer_set_options_path`, `nar_renderer_options_path`, and
+`nar_renderer_set_role_override`. Implementation lives in `native/src/renderer/common/platform_policy.c`.
+Do not add an OS allow-list to either side.
+
+## Mixin gating by package convention
+
+Native Accelerator ships one mixin configuration for every loader. Loader-specific mixins are not split
+into per-loader configs; the companion `IMixinConfigPlugin` decides at class-transform time whether a mixin
+applies. `com.asbestosstar.nativeaccelerator.mixinconfig.SystemMixinGate` supplies the default rules and
+must only read signals that are safe that early: system properties and non-initializing class lookups. It
+never references Minecraft classes by value, and it reuses `RendererPlatformPolicy.ROLE_PROPERTY` and
+`LoaderEnvironment` rather than inventing parallel switches.
+
+A mixin package decides which gate applies, so a new mixin is protected automatically:
+
+```text
+...mixin.client.*          applied only when a Minecraft client is present
+...mixin.server.*          applied only on a dedicated server (no client classes)
+...mixin.renderer.*        GPU/Vulkan client hooks; honour role and the renderer switch
+...mixin.loader.<id>.*     applied only when that loader is running, e.g. loader.fabric or loader.neoforge
+```
+
+The `...mixin.loader.<loader>.*` form is the supported way to write a loader-specific mixin without a
+per-loader mixin config. Properties: `nativeaccelerator.mixins.renderer=false` hard-disables the renderer
+group, `nativeaccelerator.mixins.environment=client|server` forces the environment assumption,
+`nativeaccelerator.mixins.loaders=fabric,neoforge` assumes exactly those loaders instead of probing, and
+the project-wide `nativeaccelerator.renderer.platform.role` forces renderer mixins on or off. A renderer
+mixin under `auto` role is deferred, not applied, until the evidence resolves.
+
+## POSIX feature-test macros are named, not assumed
+
+POSIX declarations (`setenv`, `unsetenv`, `dlopen`, `pthread_*`, `dirent`, `mkdir`, ...) are exposed only
+once the matching feature-test macro is defined. Linux and macOS default builds happen to expose them, but
+the strict toolchains used by the other Unix families (HP-UX `cc`, AIX `xlC`, Solaris Studio) and a strict
+`-std=c11` do not. `native/CMakeLists.txt` therefore defines `_DARWIN_C_SOURCE` on Apple and
+`_XOPEN_SOURCE=700` elsewhere on non-Windows hosts via `NA_POSIX_DEFINITIONS`. Keep the level we actually
+depend on explicit rather than relying on a compiler default.
+
+## Mesa tree selection on Unix-family hosts
+
+`native/src/renderer/vulkan/mesa_select.c` answers one question: which single Mesa tree should the renderer
+companion library load? A Unix-like machine often carries several trees at once (system, ports/pkgsrc,
+third-party trees under `/opt`), and some are built without Vulkan. The auditable rule:
+
+1. a tree is a candidate only when it really provides a Vulkan ICD: a manifest under
+   `<prefix>/share/vulkan/icd.d` or `<prefix>/etc/vulkan/icd.d` whose referenced driver library exists;
+2. among candidates the newest parsed version wins (`mesa-25.0.2` -> `25.0.2`);
+3. a known version beats an unknown one;
+4. ties fall back to owning its own Vulkan loader, then to discovery order.
+
+Configuration: `NATIVE_ACCELERATOR_MESA_PREFIX` and `NATIVE_ACCELERATOR_MESA_SEARCH_PATH` (roots; a root
+contributes itself plus immediate subdirectories), `NATIVE_ACCELERATOR_MESA_PIN=1` to force
+`VK_DRIVER_FILES`/`VK_ICD_FILENAMES` from the selected tree, and `NATIVE_ACCELERATOR_MESA_NO_DEFAULTS` to
+ignore platform defaults. This is not Solaris-only logic; the defaults, prefixes, and search roots are
+configuration, so the selection is unit-tested on any POSIX host. Existing `VK_DRIVER_FILES` and
+`VK_ICD_FILENAMES` values are never overwritten. The selected tree is reported by
+`nar_vulkan_mesa_prefix()`/`nar_vulkan_mesa_loader()`; `nar_vulkan_mesa_apply_selection()` points the
+loader at it and is called before the Vulkan probe opens a loader. Not thread-safe by design: this is
+process-wide bootstrap state consulted once, before any worker thread exists.
+
+## Regression harnesses
+
+Keep these passing; they are the executable form of the rules above.
+
+- `run-duplicate-loader-test.sh` - two isolated classloaders; first claim wins, the second loader entrypoint
+  stands down without re-initializing (16 checks).
+- `run-mixin-gate-test.sh` - client/server/renderer/loader gating, wildcard disables, explicit-enable
+  precedence, and broken-rule isolation (22 checks).
+- `test-macos.sh` - builds, bundles the macOS native libraries as `META-INF/native/macos-amd64/`, installs
+  the mod JAR, and launches the real client.
+
+## Verified in-game (Minecraft 26.3, Fabric Loader 0.19.5, macOS amd64)
+
+The universal JAR was loaded by a real client and the mod initialized inside the game process. Observed:
+
+```text
+Loading 5 mods: fabricloader 0.19.5, java 25, minecraft 26.3, nativeaccelerator 0.1.0-SNAPSHOT
+[Native Accelerator] Platform: macos-amd64
+[Native Accelerator] Panama backend: macos-posix-amd64-scalar
+[Native Accelerator] Capabilities: [native, posix, little-endian, macos, packed-bits, quad-sort, image-kernels, noise-kernels]
+renderer skipped (evidence): vulkan=loader-only minecraft=non-vulkan (server-only). The client runs normally;
+the native compute accelerator is unaffected. Set -Dnativeaccelerator.renderer.platform.role=client to attempt
+the client renderer anyway.
+```
+
+No mod exceptions were raised; the client kept running the full session. The only errors in that run were
+offline-login artifacts (`401`/`SignedJWT`) caused by launching without real credentials, not by this mod.
