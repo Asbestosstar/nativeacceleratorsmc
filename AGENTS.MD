@@ -734,3 +734,36 @@ the client renderer anyway.
 
 No mod exceptions were raised; the client kept running the full session. The only errors in that run were
 offline-login artifacts (`401`/`SignedJWT`) caused by launching without real credentials, not by this mod.
+## High-throughput model preparation pipeline (startup performance pass 2)
+
+Minecraft 26.3 model preparation is replaced at the two existing interception seams rather than by patching
+thousands of individual resource tasks. `ModelLoadBatcher` now dispatches both raw-model and blockstate work through
+`ModelWorkScheduler`, a persistent work-stealing pool. The default worker count is the JVM's available processor count
+and is overrideable with `nativeaccelerator.model.workers`. Keep one coarse external future per model family and use
+ForkJoin leaves internally; do not regress to one `CompletableFuture` per model/blockstate.
+
+Ordinary blockstate JSON is compiled directly by `FastBlockStateDecoder` into the final identity map. Preserve these
+semantics: full selectors resolve through `StateHolder.setValue`; partial selectors enumerate only unconstrained
+property combinations; multipart constructs one shared `MultiPartModel.Unbaked`; resource-stack order remains
+pack-order significant; and unsupported/failed fast decoding retries the vanilla Codec/dispatcher path.
+
+Ordinary cuboid model JSON is decoded directly by `FastCuboidModelDecoder` into `CuboidModel` and its final element,
+face, texture and transform records. Any unsupported/failed fast decode must reopen the resource and retry
+`CuboidModel.fromStream`. Compatibility is more important than forcing a fast-path hit.
+
+Relevant switches (all receive the `nativeaccelerator.` system-property prefix):
+
+- `model.batchLoading=true` - master replacement-pipeline switch;
+- `model.fastBlockstateJson=true` - direct blockstate compiler;
+- `model.fastCuboidJson=true` - direct CuboidModel parser;
+- `model.dedicatedPool=true` - persistent work-stealing pool;
+- `model.workers=0` - zero means `Runtime.availableProcessors()`;
+- `model.forkJoinGrain=0` - adaptive range split;
+- `model.profiler=true` - aggregate pipeline profiling;
+- `model.ioProfiler=false` - expensive per-read profiling, diagnostic only;
+- `model.parseCache=false` - old exact-content experiment remains off by default.
+
+Do not add a native call per JSON document merely to claim native acceleration. The files are tiny and branch-heavy,
+and their outputs are Minecraft Java objects. Native parsing is appropriate only as a bulk tokenizer/decoder with many
+documents per crossing after profiling demonstrates a remaining crossover.
+

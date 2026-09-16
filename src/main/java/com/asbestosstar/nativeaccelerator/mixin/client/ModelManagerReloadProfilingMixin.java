@@ -1,6 +1,7 @@
 package com.asbestosstar.nativeaccelerator.mixin.client;
 
 import com.asbestosstar.nativeaccelerator.client.ModelJsonParseCache;
+import com.asbestosstar.nativeaccelerator.client.ModelPipelineProfiler;
 import com.asbestosstar.nativeaccelerator.startup.StartupTimer;
 import net.minecraft.client.resources.model.ModelManager;
 import net.minecraft.server.packs.resources.PreparableReloadListener;
@@ -30,6 +31,7 @@ public abstract class ModelManagerReloadProfilingMixin {
             java.util.concurrent.Executor applyExecutor,
             CallbackInfoReturnable<CompletableFuture<Void>> cir) {
         ModelJsonParseCache.beginReload();
+        ModelPipelineProfiler.reset();
     }
 
     @Inject(method = "reload", at = @At("RETURN"), require = 0)
@@ -42,12 +44,17 @@ public abstract class ModelManagerReloadProfilingMixin {
         cir.getReturnValue().whenComplete((ignored, failure) -> {
             if (failure != null) return;
             ModelJsonParseCache.Snapshot snapshot = ModelJsonParseCache.snapshot();
-            StartupTimer.recordDuration(PREFIX + "read", snapshot.readNanos());
-            StartupTimer.recordDuration(PREFIX + "parse", snapshot.parseNanos());
-            System.out.printf("[Native Accelerator] ModelManager JSON: read=%.1f ms parse=%.1f ms hits=%d misses=%d unique=%d%n",
-                    snapshot.readNanos() / 1_000_000.0,
-                    snapshot.parseNanos() / 1_000_000.0,
-                    snapshot.hits(), snapshot.misses(), snapshot.entries());
+            if (snapshot.readNanos() != 0L || snapshot.parseNanos() != 0L
+                    || snapshot.hits() != 0L || snapshot.misses() != 0L) {
+                StartupTimer.recordDuration(PREFIX + "read", snapshot.readNanos());
+                StartupTimer.recordDuration(PREFIX + "parse", snapshot.parseNanos());
+                System.out.printf("[Native Accelerator] legacy ModelManager JSON path: read=%.1f ms parse=%.1f ms hits=%d misses=%d unique=%d%n",
+                        snapshot.readNanos() / 1_000_000.0,
+                        snapshot.parseNanos() / 1_000_000.0,
+                        snapshot.hits(), snapshot.misses(), snapshot.entries());
+            }
+            String pipelineReport = ModelPipelineProfiler.report();
+            if (!pipelineReport.isBlank()) System.out.print(pipelineReport);
         });
     }
 }

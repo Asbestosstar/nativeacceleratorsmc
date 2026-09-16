@@ -20,6 +20,12 @@ public final class Minecraft263AccelerationTargets {
     public static final String DENSITY_BUFFER = "net.minecraft.world.level.levelgen.densityfunction.DensityBuffer";
     public static final String DENSITY_VOLUME = "net.minecraft.world.level.levelgen.densityfunction.DensityVolume";
 
+    public static final String MODEL_MANAGER = "net.minecraft.client.resources.model.ModelManager";
+    public static final String BLOCKSTATE_MODEL_LOADER = "net.minecraft.client.resources.model.BlockStateModelLoader";
+    public static final String BLOCKSTATE_MODEL_DISPATCHER = "net.minecraft.client.renderer.block.dispatch.BlockStateModelDispatcher";
+    public static final String CUBOID_MODEL = "net.minecraft.client.resources.model.cuboid.CuboidModel";
+    public static final String FILE_TO_ID_CONVERTER = "net.minecraft.resources.FileToIdConverter";
+
     /** Base class shared by the dedicated server and the client's single-player integrated server. */
     public static final String MINECRAFT_SERVER = "net.minecraft.server.MinecraftServer";
     /** Single-player server hosted inside the client. Only present on a client. */
@@ -62,6 +68,25 @@ public final class Minecraft263AccelerationTargets {
                     "server.ready milestone; writes the report once a dedicated server accepts players"),
             new Target(INTEGRATED_SERVER, "initServer()Z",
                     "client.integrated-server-init duration for a single-player world load")
+    );
+
+    /**
+     * Client model-reload seams replaced/profiled by the high-throughput model pipeline.  The fast JSON
+     * decoders remain Java-side because their inputs are tiny, branch-heavy documents where a Panama
+     * transition per file would cost more than it saves; native offload remains available for later bulk
+     * binary stages once profiling shows an appropriate crossover.
+     */
+    public static final List<Target> MODEL_RELOAD = List.of(
+            new Target(MODEL_MANAGER, "loadBlockModels(ResourceManager,Executor)",
+                    "dynamic CPU work queue + streaming CuboidModel decode with vanilla fallback"),
+            new Target(BLOCKSTATE_MODEL_LOADER, "loadBlockStates(ResourceManager,Executor)",
+                    "dynamic CPU work queue + direct blockstate compile with vanilla fallback"),
+            new Target(BLOCKSTATE_MODEL_DISPATCHER, "instantiate(StateDefinition,Supplier)",
+                    "bypassed by fast blockstate compiler; retained/profiling for fallback"),
+            new Target(CUBOID_MODEL, "fromStream(Reader)",
+                    "vanilla fallback and profiler seam"),
+            new Target(FILE_TO_ID_CONVERTER, "listMatchingResources / listMatchingResourceStacks",
+                    "resource-discovery profiler seam")
     );
 
     public record Target(String className, String methods, String nativeKernel) {}

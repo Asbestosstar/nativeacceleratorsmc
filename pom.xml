@@ -241,6 +241,14 @@
 
 
 
+        <!-- Minecraft supplies JOML at runtime; declare it for fast model-decoder compilation. -->
+        <dependency>
+            <groupId>org.joml</groupId>
+            <artifactId>joml</artifactId>
+            <version>1.10.8</version>
+            <scope>provided</scope>
+        </dependency>
+
     </dependencies>
 
     <build>

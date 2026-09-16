@@ -13,6 +13,9 @@
     "client.ClientMainMixin",
     "client.IntegratedServerMixin",
     "client.LoadingOverlayMixin",
+    "client.BlockStateDispatcherProfilingMixin",
+    "client.BlockStateModelLoaderBatchLoadingMixin",
+    "client.ModelManagerBatchLoadingMixin",
     "client.ModelManagerModelParseCacheMixin",
     "client.ModelManagerReloadProfilingMixin",
     "client.ModelManagerPhaseProfilingMixin",
@@ -23,7 +26,12 @@
     "client.ResourceLoadStateTrackerMixin",
     "client.StitcherThroughputMixin",
     "client.ReloadListenerProfilingMixin",
-    "client.ProfiledReloadInstanceTimingMixin"
+    "client.ProfiledReloadInstanceTimingMixin",
+    "client.BlockStateSimpleSelectorsProfilingMixin",
+    "client.BlockStateMultipartProfilingMixin",
+    "client.ResourceOpenProfilingMixin",
+    "client.FileToIdConverterProfilingMixin",
+    "client.CuboidModelParseProfilingMixin"
   ],
   "server": [
     "server.DedicatedServerReadyMixin",

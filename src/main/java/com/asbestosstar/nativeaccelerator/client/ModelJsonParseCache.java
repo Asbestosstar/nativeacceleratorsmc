@@ -38,7 +38,7 @@ public final class ModelJsonParseCache {
 
     /** Called in place of CuboidModel.fromStream by the ModelManager-only mixin redirect. */
     public static CuboidModel parse(Reader reader) {
-        if (!com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.parseCache", true)) {
+        if (!com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("model.parseCache", false)) {
             long started = System.nanoTime();
             CuboidModel result = CuboidModel.fromStream(reader);
             PARSE_NANOS.add(System.nanoTime() - started);
