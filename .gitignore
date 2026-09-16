@@ -19,3 +19,4 @@ buildNumber.properties
 # Captured TLauncher launch log; reference for test-macos.sh arguments, not a build input.
 tl console.log
 26_3_src_pre3.txt
+chatgpt-context.txt

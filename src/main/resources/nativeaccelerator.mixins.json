@@ -14,10 +14,16 @@
     "client.IntegratedServerMixin",
     "client.LoadingOverlayMixin",
     "client.ModelManagerModelParseCacheMixin",
+    "client.ModelManagerReloadProfilingMixin",
+    "client.ModelManagerPhaseProfilingMixin",
+    "client.BlockStateModelLoaderPhaseProfilingMixin",
+    "client.ModelBakeryPhaseProfilingMixin",
+    "client.ModelBakerSharedOperationCacheMixin",
     "client.MinecraftStartupMixin",
     "client.ResourceLoadStateTrackerMixin",
     "client.StitcherThroughputMixin",
-    "client.ReloadListenerProfilingMixin"
+    "client.ReloadListenerProfilingMixin",
+    "client.ProfiledReloadInstanceTimingMixin"
   ],
   "server": [
     "server.DedicatedServerReadyMixin",

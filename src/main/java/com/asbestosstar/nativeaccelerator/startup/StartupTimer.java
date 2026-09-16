@@ -96,7 +96,8 @@ public final class StartupTimer {
 
     /** Whether recording and output are enabled ({@value #ENABLED_PROPERTY}, default true). */
     public static boolean enabled() {
-        String value = com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.stringValue("startup.timing", "true");
+        String override = System.getProperty(ENABLED_PROPERTY);
+        String value = override != null ? override : com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.stringValue("startup.timing", "true");
         return !value.isBlank() && Boolean.parseBoolean(value.trim());
     }
 
@@ -488,9 +489,19 @@ public final class StartupTimer {
     }
 
     /** One measured stage. Guarded by the {@code StartupTimer} monitor, so no field needs volatile. */
+    /** Record a completed externally timed stage from a runtime profiler. */
+    public static synchronized void recordDuration(String stage, long durationNanos) {
+        if (!accept(stage) || durationNanos < 0L || STAGES.containsKey(stage)) return;
+        installShutdownHook();
+        Stage created = new Stage(stage);
+        created.endNanos = System.nanoTime();
+        created.startNanos = Math.max(PROCESS_START_NANOS, created.endNanos - durationNanos);
+        STAGES.put(stage, created);
+    }
+
     private static final class Stage {
         final String name;
-        final long startNanos;
+        long startNanos;
         long endNanos;
         long markNanos;
         int occurrences = 1;
