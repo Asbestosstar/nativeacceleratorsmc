@@ -121,6 +121,15 @@ public final class SystemMixinGate {
                 && !booleanProperty("nativeaccelerator.worldgen.fastFill", true)) {
             return MixinDecision.SKIP;
         }
+        if (mixinClassName.endsWith("NoiseBasedChunkGeneratorSmtSchedulerMixin")
+                && !booleanProperty("nativeaccelerator.worldgen.smtScheduler", true)) {
+            return MixinDecision.SKIP;
+        }
+        if (mixinClassName.endsWith("MaterialSystemFastRulesMixin")
+                && !booleanProperty("nativeaccelerator.worldgen.fastSurfaceRules", true)
+                && !booleanProperty("nativeaccelerator.worldgen.deepProfile", false)) {
+            return MixinDecision.SKIP;
+        }
         if (mixinClassName.endsWith("MaterialSystemFastHeightMixin")
                 && !booleanProperty("nativeaccelerator.worldgen.fastSurface", false)) {
             return MixinDecision.SKIP;

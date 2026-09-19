@@ -22,6 +22,8 @@ public final class Minecraft263AccelerationTargets {
     public static final String NOISE_BASED_CHUNK_GENERATOR = "net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator";
     public static final String MATERIAL_SYSTEM = "net.minecraft.world.level.levelgen.material.MaterialSystem";
     public static final String MATERIAL_RULE_CONTEXT = "net.minecraft.world.level.levelgen.material.MaterialRuleContext";
+    public static final String MATERIAL_RULE = "net.minecraft.world.level.levelgen.material.rule.MaterialRule";
+    public static final String TRACING_EXECUTOR = "net.minecraft.TracingExecutor";
     public static final String CHUNK_SKY_LIGHT_SOURCES = "net.minecraft.world.level.lighting.ChunkSkyLightSources";
     public static final String THREADED_LEVEL_LIGHT_ENGINE = "net.minecraft.server.level.ThreadedLevelLightEngine";
     public static final String CHUNK_STATUS_TASKS = "net.minecraft.world.level.chunk.status.ChunkStatusTasks";
@@ -56,10 +58,14 @@ public final class Minecraft263AccelerationTargets {
 
     /** Cold world-generation throughput seams added after the large forced-region profile. */
     public static final List<Target> WORLDGEN_THROUGHPUT = List.of(
-            new Target(NOISE_BASED_CHUNK_GENERATOR, "doFill(NoiseChunk,ChunkAccess)",
-                    "section-oriented density application; exact aquifer/state/heightmap/fluid order"),
-            new Target(MATERIAL_SYSTEM, "buildSurface / getSurfaceGradientX / getSurfaceGradientZ",
-                    "per-chunk WORLD_SURFACE_WG cache plus optional deep rule profiling"),
+            new Target(NOISE_BASED_CHUNK_GENERATOR, "buildTerrain(...) executor / doFill(NoiseChunk,ChunkAccess)",
+                    "topology-aware high-SMT terrain scheduling plus section-oriented density application"),
+            new Target(TRACING_EXECUTOR, "forName(String) used by buildTerrain",
+                    "redirect terrain tasks to a core-first ForkJoin pool when high-SMT scheduling is enabled"),
+            new Target(MATERIAL_SYSTEM, "buildSurface / MaterialRule.compile / getSurfaceGradientX / getSurfaceGradientZ",
+                    "flatten compositional rule dispatch; optional height experiment and sampled deep profiling"),
+            new Target(MATERIAL_RULE, "SequenceRule / ConditionRule / BlockRule compile tree",
+                    "semantics-preserving flattened evaluator using vanilla condition and leaf implementations"),
             new Target(MATERIAL_RULE_CONTEXT, "getBiome / getMinSurfaceLevel / getSurfaceSecondary",
                     "diagnostic-only surface rule context attribution"),
             new Target(CHUNK_SKY_LIGHT_SOURCES, "fillFrom(ChunkAccess)",

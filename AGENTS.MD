@@ -916,3 +916,25 @@ Cold FULL-chunk generation is the current NativeServer0 server-throughput target
   the wraparound OR predicate documented in `docs/DAX_ACCELERATION.md`.
 - `scripts/run-dax-adapter-test.sh` uses a fake libdax surface to validate signed-range wraparound,
   endian conversion and select ordering on development hosts without DAX hardware. Keep it passing.
+
+## Worldgen pass 3 — sampled surface profiling and high-SMT scheduling
+
+- The first deep surface profile materially perturbed its own hot path because it read wall and thread-CPU
+  clocks around every rule/helper call. `SurfaceDeepProfiler` now retains exact call counts but samples timing
+  (`worldgen.deepProfileSampleRate`, default 256) and reports scaled estimates. Never rank throughput from a
+  deep-profile run; use it only to choose the next hotspot.
+- `worldgen.fastSurfaceRules=true` flattens only compositional `SequenceRule`/`ConditionRule` structure and
+  terminal `BlockRule` dispatch. Repeated references to the same built-in condition object share its compiled evaluator,
+  which reuses Minecraft's own LazyXZ/LazyY cache; third-party conditions compile independently. Vanilla condition implementations and unknown/complex leaves
+  remain authoritative; any failure recompiles the original rule tree.
+- High-SMT scheduling is topology-aware, not thread-count-only. Explicit core->logical-CPU layouts come from
+  Solaris `kstat cpu_info` or Linux sysfs. Spread one strand across every usable core before adding sibling
+  strands. Preserve JVM-visible CPUs as the hard budget.
+- `WorldgenWorkScheduler` is a dedicated ForkJoin pool for asynchronous terrain builds; keep local deques/work
+  stealing. On Solaris, `processor_bind` binding is best-effort and must fail open.
+- `worldgen.smt.strandsPerCore=0` is auto; the initial SMT8 auto occupancy is 4 and must be calibrated with
+  1/2/4/6/8 target-hardware sweeps. Do not encode "SPARC always uses 8" or "POWER always uses N".
+- Reserving a core and pinning the dedicated server thread is not a processor-set guarantee. Other JVM pools
+  remain outside this scheduler and may migrate onto that core.
+- DAX concurrency is a separate resource budget (`dax.maxConcurrent`, default 32) shared by JAR and libdax
+  integer operations; saturation falls through rather than queueing hundreds of SMT callers.

@@ -119,57 +119,73 @@ public final class DaxIntOps {
     /** Returns null when the optional DaxIntStream JAR is unavailable, disabled, too small, or failed. */
     private static Long tryJarCountBetween(int[] values, int lowerInclusive, int upperInclusive) {
         if (!jarEligible(values)) return null;
+        if (!DaxConcurrencyLimiter.tryEnter()) return null;
         try {
             return DaxIntStreamAdapter.countBetween(values, lowerInclusive, upperInclusive);
         } catch (Throwable failure) {
             DaxIntStreamAdapter.markFailed(failure);
             return null;
+        } finally {
+            DaxConcurrencyLimiter.exit();
         }
     }
 
     private static int[] tryJarFilterBetween(int[] values, int lowerInclusive, int upperInclusive) {
         if (!jarEligible(values)) return null;
+        if (!DaxConcurrencyLimiter.tryEnter()) return null;
         try {
             return DaxIntStreamAdapter.filterBetween(values, lowerInclusive, upperInclusive);
         } catch (Throwable failure) {
             DaxIntStreamAdapter.markFailed(failure);
             return null;
+        } finally {
+            DaxConcurrencyLimiter.exit();
         }
     }
 
     private static Boolean tryJarAnyBetween(int[] values, int lowerInclusive, int upperInclusive) {
         if (!jarEligible(values)) return null;
+        if (!DaxConcurrencyLimiter.tryEnter()) return null;
         try {
             return DaxIntStreamAdapter.anyBetween(values, lowerInclusive, upperInclusive);
         } catch (Throwable failure) {
             DaxIntStreamAdapter.markFailed(failure);
             return null;
+        } finally {
+            DaxConcurrencyLimiter.exit();
         }
     }
 
     private static Boolean tryJarAllBetween(int[] values, int lowerInclusive, int upperInclusive) {
         if (!jarEligible(values)) return null;
+        if (!DaxConcurrencyLimiter.tryEnter()) return null;
         try {
             return DaxIntStreamAdapter.allBetween(values, lowerInclusive, upperInclusive);
         } catch (Throwable failure) {
             DaxIntStreamAdapter.markFailed(failure);
             return null;
+        } finally {
+            DaxConcurrencyLimiter.exit();
         }
     }
 
     private static Boolean tryJarNoneBetween(int[] values, int lowerInclusive, int upperInclusive) {
         if (!jarEligible(values)) return null;
+        if (!DaxConcurrencyLimiter.tryEnter()) return null;
         try {
             return DaxIntStreamAdapter.noneBetween(values, lowerInclusive, upperInclusive);
         } catch (Throwable failure) {
             DaxIntStreamAdapter.markFailed(failure);
             return null;
+        } finally {
+            DaxConcurrencyLimiter.exit();
         }
     }
 
     /** Returns -1 when native libdax is not selected/profitable or the native operation fails. */
     public static long tryCountBetween(int[] values, int lowerInclusive, int upperInclusive) {
         if (!nativeEligible(values, lowerInclusive, upperInclusive)) return -1L;
+        if (!DaxConcurrencyLimiter.tryEnter()) return -1L;
         try {
             NativeApi api = NativeAccelerator.api().orElseThrow();
             long bytes = (long) values.length * Integer.BYTES;
@@ -178,12 +194,15 @@ public final class DaxIntOps {
             return api.daxCountI32Range(src, values.length, lowerInclusive, upperInclusive);
         } catch (Throwable ignored) {
             return -1L;
+        } finally {
+            DaxConcurrencyLimiter.exit();
         }
     }
 
     /** Returns null when native libdax is not selected/profitable or the native operation fails. */
     public static int[] tryFilterBetween(int[] values, int lowerInclusive, int upperInclusive) {
         if (!nativeEligible(values, lowerInclusive, upperInclusive)) return null;
+        if (!DaxConcurrencyLimiter.tryEnter()) return null;
         try {
             NativeApi api = NativeAccelerator.api().orElseThrow();
             long bytes = (long) values.length * Integer.BYTES;
@@ -200,6 +219,8 @@ public final class DaxIntOps {
             return out;
         } catch (Throwable ignored) {
             return null;
+        } finally {
+            DaxConcurrencyLimiter.exit();
         }
     }
 
@@ -208,11 +229,14 @@ public final class DaxIntOps {
                                              int lowerInclusive, int upperInclusive) {
         if (srcI32 == null || !srcI32.isNative() || count < nativeMinimumElements() ||
                 lowerInclusive > upperInclusive || !hardwareEligible()) return -1L;
+        if (!DaxConcurrencyLimiter.tryEnter()) return -1L;
         try {
             return NativeAccelerator.api().orElseThrow()
                     .daxCountI32Range(srcI32, count, lowerInclusive, upperInclusive);
         } catch (Throwable ignored) {
             return -1L;
+        } finally {
+            DaxConcurrencyLimiter.exit();
         }
     }
 
@@ -223,11 +247,14 @@ public final class DaxIntOps {
         if (dstI32 == null || srcI32 == null || !dstI32.isNative() || !srcI32.isNative() ||
                 count < nativeMinimumElements() || dstCapacity < 0 || lowerInclusive > upperInclusive ||
                 !hardwareEligible()) return -1L;
+        if (!DaxConcurrencyLimiter.tryEnter()) return -1L;
         try {
             return NativeAccelerator.api().orElseThrow().daxSelectI32Range(
                     dstI32, dstCapacity, srcI32, count, lowerInclusive, upperInclusive);
         } catch (Throwable ignored) {
             return -1L;
+        } finally {
+            DaxConcurrencyLimiter.exit();
         }
     }
 

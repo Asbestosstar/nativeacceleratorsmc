@@ -224,3 +224,114 @@ F  A + fastSurface=true
 Run profiling separately from A-F. Primary throughput metrics are total workload wall time and completed
 FULL chunks per second; also retain median/p95 region completion and maximum tick stall. The server-behind
 warning by itself is too noisy to rank changes.
+
+## Pass 3 — surface-rule dispatch and high-SMT topology scheduling
+
+The first deep-profile run reported very large CPU totals in `surface.ruleEvaluation`,
+`surface.preliminaryLevel` and `surface.ruleBiome`. Treat the absolute values from that run as diagnostic,
+not as unbiased CPU totals: the original deep profiler read both `System.nanoTime()` and current-thread CPU
+time around every hot rule/helper call. Millions of calls therefore amplified profiler overhead inside the
+very categories being measured.
+
+Pass 3 samples hot calls instead. Exact invocation counts are still retained, but expensive wall/CPU timers
+run once per N calls (default 256), and the reported aggregate time is an estimate scaled from those samples:
+
+```text
+-Dnativeaccelerator.worldgen.deepProfile=true
+-Dnativeaccelerator.worldgen.deepProfileSampleRate=256
+```
+
+Increase the sample rate (for example 1024) if profiling itself is still visible in whole-workload wall time.
+Always compare a non-deep-profile run for real throughput.
+
+### Fast surface-rule compiler
+
+`-Dnativeaccelerator.worldgen.fastSurfaceRules=true` is on by default. It does **not** replace Minecraft's
+material predicates or special surface behavior. It only removes interpreter-like composition overhead from
+the rule tree:
+
+- nested `SequenceRule` nodes are flattened while preserving first-non-null ordering;
+- consecutive `ConditionRule` nodes become one condition array, evaluated in the same outer-to-inner order;
+- repeated references to the same built-in `MaterialCondition` object share its compiled evaluator, allowing Minecraft's
+  own `LazyXZCondition`/`LazyYCondition` cache to be shared across branches; third-party conditions compile independently;
+- a terminal `BlockRule` returns its constant state directly after those conditions pass;
+- unknown/complex leaves compile through Minecraft unchanged;
+- any compiler failure recompiles the complete vanilla tree.
+
+This keeps biome, noise, Y/stone-depth, water, preliminary-surface and mod-provided leaf semantics in Java and
+Minecraft while reducing nested lambda/interface dispatch. It is independently suppressible for A/B testing:
+
+```text
+-Dnativeaccelerator.worldgen.fastSurfaceRules=false
+```
+
+### High-SMT terrain scheduler
+
+Minecraft 26.3's global background executor already targets approximately `availableProcessors() - 1` workers.
+On a fully visible 32-core/256-strand SPARC M8 that can therefore approach 255 workers, but it has no knowledge
+of which logical processors share one physical core. Pass 3 adds an optional topology-aware terrain pool rather
+than simply creating still more threads.
+
+Solaris discovers the explicit `chip_id`/`core_id` -> logical CPU mapping from `kstat -p cpu_info`; Linux uses
+sysfs, which also makes the same scheduler infrastructure usable by future POWER tests. Worker CPU order is
+**core first, then sibling strand level**. For example, on three SMT8 cores, SMT4 is ordered as:
+
+```text
+C0S0 C1S0 C2S0  C0S1 C1S1 C2S1  C0S2 C1S2 C2S2  C0S3 C1S3 C2S3
+```
+
+The dedicated terrain executor is a `ForkJoinPool`, so workers retain local deques and work stealing rather
+than contending on one central queue. On Solaris, Java 25 FFM calls `processor_bind(P_LWPID, P_MYID, ...)` to
+bind each terrain worker to its selected logical processor when binding is enabled. Failure is harmless and
+leaves the worker unbound.
+
+Controls:
+
+```text
+-Dnativeaccelerator.worldgen.smtScheduler=true
+-Dnativeaccelerator.worldgen.smt.strandsPerCore=4
+-Dnativeaccelerator.worldgen.smt.reserveCores=1
+-Dnativeaccelerator.worldgen.smt.bind=true
+-Dnativeaccelerator.worldgen.smt.pinServerThread=true
+```
+
+`strandsPerCore=0` means automatic. The initial SMT8 automatic policy is deliberately conservative at four
+strands/core; it is a starting point, not a claim that SMT4 is optimal. On high-SMT hosts one physical core is
+reserved by default and the dedicated server thread is best-effort pinned to its first strand on Solaris.
+This is **not hard isolation**: Minecraft/JVM pools outside the terrain scheduler may still migrate onto that
+core unless the administrator also uses Solaris processor sets/affinity policy.
+
+On ordinary SMT1/2 systems the dedicated SMT scheduler defaults off, retaining Minecraft's normal executor.
+
+### Required SMT8 sweep
+
+For an M8/T8, benchmark the same fixed cold-world workload at:
+
+```text
+strands/core = 1, 2, 4, 6, 8
+```
+
+Keep `reserveCores`, Java, heap, seed, world, native kernels and feature switches fixed. Run deep profiling only
+as a separate diagnostic. Rank configurations primarily by:
+
+```text
+FULL chunks / wall-second
+terrain chunks / wall-second
+workload wall time
+median and p95 region completion
+max tick stall
+```
+
+Then compute physical-core-normalized throughput. Do not assume SMT8 wins merely because all strands are busy;
+if SMT6 is within a few percent of SMT8 while reducing contention, prefer the configuration that gives the
+server control thread and JVM more headroom.
+
+`./scripts/run-smt-layout-test.sh` is hardware-independent and verifies core-first placement/reservation. The
+actual 1/2/4/6/8 performance sweep must run on the target high-SMT machine.
+
+### DAX concurrency under SMT8
+
+DAX submission is separately bounded with `-Dnativeaccelerator.dax.maxConcurrent` (default 32). Both the
+optional `DaxIntStream` path and direct/native `libdax` integer scan/select paths use the same non-blocking
+permit budget. When the budget is saturated, callers fall through to the next backend/Java instead of letting
+hundreds of SMT workers queue accelerator requests. Tune this independently from CPU strands/core.

@@ -15,7 +15,9 @@
     "common.ChunkStepProfilingMixin",
     "common.DensitySamplerBoundProfilingMixin",
     "common.NoiseBasedChunkGeneratorProfilingMixin",
+    "common.NoiseBasedChunkGeneratorSmtSchedulerMixin",
     "common.NoiseBasedChunkGeneratorFastFillMixin",
+    "common.MaterialSystemFastRulesMixin",
     "common.MaterialSystemFastHeightMixin",
     "common.ChunkSkyLightSourcesFastMixin",
     "common.MaterialSystemDeepProfilingMixin",
@@ -65,6 +67,7 @@
     "client.CuboidModelParseProfilingMixin"
   ],
   "server": [
+    "server.DedicatedServerAffinityMixin",
     "server.DedicatedServerReadyMixin",
     "server.ServerMainMixin"
   ],

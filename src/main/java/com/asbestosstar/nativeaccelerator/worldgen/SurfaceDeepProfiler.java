@@ -1,50 +1,41 @@
 package com.asbestosstar.nativeaccelerator.worldgen;
 
+import com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig;
+
 /**
- * Thread-local aggregation for diagnostic surface-rule timings.
- *
- * <p>Hot rule/context helpers may execute tens of thousands of times per chunk. Updating the global
- * ConcurrentHashMap/LongAdders on every call would materially perturb the measurement, so these counters
- * stay local to the worldgen worker and flush once at the end of MaterialSystem.buildSurface.</p>
+ * Sampled thread-local diagnostic profiler for the extremely hot surface-rule evaluator.
+ * Exact call counts are retained, but expensive nanoTime/ThreadMXBean reads happen only once per N calls.
  */
 public final class SurfaceDeepProfiler {
+    private static final int SAMPLE_RATE = Math.max(1,
+            NativeAcceleratorConfig.intValue("worldgen.deepProfileSampleRate", 256, 1));
     private static final ThreadLocal<State> STATE = ThreadLocal.withInitial(State::new);
 
     private SurfaceDeepProfiler() {}
 
-    public static void beginSurface() {
-        STATE.get().reset();
-    }
-
+    public static void beginSurface() { STATE.get().reset(); }
     public static void endSurface() {
-        State state = STATE.get();
-        state.compile.flush("surface.compile");
-        state.rule.flush("surface.ruleEvaluation");
-        state.biome.flush("surface.ruleBiome");
-        state.preliminary.flush("surface.preliminaryLevel");
-        state.secondary.flush("surface.secondaryNoise");
-        state.reset();
+        State s = STATE.get();
+        s.compile.flush("surface.compile");
+        s.rule.flush("surface.ruleEvaluation");
+        s.biome.flush("surface.ruleBiome");
+        s.preliminary.flush("surface.preliminaryLevel");
+        s.secondary.flush("surface.secondaryNoise");
+        s.reset();
     }
 
-    public static void addCompile(long wallNanos, long cpuNanos) {
-        STATE.get().compile.add(wallNanos, cpuNanos);
-    }
+    public static boolean beginCompile() { return WorldgenProfiler.deepEnabled() && STATE.get().compile.begin(); }
+    public static void endCompile(boolean sampled) { if (sampled) STATE.get().compile.end(true); }
+    public static boolean beginRule() { return WorldgenProfiler.deepEnabled() && STATE.get().rule.begin(); }
+    public static void endRule(boolean sampled) { if (sampled) STATE.get().rule.end(true); }
+    public static boolean beginBiome() { return WorldgenProfiler.deepEnabled() && STATE.get().biome.begin(); }
+    public static void endBiome(boolean sampled) { if (sampled) STATE.get().biome.end(true); }
+    public static boolean beginPreliminary() { return WorldgenProfiler.deepEnabled() && STATE.get().preliminary.begin(); }
+    public static void endPreliminary(boolean sampled) { if (sampled) STATE.get().preliminary.end(true); }
+    public static boolean beginSecondary() { return WorldgenProfiler.deepEnabled() && STATE.get().secondary.begin(); }
+    public static void endSecondary(boolean sampled) { if (sampled) STATE.get().secondary.end(true); }
 
-    public static void addRule(long wallNanos, long cpuNanos) {
-        STATE.get().rule.add(wallNanos, cpuNanos);
-    }
-
-    public static void addBiome(long wallNanos, long cpuNanos) {
-        STATE.get().biome.add(wallNanos, cpuNanos);
-    }
-
-    public static void addPreliminary(long wallNanos, long cpuNanos) {
-        STATE.get().preliminary.add(wallNanos, cpuNanos);
-    }
-
-    public static void addSecondary(long wallNanos, long cpuNanos) {
-        STATE.get().secondary.add(wallNanos, cpuNanos);
-    }
+    public static int sampleRate() { return SAMPLE_RATE; }
 
     private static final class State {
         final Accumulator compile = new Accumulator();
@@ -52,45 +43,47 @@ public final class SurfaceDeepProfiler {
         final Accumulator biome = new Accumulator();
         final Accumulator preliminary = new Accumulator();
         final Accumulator secondary = new Accumulator();
-
-        void reset() {
-            compile.reset();
-            rule.reset();
-            biome.reset();
-            preliminary.reset();
-            secondary.reset();
-        }
+        void reset() { compile.reset(); rule.reset(); biome.reset(); preliminary.reset(); secondary.reset(); }
     }
 
     private static final class Accumulator {
-        long calls;
-        long wall;
-        long cpu;
-        long maxWall;
+        long calls, samples, wall, cpu, maxWall, wallStart, cpuStart;
         boolean hasCpu;
 
-        void add(long wallNanos, long cpuNanos) {
-            long safeWall = Math.max(0L, wallNanos);
+        boolean begin() {
             ++calls;
-            wall += safeWall;
-            maxWall = Math.max(maxWall, safeWall);
-            if (cpuNanos >= 0L) {
-                cpu += cpuNanos;
-                hasCpu = true;
+            if (calls % SAMPLE_RATE != 0L) return false;
+            wallStart = System.nanoTime();
+            cpuStart = WorldgenProfiler.beginCpu();
+            return true;
+        }
+        void end(boolean sampled) {
+            if (!sampled) return;
+            long elapsed = Math.max(0L, System.nanoTime() - wallStart);
+            ++samples;
+            wall += elapsed;
+            maxWall = Math.max(maxWall, elapsed);
+            if (cpuStart >= 0L) {
+                long end = WorldgenProfiler.beginCpu();
+                if (end >= cpuStart) { cpu += end - cpuStart; hasCpu = true; }
             }
         }
-
         void flush(String name) {
             if (calls == 0L) return;
-            WorldgenProfiler.recordAggregate(name, calls, wall, hasCpu ? cpu : -1L, calls, maxWall);
+            if (samples == 0L) {
+                WorldgenProfiler.recordAggregate(name, calls, 0L, -1L, calls, 0L);
+                return;
+            }
+            double scale = (double) calls / (double) samples;
+            long estimatedWall = saturatingScale(wall, scale);
+            long estimatedCpu = hasCpu ? saturatingScale(cpu, scale) : -1L;
+            WorldgenProfiler.recordAggregate(name, calls, estimatedWall, estimatedCpu, calls, maxWall);
+            WorldgenProfiler.addUnits(name + ".samples", samples);
         }
-
-        void reset() {
-            calls = 0L;
-            wall = 0L;
-            cpu = 0L;
-            maxWall = 0L;
-            hasCpu = false;
+        void reset() { calls=samples=wall=cpu=maxWall=wallStart=0L; cpuStart=-1L; hasCpu=false; }
+        private static long saturatingScale(long value, double scale) {
+            double r = value * scale;
+            return r >= Long.MAX_VALUE ? Long.MAX_VALUE : Math.max(0L, Math.round(r));
         }
     }
 }
