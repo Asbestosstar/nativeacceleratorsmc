@@ -72,4 +72,3 @@ public final class CpuTopologyPolicyTest {
         if (!condition) throw new AssertionError(message);
     }
 }
-

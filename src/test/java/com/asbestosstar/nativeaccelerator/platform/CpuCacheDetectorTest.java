@@ -17,4 +17,3 @@ public final class CpuCacheDetectorTest {
         if (!condition) throw new AssertionError(message);
     }
 }
-

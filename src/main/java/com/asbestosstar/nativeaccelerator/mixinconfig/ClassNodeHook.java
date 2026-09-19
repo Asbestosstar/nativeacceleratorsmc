@@ -25,4 +25,3 @@ public interface ClassNodeHook {
             IMixinInfo mixinInfo) {
     }
 }
-

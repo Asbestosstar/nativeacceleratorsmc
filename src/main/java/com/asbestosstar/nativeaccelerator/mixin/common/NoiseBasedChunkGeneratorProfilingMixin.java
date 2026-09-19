@@ -27,10 +27,10 @@ import java.util.concurrent.CompletableFuture;
 @Mixin(NoiseBasedChunkGenerator.class)
 public abstract class NoiseBasedChunkGeneratorProfilingMixin {
     @Unique private static final ThreadLocal<Long> BUILD_TERRAIN = new ThreadLocal<>();
-    @Unique private static final ThreadLocal<Long> CREATE_NOISE = new ThreadLocal<>();
-    @Unique private static final ThreadLocal<Long> FILL = new ThreadLocal<>();
-    @Unique private static final ThreadLocal<Long> SURFACE = new ThreadLocal<>();
-    @Unique private static final ThreadLocal<Long> CARVERS = new ThreadLocal<>();
+    @Unique private static final ThreadLocal<long[]> CREATE_NOISE = ThreadLocal.withInitial(() -> new long[2]);
+    @Unique private static final ThreadLocal<long[]> FILL = ThreadLocal.withInitial(() -> new long[2]);
+    @Unique private static final ThreadLocal<long[]> SURFACE = ThreadLocal.withInitial(() -> new long[2]);
+    @Unique private static final ThreadLocal<long[]> CARVERS = ThreadLocal.withInitial(() -> new long[2]);
 
     @Inject(method = "buildTerrain", at = @At("HEAD"), require = 0)
     private void nativeaccelerator$terrainBegin(ChunkAccess chunk, Blender blender, RandomState randomState,
@@ -52,6 +52,7 @@ public abstract class NoiseBasedChunkGeneratorProfilingMixin {
         BUILD_TERRAIN.remove();
         CompletableFuture<ChunkAccess> future = cir.getReturnValue();
         if (start != null && future != null) {
+            // Future completion may happen on another thread, so terrain.total is intentionally wall-time only.
             future.whenComplete((result, error) -> WorldgenProfiler.recordPhase("terrain.total", start));
         }
     }
@@ -60,7 +61,7 @@ public abstract class NoiseBasedChunkGeneratorProfilingMixin {
     private void nativeaccelerator$createNoiseBegin(ChunkAccess chunk, StructureManager structureManager,
                                                      Blender blender, RandomState randomState, NoiseSettings noiseSettings,
                                                      CallbackInfoReturnable<NoiseChunk> cir) {
-        if (WorldgenProfiler.enabled()) CREATE_NOISE.set(System.nanoTime());
+        nativeaccelerator$begin(CREATE_NOISE);
     }
 
     @Inject(method = "createNoiseChunk", at = @At("RETURN"), require = 0)
@@ -72,7 +73,7 @@ public abstract class NoiseBasedChunkGeneratorProfilingMixin {
 
     @Inject(method = "doFill", at = @At("HEAD"), require = 0)
     private void nativeaccelerator$fillBegin(NoiseChunk noiseChunk, ChunkAccess chunk, CallbackInfo ci) {
-        if (WorldgenProfiler.enabled()) FILL.set(System.nanoTime());
+        nativeaccelerator$begin(FILL);
     }
 
     @Inject(method = "doFill", at = @At("RETURN"), require = 0)
@@ -84,7 +85,7 @@ public abstract class NoiseBasedChunkGeneratorProfilingMixin {
     private void nativeaccelerator$surfaceBegin(ChunkAccess chunk, NoiseChunk noiseChunk, RandomState randomState,
                                                 BiomeManager biomeManager, Set<Holder<Biome>> possibleBiomes,
                                                 MaterialRule materialRule, CallbackInfo ci) {
-        if (WorldgenProfiler.enabled()) SURFACE.set(System.nanoTime());
+        nativeaccelerator$begin(SURFACE);
     }
 
     @Inject(method = "buildSurface", at = @At("RETURN"), require = 0)
@@ -99,7 +100,7 @@ public abstract class NoiseBasedChunkGeneratorProfilingMixin {
                                                 RandomState randomState, BiomeManager biomeManager,
                                                 WorldGenRegion carverBiomeRegion, MaterialRule materialRule,
                                                 CallbackInfo ci) {
-        if (WorldgenProfiler.enabled()) CARVERS.set(System.nanoTime());
+        nativeaccelerator$begin(CARVERS);
     }
 
     @Inject(method = "generateCarvers", at = @At("RETURN"), require = 0)
@@ -111,10 +112,22 @@ public abstract class NoiseBasedChunkGeneratorProfilingMixin {
     }
 
     @Unique
-    private static void nativeaccelerator$finishPhase(ThreadLocal<Long> timer, String name) {
+    private static void nativeaccelerator$begin(ThreadLocal<long[]> timer) {
         if (!WorldgenProfiler.enabled()) return;
-        Long start = timer.get();
-        timer.remove();
-        if (start != null) WorldgenProfiler.recordPhase(name, start);
+        long[] start = timer.get();
+        start[0] = System.nanoTime();
+        start[1] = WorldgenProfiler.beginCpu();
     }
+
+    @Unique
+    private static void nativeaccelerator$finishPhase(ThreadLocal<long[]> timer, String name) {
+        if (!WorldgenProfiler.enabled()) return;
+        long[] start = timer.get();
+        if (start[0] != 0L) {
+            WorldgenProfiler.recordPhaseCpu(name, start[0], start[1]);
+            start[0] = 0L;
+            start[1] = -1L;
+        }
+    }
+
 }

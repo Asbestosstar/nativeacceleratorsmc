@@ -40,4 +40,3 @@ public abstract class IntegratedServerMixin {
         StartupTimer.end(StartupStages.CLIENT_INTEGRATED_SERVER);
     }
 }
-

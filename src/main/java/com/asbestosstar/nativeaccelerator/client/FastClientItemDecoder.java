@@ -620,4 +620,3 @@ public final class FastClientItemDecoder {
         public String reason() { return reason; }
     }
 }
-

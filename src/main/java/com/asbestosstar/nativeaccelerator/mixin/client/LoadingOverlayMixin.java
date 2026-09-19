@@ -28,4 +28,3 @@ public abstract class LoadingOverlayMixin {
         StartupTimer.begin(StartupStages.CLIENT_LOADING);
     }
 }
-

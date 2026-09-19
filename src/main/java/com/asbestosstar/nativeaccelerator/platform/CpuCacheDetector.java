@@ -99,4 +99,3 @@ public final class CpuCacheDetector {
         return out;
     }
 }
-

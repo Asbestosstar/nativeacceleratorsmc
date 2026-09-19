@@ -31,4 +31,3 @@ public final class DeferredCacheWriterTest {
         if (completed.get() != expected) throw new AssertionError("timed out waiting for " + expected + ", got " + completed.get());
     }
 }
-

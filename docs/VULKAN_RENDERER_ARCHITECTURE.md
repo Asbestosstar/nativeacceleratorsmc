@@ -163,4 +163,3 @@ driver requirements, not to the scene database, meshing, arena allocator, cullin
 
 The renderer can therefore be built for Solaris/illumos, BSD families, Linux, Windows, macOS translation
 layers, and other targets without changing the architecture merely because the OS name differs.
-

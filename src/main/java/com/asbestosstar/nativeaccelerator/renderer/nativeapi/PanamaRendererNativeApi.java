@@ -356,4 +356,3 @@ public final class PanamaRendererNativeApi implements RendererNativeApi, AutoClo
         return new RuntimeException(t);
     }
 }
-

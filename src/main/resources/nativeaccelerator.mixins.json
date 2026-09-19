@@ -14,7 +14,14 @@
     "common.MinecraftServerTimingMixin",
     "common.ChunkStepProfilingMixin",
     "common.DensitySamplerBoundProfilingMixin",
-    "common.NoiseBasedChunkGeneratorProfilingMixin"
+    "common.NoiseBasedChunkGeneratorProfilingMixin",
+    "common.NoiseBasedChunkGeneratorFastFillMixin",
+    "common.MaterialSystemFastHeightMixin",
+    "common.ChunkSkyLightSourcesFastMixin",
+    "common.MaterialSystemDeepProfilingMixin",
+    "common.MaterialRuleContextDeepProfilingMixin",
+    "common.ThreadedLevelLightEngineDeepProfilingMixin",
+    "common.ChunkStatusTasksLightingProfilingMixin"
   ],
   "client": [
     "client.ClientMainMixin",

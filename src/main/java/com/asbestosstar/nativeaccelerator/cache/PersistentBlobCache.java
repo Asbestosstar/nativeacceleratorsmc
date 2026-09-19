@@ -222,4 +222,3 @@ public final class PersistentBlobCache implements AutoCloseable {
 
     private record Entry(long offset, int length, int crc32c) {}
 }
-

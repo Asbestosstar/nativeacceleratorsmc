@@ -32,4 +32,3 @@ public abstract class ModelDiscoveryParentOrderMixin {
         return models;
     }
 }
-

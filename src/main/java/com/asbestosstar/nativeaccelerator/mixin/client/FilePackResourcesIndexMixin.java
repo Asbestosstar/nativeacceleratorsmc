@@ -60,4 +60,3 @@ public abstract class FilePackResourcesIndexMixin {
         return this.prefix.isEmpty() ? path : this.prefix + "/" + path;
     }
 }
-

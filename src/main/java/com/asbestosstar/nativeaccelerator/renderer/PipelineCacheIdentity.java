@@ -21,4 +21,3 @@ public record PipelineCacheIdentity(
         Objects.requireNonNull(acceleratorVersion);
     }
 }
-

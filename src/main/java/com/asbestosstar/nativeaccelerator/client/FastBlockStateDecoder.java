@@ -633,4 +633,3 @@ public final class FastBlockStateDecoder {
 
     private record ParsedVariant(Variant variant, int weight) {}
 }
-

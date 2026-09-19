@@ -31,4 +31,3 @@ public abstract class BuiltInBlockModelsProfilingMixin {
         if (started != null) ModelDagProfiler.end("built-in-block-models", started);
     }
 }
-

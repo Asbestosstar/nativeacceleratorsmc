@@ -58,4 +58,3 @@ public abstract class MinecraftStartupMixin {
         DeferredCacheWriter.startupComplete();
     }
 }
-

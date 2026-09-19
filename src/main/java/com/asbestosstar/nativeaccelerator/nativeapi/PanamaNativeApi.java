@@ -383,4 +383,3 @@ public final class PanamaNativeApi implements NativeApi, AutoCloseable {
         return new RuntimeException(t);
     }
 }
-

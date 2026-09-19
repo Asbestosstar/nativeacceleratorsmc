@@ -106,6 +106,43 @@ public final class SystemMixinGateTest {
         expect("no loader assumed -> loader mixin skipped not applied", false,
                 plugin.shouldApplyMixin(MC_CLIENT, FABRIC_MIXIN));
 
+        // --- worldgen hot-path gates ----------------------------------------------------------
+        String FAST_FILL = "com.asbestosstar.nativeaccelerator.mixin.common.NoiseBasedChunkGeneratorFastFillMixin";
+        String FAST_SURFACE = "com.asbestosstar.nativeaccelerator.mixin.common.MaterialSystemFastHeightMixin";
+        String FAST_LIGHT = "com.asbestosstar.nativeaccelerator.mixin.common.ChunkSkyLightSourcesFastMixin";
+        String DEEP_SURFACE = "com.asbestosstar.nativeaccelerator.mixin.common.MaterialSystemDeepProfilingMixin";
+
+        System.setProperty("nativeaccelerator.worldgen.fastFill", "false");
+        expect("fast fill mixin removed when switch is false", MixinDecision.SKIP,
+                SystemMixinGate.worldgenRule("net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator", FAST_FILL));
+        System.clearProperty("nativeaccelerator.worldgen.fastFill");
+        expect("fast fill mixin defaults on", MixinDecision.DEFAULT,
+                SystemMixinGate.worldgenRule("net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator", FAST_FILL));
+
+        System.setProperty("nativeaccelerator.worldgen.fastSurface", "false");
+        expect("fast surface mixin removed when switch is false", MixinDecision.SKIP,
+                SystemMixinGate.worldgenRule("net.minecraft.world.level.levelgen.material.MaterialSystem", FAST_SURFACE));
+        System.clearProperty("nativeaccelerator.worldgen.fastSurface");
+        expect("fast surface mixin defaults off pending parity validation", MixinDecision.SKIP,
+                SystemMixinGate.worldgenRule("net.minecraft.world.level.levelgen.material.MaterialSystem", FAST_SURFACE));
+        System.setProperty("nativeaccelerator.worldgen.fastSurface", "true");
+        expect("fast surface mixin can be enabled explicitly", MixinDecision.DEFAULT,
+                SystemMixinGate.worldgenRule("net.minecraft.world.level.levelgen.material.MaterialSystem", FAST_SURFACE));
+        System.clearProperty("nativeaccelerator.worldgen.fastSurface");
+
+        System.setProperty("nativeaccelerator.worldgen.fastLighting", "false");
+        expect("fast lighting mixin removed when switch is false", MixinDecision.SKIP,
+                SystemMixinGate.worldgenRule("net.minecraft.world.level.lighting.ChunkSkyLightSources", FAST_LIGHT));
+        System.clearProperty("nativeaccelerator.worldgen.fastLighting");
+
+        System.clearProperty("nativeaccelerator.worldgen.deepProfile");
+        expect("deep profiler mixin defaults off", MixinDecision.SKIP,
+                SystemMixinGate.worldgenRule("net.minecraft.world.level.levelgen.material.MaterialSystem", DEEP_SURFACE));
+        System.setProperty("nativeaccelerator.worldgen.deepProfile", "true");
+        expect("deep profiler mixin enabled explicitly", MixinDecision.DEFAULT,
+                SystemMixinGate.worldgenRule("net.minecraft.world.level.levelgen.material.MaterialSystem", DEEP_SURFACE));
+        System.clearProperty("nativeaccelerator.worldgen.deepProfile");
+
         System.out.println();
         System.out.println("checks=" + checks + " failures=" + failures);
         if (failures > 0) {
@@ -141,4 +178,3 @@ public final class SystemMixinGateTest {
 
     private SystemMixinGateTest() {}
 }
-

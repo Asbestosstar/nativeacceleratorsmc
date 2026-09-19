@@ -102,4 +102,3 @@ public abstract class ModelManagerDAGProfilingMixin {
         if (started != null) ModelDagProfiler.end("blockstate-dispatch.final", started);
     }
 }
-

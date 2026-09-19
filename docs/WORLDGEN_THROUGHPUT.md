@@ -108,3 +108,119 @@ B vs D  net value of the preferred native-noise path
 Use a separate `stack + worldgen.profile=true` diagnostic run to decide what to optimize next. Do not raise
 worldgen worker counts until the phase profile shows CPU headroom; density, features, structures, or lighting
 may already be saturating cores/cache/memory bandwidth.
+
+## Pass 2 — fill, surface and lighting
+
+The 4,096-requested-chunk diagnostic run moved the priority away from `createNoiseChunk`. The measured
+terrain cost is dominated by surface construction and fill, while the two light statuses are also a major
+independent subsystem. Remember that `density.sampleVolume` is nested *inside* `terrain.doFill`; never add
+those two totals together as independent work.
+
+Pass 2 adds three independently suppressible throughput paths:
+
+```text
+-Dnativeaccelerator.worldgen.fastFill=true
+-Dnativeaccelerator.worldgen.fastSurface=true
+-Dnativeaccelerator.worldgen.fastLighting=true
+```
+
+`fastFill` and `fastLighting` default to true. `fastSurface` defaults to false pending parity validation of
+special surface extensions that can mutate heightmaps during the same buildSurface pass. The mixin config
+plugin removes disabled fast-path mixins at transformation time for command-line benchmark switches, so an
+A/B-off run does not retain a per-voxel redirect branch.
+
+### fastFill
+
+`NoiseBasedChunkGenerator#doFill` keeps the vanilla order and semantics:
+
+```text
+aquifer.computeSubstance
+fallback to defaultBlock
+write LevelChunkSection
+update OCEAN_FLOOR_WG
+update WORLD_SURFACE_WG
+schedule fluid post-processing when requested by the aquifer
+```
+
+The difference is traversal. Unit-step 16xN x16 terrain volumes are consumed linearly from the existing
+`DensityBuffer` float array, and `LevelChunkSection` is resolved once per vertical 16-block band rather
+than once per voxel. Debug-aquifer visualization and unusual stepped volumes remain vanilla.
+
+### fastSurface (experimental, default off)
+
+`MaterialSystem#buildSurface` still uses Minecraft's ordinary `MaterialRuleContext`, compiled rule tree,
+biome lookup, block reads/writes, badlands/frozen-ocean extensions and rule evaluation. The experiment caches
+the 256 `WORLD_SURFACE_WG` heights for the current chunk and answers repeated starting-height and gradient
+queries from that primitive array. Because special extensions may write blocks and change heightmaps while
+the same surface pass is running, this path is not enabled by default until a block/heightmap parity harness
+proves it safe. Deep profiling is the preferred next surface step.
+
+### fastLighting
+
+`ChunkSkyLightSources#fillFrom` still performs the same top-to-bottom edge-occlusion test for every X/Z
+column. The fast path computes `LevelChunkSection#hasOnlyAir()` once per section instead of rechecking the
+same section for up to 256 columns. It does not replace the light propagation engine.
+
+## CPU-time and deep profiling
+
+Elapsed time across background workers is not CPU time. Enable current-thread CPU accounting explicitly:
+
+```text
+-Dnativeaccelerator.worldgen.profile=true
+-Dnativeaccelerator.worldgen.cpuProfiler=true
+```
+
+The report then includes both `elapsed ms` and `cpu ms` for synchronous spans. Asynchronous future/status
+spans intentionally have no CPU attribution because completion can occur on another thread.
+
+For a much more intrusive diagnostic split, also enable:
+
+```text
+-Dnativeaccelerator.worldgen.deepProfile=true
+```
+
+Deep-profiler mixins are transformation-gated and are absent entirely unless this property is true. They
+add these metrics:
+
+```text
+surface.compile
+surface.ruleEvaluation
+surface.ruleBiome
+surface.preliminaryLevel
+surface.secondaryNoise
+lighting.initializeLightSources
+lighting.skySources
+lighting.runUpdate.total
+lighting.preTasks
+lighting.propagation
+lighting.postTasks
+```
+
+`surface.ruleEvaluation` and the MaterialRuleContext helper metrics time hot per-rule calls, so never use a
+deep-profile run as a throughput result. Its purpose is to decide whether the next surface rewrite should
+focus on rule dispatch, biome/noise predicates, or residual block traversal.
+
+Likewise, the lighting split decides the next implementation step. If `lighting.skySources` or
+`lighting.initializeLightSources` dominates, optimize scanning. If `lighting.propagation` dominates, work
+on the light graph/queues instead; do not assume more worker threads will help.
+
+## Pass-2 A/B matrix
+
+Use the same fresh world, Java, heap, seed and non-overlapping region list for every row:
+
+```text
+A  Native Accelerator, noise.mode=off,
+   fastFill=false fastSurface=false fastLighting=false
+
+B  A + fastFill=true
+C  A + fastLighting=true
+D  A + fastFill=true fastLighting=true
+E  D + noise.mode=stack
+
+Experimental surface parity/performance run (not part of the default combined result):
+F  A + fastSurface=true
+```
+
+Run profiling separately from A-F. Primary throughput metrics are total workload wall time and completed
+FULL chunks per second; also retain median/p95 region completion and maximum tick stall. The server-behind
+warning by itself is too noisy to rank changes.

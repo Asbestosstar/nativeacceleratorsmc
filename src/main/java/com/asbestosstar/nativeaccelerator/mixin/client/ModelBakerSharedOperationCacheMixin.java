@@ -32,4 +32,3 @@ public abstract class ModelBakerSharedOperationCacheMixin {
         return cached != null ? cached : cache.computeIfAbsent(key, compute);
     }
 }
-

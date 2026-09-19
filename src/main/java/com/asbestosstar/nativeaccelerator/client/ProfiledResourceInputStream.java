@@ -51,4 +51,3 @@ final class ProfiledResourceInputStream extends FilterInputStream {
         }
     }
 }
-

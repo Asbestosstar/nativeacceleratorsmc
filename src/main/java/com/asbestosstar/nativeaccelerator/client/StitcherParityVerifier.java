@@ -26,4 +26,3 @@ public final class StitcherParityVerifier {
 
     private record Placement(Identifier id, int x, int y, int padding) {}
 }
-

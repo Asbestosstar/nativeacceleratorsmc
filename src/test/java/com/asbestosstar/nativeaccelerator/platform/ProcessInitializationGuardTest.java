@@ -111,4 +111,3 @@ public final class ProcessInitializationGuardTest {
 
     private ProcessInitializationGuardTest() {}
 }
-

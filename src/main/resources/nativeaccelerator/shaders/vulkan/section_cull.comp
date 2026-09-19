@@ -76,4 +76,3 @@ void main() {
     commands[outputIndex].vertexOffset = meta.vertexOffset;
     commands[outputIndex].firstInstance = meta.firstInstance;
 }
-

@@ -97,4 +97,3 @@ public final class ModelJsonParseCache {
 
     public record Snapshot(long readNanos, long parseNanos, long hits, long misses, int entries) {}
 }
-

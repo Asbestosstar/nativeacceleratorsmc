@@ -30,4 +30,3 @@ public abstract class ServerMainMixin {
         StartupTimer.beginLifetime(StartupStages.SERVER_MAIN);
     }
 }
-

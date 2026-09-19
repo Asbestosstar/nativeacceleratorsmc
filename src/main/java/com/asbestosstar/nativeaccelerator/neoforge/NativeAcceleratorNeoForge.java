@@ -10,4 +10,3 @@ public final class NativeAcceleratorNeoForge {
         NativeAccelerator.initialize();
     }
 }
-

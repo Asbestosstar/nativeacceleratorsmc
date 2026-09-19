@@ -153,4 +153,3 @@ public abstract class BootstrapMixin {
         StartupTimer.end(StartupStages.BOOTSTRAP_VALIDATE);
     }
 }
-

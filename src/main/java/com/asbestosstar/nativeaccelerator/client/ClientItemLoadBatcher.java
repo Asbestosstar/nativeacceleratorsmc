@@ -133,4 +133,3 @@ public final class ClientItemLoadBatcher {
 
     private record PendingLoad(Identifier id, ClientItem item) {}
 }
-

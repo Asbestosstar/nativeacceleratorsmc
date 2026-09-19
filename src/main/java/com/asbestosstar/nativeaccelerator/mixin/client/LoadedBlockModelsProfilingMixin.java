@@ -32,4 +32,3 @@ public abstract class LoadedBlockModelsProfilingMixin {
         ModelDagProfiler.track("loaded-block-models.bake", cir.getReturnValue(), nativeaccelerator$bakeStarted);
     }
 }
-

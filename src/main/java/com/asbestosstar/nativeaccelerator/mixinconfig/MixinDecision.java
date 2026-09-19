@@ -9,4 +9,3 @@ public enum MixinDecision {
     APPLY,
     SKIP
 }
-

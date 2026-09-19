@@ -28,4 +28,3 @@ public abstract class ClientMainMixin {
         StartupTimer.beginLifetime(StartupStages.CLIENT_MAIN);
     }
 }
-

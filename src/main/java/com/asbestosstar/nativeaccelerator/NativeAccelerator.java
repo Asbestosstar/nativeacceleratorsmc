@@ -142,4 +142,3 @@ public final class NativeAccelerator {
         }
     }
 }
-

@@ -152,4 +152,3 @@ public abstract class GuiButtonNineSliceFixMixin {
                 color);
     }
 }
-

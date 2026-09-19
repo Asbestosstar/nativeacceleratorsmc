@@ -87,6 +87,7 @@ public final class SystemMixinGate {
     public static void installDefaults() {
         if (!INSTALLED.compareAndSet(false, true)) return;
         NativeAcceleratorMixinConfigPlugin.registerRule(SystemMixinGate::environmentRule);
+        NativeAcceleratorMixinConfigPlugin.registerRule(SystemMixinGate::worldgenRule);
         NativeAcceleratorMixinConfigPlugin.registerRule(SystemMixinGate::rendererRule);
         NativeAcceleratorMixinConfigPlugin.registerRule(SystemMixinGate::loaderRule);
     }
@@ -104,6 +105,36 @@ public final class SystemMixinGate {
         }
         if (startsWith(SERVER_MIXIN_PACKAGE, mixinClassName)) {
             return "client".equals(environment) ? MixinDecision.SKIP : MixinDecision.DEFAULT;
+        }
+        return MixinDecision.DEFAULT;
+    }
+
+    /**
+     * Worldgen throughput/profiling mixins that should disappear entirely when their -D switch is off.
+     * This avoids leaving per-voxel/per-rule redirect branches in an A/B control run. Config-file values
+     * are intentionally not consulted here because this rule executes during class transformation; the
+     * corresponding system properties are the reproducible benchmark contract.
+     */
+    static MixinDecision worldgenRule(String targetClassName, String mixinClassName) {
+        if (mixinClassName == null) return MixinDecision.DEFAULT;
+        if (mixinClassName.endsWith("NoiseBasedChunkGeneratorFastFillMixin")
+                && !booleanProperty("nativeaccelerator.worldgen.fastFill", true)) {
+            return MixinDecision.SKIP;
+        }
+        if (mixinClassName.endsWith("MaterialSystemFastHeightMixin")
+                && !booleanProperty("nativeaccelerator.worldgen.fastSurface", false)) {
+            return MixinDecision.SKIP;
+        }
+        if (mixinClassName.endsWith("ChunkSkyLightSourcesFastMixin")
+                && !booleanProperty("nativeaccelerator.worldgen.fastLighting", true)) {
+            return MixinDecision.SKIP;
+        }
+        if ((mixinClassName.endsWith("MaterialSystemDeepProfilingMixin")
+                || mixinClassName.endsWith("MaterialRuleContextDeepProfilingMixin")
+                || mixinClassName.endsWith("ThreadedLevelLightEngineDeepProfilingMixin")
+                || mixinClassName.endsWith("ChunkStatusTasksLightingProfilingMixin"))
+                && !booleanProperty("nativeaccelerator.worldgen.deepProfile", false)) {
+            return MixinDecision.SKIP;
         }
         return MixinDecision.DEFAULT;
     }
@@ -235,4 +266,3 @@ public final class SystemMixinGate {
         return value != null && value.startsWith(prefix);
     }
 }
-

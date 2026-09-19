@@ -83,4 +83,3 @@ public abstract class SpriteLoaderThroughputMixin {
         return value.replace(':', '.').replace('/', '.');
     }
 }
-

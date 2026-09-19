@@ -292,4 +292,3 @@ public final class ModelLoadBatcher {
 
     private record ModelResult(Identifier id, UnbakedModel model) {}
 }
-

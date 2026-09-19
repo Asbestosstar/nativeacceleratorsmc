@@ -23,4 +23,3 @@ side="BOTH"
 
 [features.nativeaccelerator]
 javaVersion="[25,)"
-

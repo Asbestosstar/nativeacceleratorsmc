@@ -59,4 +59,3 @@ public record CpuTopology(
         return value > 0 ? value : Math.max(1, fallback);
     }
 }
-

@@ -10,4 +10,3 @@ public interface NativeImagePixelsAccessor {
     @Accessor("pixels")
     long nativeaccelerator$pixels();
 }
-

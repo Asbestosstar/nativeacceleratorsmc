@@ -19,6 +19,12 @@ public final class Minecraft263AccelerationTargets {
     public static final String NOISE_STACK = "net.minecraft.world.level.levelgen.synth.NoiseStack";
     public static final String DENSITY_BUFFER = "net.minecraft.world.level.levelgen.densityfunction.DensityBuffer";
     public static final String DENSITY_VOLUME = "net.minecraft.world.level.levelgen.densityfunction.DensityVolume";
+    public static final String NOISE_BASED_CHUNK_GENERATOR = "net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator";
+    public static final String MATERIAL_SYSTEM = "net.minecraft.world.level.levelgen.material.MaterialSystem";
+    public static final String MATERIAL_RULE_CONTEXT = "net.minecraft.world.level.levelgen.material.MaterialRuleContext";
+    public static final String CHUNK_SKY_LIGHT_SOURCES = "net.minecraft.world.level.lighting.ChunkSkyLightSources";
+    public static final String THREADED_LEVEL_LIGHT_ENGINE = "net.minecraft.server.level.ThreadedLevelLightEngine";
+    public static final String CHUNK_STATUS_TASKS = "net.minecraft.world.level.chunk.status.ChunkStatusTasks";
 
     public static final String MODEL_MANAGER = "net.minecraft.client.resources.model.ModelManager";
     public static final String BLOCKSTATE_MODEL_LOADER = "net.minecraft.client.resources.model.BlockStateModelLoader";
@@ -46,6 +52,22 @@ public final class Minecraft263AccelerationTargets {
             new Target(MESH_DATA, "decodeQuadCentroids + SortState", "centroid generation and distance index sort"),
             new Target(NATIVE_IMAGE, "fillRect / copyRect / bulk channel conversion", "native pixel kernels"),
             new Target(PERLIN_NOISE, "addToVolume", "bulk regular-grid Perlin evaluation")
+    );
+
+    /** Cold world-generation throughput seams added after the large forced-region profile. */
+    public static final List<Target> WORLDGEN_THROUGHPUT = List.of(
+            new Target(NOISE_BASED_CHUNK_GENERATOR, "doFill(NoiseChunk,ChunkAccess)",
+                    "section-oriented density application; exact aquifer/state/heightmap/fluid order"),
+            new Target(MATERIAL_SYSTEM, "buildSurface / getSurfaceGradientX / getSurfaceGradientZ",
+                    "per-chunk WORLD_SURFACE_WG cache plus optional deep rule profiling"),
+            new Target(MATERIAL_RULE_CONTEXT, "getBiome / getMinSurfaceLevel / getSurfaceSecondary",
+                    "diagnostic-only surface rule context attribution"),
+            new Target(CHUNK_SKY_LIGHT_SOURCES, "fillFrom(ChunkAccess)",
+                    "cache per-section hasOnlyAir while preserving edge-occlusion scan"),
+            new Target(THREADED_LEVEL_LIGHT_ENGINE, "runUpdate()",
+                    "diagnostic split of pre-tasks, propagation and post-tasks"),
+            new Target(CHUNK_STATUS_TASKS, "initializeLight(...) / light(...)",
+                    "diagnostic source-scan and asynchronous status attribution")
     );
 
     /**
@@ -114,4 +136,3 @@ public final class Minecraft263AccelerationTargets {
 
     public record Target(String className, String methods, String nativeKernel) {}
 }
-

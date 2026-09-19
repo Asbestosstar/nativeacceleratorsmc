@@ -138,4 +138,3 @@ public final class NativeVulkanRenderer {
                 () -> new IllegalStateException("Native Vulkan renderer is not active"));
     }
 }
-

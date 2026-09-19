@@ -39,6 +39,7 @@ public final class NoiseStackAcceleration {
             state.bytes = bytes;
             state.nativeValues = MemorySegment.ofBuffer(state.buffer).asSlice(0, bytes);
             state.profileStart = WorldgenProfiler.begin();
+            state.profileCpuStart = WorldgenProfiler.beginCpu();
             state.cells = cells;
             state.nativeValues.copyFrom(MemorySegment.ofArray(values).asSlice(0, bytes));
             state.active = true;
@@ -78,8 +79,8 @@ public final class NoiseStackAcceleration {
             if (state.active) commit(state);
         } finally {
             if (state.profileStart != 0L) {
-                WorldgenProfiler.recordPhase(state.failed ? "noise.stack.partialFallback" : "noise.stack.accelerated",
-                        state.profileStart, state.cells);
+                WorldgenProfiler.recordPhaseCpu(state.failed ? "noise.stack.partialFallback" : "noise.stack.accelerated",
+                        state.profileStart, state.profileCpuStart, state.cells);
             }
             state.reset();
         }
@@ -111,6 +112,7 @@ public final class NoiseStackAcceleration {
         boolean active;
         boolean failed;
         long profileStart;
+        long profileCpuStart = -1L;
         long cells;
 
         void ensure(int bytes) {
@@ -130,6 +132,7 @@ public final class NoiseStackAcceleration {
             active = false;
             failed = false;
             profileStart = 0L;
+            profileCpuStart = -1L;
             cells = 0L;
         }
     }

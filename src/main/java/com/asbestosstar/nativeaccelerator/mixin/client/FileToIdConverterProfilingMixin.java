@@ -80,4 +80,3 @@ public abstract class FileToIdConverterProfilingMixin {
         return value == null || value.isBlank() ? "root" : value.replace('/', '.');
     }
 }
-

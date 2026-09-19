@@ -50,4 +50,3 @@ public final class NativeAcceleratorConfig {
         return values;
     }
 }
-
