@@ -21,10 +21,12 @@ final class MetalInterop {
     static final String SDL_GPU = "org.lwjgl.sdl.SDLGPU";
     static final String SDL_VIDEO = "org.lwjgl.sdl.SDLVideo";
     static final String SDL_ERROR = "org.lwjgl.sdl.SDLError";
+    static final String SDL_PROPERTIES = "org.lwjgl.sdl.SDLProperties";
 
     private static final Map<String, Class<?>> CLASSES = new ConcurrentHashMap<>();
     private static final Map<String, Method> METHODS = new ConcurrentHashMap<>();
     private static final Map<String, Integer> INTS = new ConcurrentHashMap<>();
+    private static final Map<String, String> STRINGS = new ConcurrentHashMap<>();
 
     private MetalInterop() {}
 
@@ -69,6 +71,28 @@ final class MetalInterop {
 
     static int sdl(String name) {
         return constant(SDL_GPU, name);
+    }
+
+    static String stringConstant(String owner, String name) {
+        String key = owner + '#' + name;
+        return STRINGS.computeIfAbsent(key, ignored -> {
+            try {
+                Field field = type(owner).getField(name);
+                Object value = field.get(null);
+                if (!(value instanceof String text)) throw new IllegalStateException("Native constant is not a String: " + key);
+                return text;
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException("Missing native string constant " + key, e);
+            }
+        });
+    }
+
+    static String sdlString(String name) {
+        return stringConstant(SDL_GPU, name);
+    }
+
+    static Object propertiesCall(String method, Object... args) {
+        return callStatic(type(SDL_PROPERTIES), method, args);
     }
 
 

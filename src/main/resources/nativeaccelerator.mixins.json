@@ -65,7 +65,8 @@
     "client.ResourceOpenProfilingMixin",
     "client.FileToIdConverterProfilingMixin",
     "client.CuboidModelParseProfilingMixin",
-    "client.PreferredGraphicsApiMetalMixin"
+    "client.VideoSettingsMetalOptionMixin",
+    "client.OptionsMetalRestartMixin"
   ],
   "server": [
     "server.DedicatedServerAffinityMixin",

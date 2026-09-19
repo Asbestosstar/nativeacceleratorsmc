@@ -6,8 +6,6 @@ import com.asbestosstar.nativeaccelerator.nativeapi.NativeApi;
 import com.asbestosstar.nativeaccelerator.nativeapi.PanamaNativeApi;
 import com.asbestosstar.nativeaccelerator.platform.Platform;
 import com.asbestosstar.nativeaccelerator.platform.ProcessInitializationGuard;
-import com.asbestosstar.nativeaccelerator.renderer.NativeVulkanRenderer;
-import com.asbestosstar.nativeaccelerator.renderer.RendererPlatformPolicy;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -62,11 +60,10 @@ public final class NativeAccelerator {
         // Keep the renderer client-only without binding the common core to any loader API.
         // Class lookup is non-initializing; dedicated-server jars normally do not contain this class.
         if (minecraftClientClassPresent()) {
-            // The loader already knows where Minecraft keeps options.txt; adopt that real location so the
-            // backend evidence is read from the actual game directory instead of a guessed path.
-            RendererPlatformPolicy.adoptLoaderGameDirectory();
+            // Renderer backend probing is intentionally deferred until Minecraft has actually created a
+            // graphics backend. This keeps Vulkan completely untouched on Metal/OpenGL clients and on
+            // server-only runs. The backend-created hook starts Vulkan-specific services only for Vulkan.
             PersistentResourceCache.initialize();
-            NativeVulkanRenderer.initializeIfEnabled();
         }
     }
 

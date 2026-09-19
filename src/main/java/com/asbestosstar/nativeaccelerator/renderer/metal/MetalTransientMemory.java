@@ -45,11 +45,27 @@ final class MetalTransientMemory implements TransientMemory {
         for (ByteBuffer b:data) all.put(b.duplicate()); all.flip();
         MetalGpuBuffer out=new MetalGpuBuffer(device,usage,all); owned.add(out); return out.slice(0,total);
     }
-    @Override public List<GpuBufferSlice> multiUploadStaging(List<ByteBuffer> data,long alignment,int usage) { return multi(data,usage); }
-    @Override public List<GpuBufferSlice> multiUploadGpu(List<ByteBuffer> data,long alignment,int usage) { return multi(data,usage); }
-    private List<GpuBufferSlice> multi(List<ByteBuffer> data,int usage) {
-        List<GpuBufferSlice> out=new ArrayList<>(data.size()); for(ByteBuffer b:data) out.add(upload(List.of(b),usage,b.remaining())); return out;
+    @Override public List<GpuBufferSlice> multiUploadStaging(List<ByteBuffer> data,long alignment,int usage) { return multi(data,alignment,usage); }
+    @Override public List<GpuBufferSlice> multiUploadGpu(List<ByteBuffer> data,long alignment,int usage) { return multi(data,alignment,usage); }
+    private List<GpuBufferSlice> multi(List<ByteBuffer> data,long alignment,int usage) {
+        if (data.isEmpty()) return List.of();
+        long effectiveAlignment=Math.max(1L,alignment);
+        long total=0L;
+        long[] offsets=new long[data.size()];
+        for(int i=0;i<data.size();i++){
+            total=alignUp(total,effectiveAlignment); offsets[i]=total; total+=data.get(i).remaining();
+        }
+        int n=checkedSize(total); ByteBuffer all=ByteBuffer.allocateDirect(n).order(ByteOrder.nativeOrder());
+        for(int i=0;i<data.size();i++){
+            all.position(Math.toIntExact(offsets[i])); all.put(data.get(i).duplicate());
+        }
+        all.position(0).limit(n);
+        MetalGpuBuffer buffer=new MetalGpuBuffer(device,usage,all); owned.add(buffer);
+        List<GpuBufferSlice> out=new ArrayList<>(data.size());
+        for(int i=0;i<data.size();i++) out.add(buffer.slice(offsets[i],data.get(i).remaining()));
+        return List.copyOf(out);
     }
+    private static long alignUp(long value,long alignment){long mask=alignment-1;return (alignment&(alignment-1))==0?(value+mask)&~mask:((value+alignment-1)/alignment)*alignment;}
     void release() { for (GpuBuffer b:owned) try { b.close(); } catch(Throwable ignored){} owned.clear(); }
     private static int checkedSize(long n){ if(n<=0||n>Integer.MAX_VALUE)throw new IllegalArgumentException("Transient allocation too large: "+n); return (int)n; }
 }

@@ -10,6 +10,7 @@ import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
 import com.mojang.renderpearl.backend.api.RenderPassBackend;
 import org.joml.Vector4fc;
+import org.lwjgl.sdl.SDLGPU;
 
 import java.nio.ByteBuffer;
 
@@ -20,13 +21,15 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     private MetalTransientMemory transientMemory;
 
     MetalCommandEncoder(MetalDevice device) { this.device=device; this.transientMemory=new MetalTransientMemory(device); }
+    MetalDevice device() { return device; }
     long commandHandle() {
-        if(command==0L){ command=MetalInterop.sdlLong("SDL_AcquireGPUCommandBuffer",device.handle()); if(command==0L)throw new IllegalStateException("SDL_AcquireGPUCommandBuffer failed: "+MetalInterop.lastSdlError()); }
+        if(command==0L){ command=SDLGPU.SDL_AcquireGPUCommandBuffer(device.handle()); if(command==0L)throw new IllegalStateException("SDL_AcquireGPUCommandBuffer failed: "+MetalInterop.lastSdlError()); }
         return command;
     }
 
     @Override public void submit() {
         if(activePass!=null) throw new IllegalStateException("Cannot submit Metal command buffer inside a render pass");
+        if(device.hasDirtyBuffers()) device.flushDirtyBuffers(commandHandle());
         if(command!=0L){ MetalTransfers.submit(command); command=0L; }
         transientMemory.release(); transientMemory=new MetalTransientMemory(device);
     }
@@ -34,6 +37,9 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
     @Override public RenderPassBackend createRenderPass(RenderPassDescriptor d) {
         if(activePass!=null)throw new IllegalStateException("Nested Metal render pass");
+        // Upload all mapped vertex/index/storage/indirect buffers once, immediately before the frame's
+        // render work. This replaces the old one-submit-per-map behavior.
+        device.flushDirtyBuffers(commandHandle());
         Object colors=null,depth=null;
         try {
             int count=d.colorAttachments().size();
@@ -62,7 +68,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             activePass=new MetalRenderPass(this,pass,d.renderArea()); return activePass;
         } finally { MetalInterop.free(depth);MetalInterop.free(colors); }
     }
-    @Override public void submitRenderPass(){if(activePass==null)throw new IllegalStateException("No Metal render pass");MetalInterop.sdlCall("SDL_EndGPURenderPass",activePass.handle());activePass=null;}
+    @Override public void submitRenderPass(){if(activePass==null)throw new IllegalStateException("No Metal render pass");SDLGPU.SDL_EndGPURenderPass(activePass.handle());activePass=null;}
 
     @Override public void clearColorTexture(GpuTexture texture,Vector4fc value){ clear(texture,value,null,1.0,0,0,texture.getWidth(0),texture.getHeight(0),0); }
     @Override public void clearColorAndDepthTextures(GpuTexture color,Vector4fc value,GpuTexture depth,double depthValue){ clear(color,value,depth,depthValue,0,0,color.getWidth(0),color.getHeight(0),0); }
@@ -74,16 +80,46 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         createRenderPass(b.build());submitRenderPass();if(cv!=null)cv.close();if(dv!=null)dv.close();
     }
 
-    @Override public void writeToBuffer(GpuBufferSlice dst,ByteBuffer data){MetalGpuBuffer b=metal(dst.buffer());b.overwriteShadow(dst.offset(),data);MetalTransfers.uploadBuffer(device.handle(),b.handle(),dst.offset(),data);}
-    @Override public void copyToBuffer(GpuBufferSlice src,GpuBufferSlice dst){ByteBuffer bytes=metal(src.buffer()).shadowSlice(src.offset(),src.length());if(src.length()>dst.length())throw new IllegalArgumentException("Destination slice too small");writeToBuffer(dst.slice(0,src.length()),bytes);}
-    @Override public void writeToTexture(GpuTexture texture,ByteBuffer data,int mip,int x,int y,int width,int height,int layer){if(layer!=0)throw new UnsupportedOperationException("Texture layers not implemented");MetalTransfers.uploadTexture(device.handle(),metal(texture),data,mip,x,y,width,height,1);}
+    @Override public void writeToBuffer(GpuBufferSlice dst,ByteBuffer data){
+        if(activePass!=null)throw new IllegalStateException("Cannot write buffer inside a Metal render pass");
+        MetalGpuBuffer b=metal(dst.buffer()); b.overwriteShadow(dst.offset(),data); b.markDirty(dst.offset(),data.remaining());
+    }
+    @Override public void copyToBuffer(GpuBufferSlice src,GpuBufferSlice dst){
+        if(activePass!=null)throw new IllegalStateException("Cannot copy buffer inside a Metal render pass");
+        if(src.length()>dst.length())throw new IllegalArgumentException("Destination slice too small");
+        device.flushDirtyBuffers(commandHandle());
+        MetalGpuBuffer source=metal(src.buffer()), destination=metal(dst.buffer());
+        // Keep the CPU shadow coherent for later maps/uniform pushes while the actual copy stays GPU-side.
+        ByteBuffer bytes=source.shadowSlice(src.offset(),src.length()); destination.overwriteShadow(dst.offset(),bytes);
+        MetalTransfers.encodeCopyBuffer(commandHandle(),source,src.offset(),destination,dst.offset(),src.length());
+    }
+    @Override public void writeToTexture(GpuTexture texture,ByteBuffer data,int mip,int depthOrLayer,int destX,int destY,int width,int height){
+        if(activePass!=null)throw new IllegalStateException("Cannot upload texture inside a Metal render pass");
+        MetalGpuTexture destination=metal(texture);
+        if(depthOrLayer<0 || depthOrLayer>=destination.getDepthOrLayers())
+            throw new IllegalArgumentException("Texture layer out of range: "+depthOrLayer+" / "+destination.getDepthOrLayers());
+        MetalTransfers.encodeUploadTexture(device.handle(),commandHandle(),destination,data,mip,depthOrLayer,destX,destY,width,height);
+    }
     @Override public void copyBufferToTexture(GpuBufferSlice source,int sourceX,int sourceY,int sourceWidth,int sourceHeight,GpuTexture destination,int destX,int destY,int copyWidth,int copyHeight,int mip,int layer){
-        if(layer!=0)throw new UnsupportedOperationException("Texture layers not implemented");int bpp=destination.getFormat().blockSize();ByteBuffer src=metal(source.buffer()).shadowSlice(source.offset(),source.length());ByteBuffer packed=ByteBuffer.allocateDirect(Math.multiplyExact(Math.multiplyExact(copyWidth,copyHeight),bpp));
-        for(int row=0;row<copyHeight;row++){int pos=((sourceY+row)*sourceWidth+sourceX)*bpp;ByteBuffer r=src.duplicate();r.position(pos).limit(pos+copyWidth*bpp);packed.put(r);}packed.flip();MetalTransfers.uploadTexture(device.handle(),metal(destination),packed,mip,destX,destY,copyWidth,copyHeight,1);
+        MetalGpuTexture target=metal(destination);
+        if(layer<0 || layer>=target.getDepthOrLayers())
+            throw new IllegalArgumentException("Texture layer out of range: "+layer+" / "+target.getDepthOrLayers());
+        int bpp=destination.getFormat().blockSize();ByteBuffer src=metal(source.buffer()).shadowSlice(source.offset(),source.length());ByteBuffer packed=ByteBuffer.allocateDirect(Math.multiplyExact(Math.multiplyExact(copyWidth,copyHeight),bpp));
+        for(int row=0;row<copyHeight;row++){int pos=((sourceY+row)*sourceWidth+sourceX)*bpp;ByteBuffer r=src.duplicate();r.position(pos).limit(pos+copyWidth*bpp);packed.put(r);}packed.flip();MetalTransfers.encodeUploadTexture(device.handle(),commandHandle(),target,packed,mip,layer,destX,destY,copyWidth,copyHeight);
     }
     @Override public void copyTextureToBuffer(GpuTexture source,GpuBuffer destination,long offset,Runnable callback,int mip){copyTextureToBuffer(source,destination,offset,callback,mip,0,0,source.getWidth(mip),source.getHeight(mip));}
-    @Override public void copyTextureToBuffer(GpuTexture source,GpuBuffer destination,long offset,Runnable callback,int mip,int x,int y,int width,int height){ByteBuffer bytes=MetalTransfers.downloadTexture(device.handle(),metal(source),mip,x,y,width,height);MetalGpuBuffer dst=metal(destination);dst.overwriteShadow(offset,bytes);MetalTransfers.uploadBuffer(device.handle(),dst.handle(),offset,bytes);callback.run();}
-    @Override public void copyTextureToTexture(GpuTexture src,GpuTexture dst,int mip,int destX,int destY,int sourceX,int sourceY,int width,int height){MetalTransfers.copyTexture(device.handle(),metal(src),metal(dst),mip,destX,destY,sourceX,sourceY,width,height);}
+    @Override public void copyTextureToBuffer(GpuTexture source,GpuBuffer destination,long offset,Runnable callback,int mip,int x,int y,int width,int height){
+        if(activePass!=null)throw new IllegalStateException("Cannot read back texture inside a Metal render pass");
+        // Readback is intentionally the rare synchronous path. Submit earlier frame work first so the
+        // downloaded texture observes all preceding commands.
+        submit();
+        ByteBuffer bytes=MetalTransfers.downloadTexture(device.handle(),metal(source),mip,x,y,width,height);
+        MetalGpuBuffer dst=metal(destination);dst.overwriteShadow(offset,bytes);dst.markDirty(offset,bytes.remaining());callback.run();
+    }
+    @Override public void copyTextureToTexture(GpuTexture src,GpuTexture dst,int mip,int destX,int destY,int sourceX,int sourceY,int width,int height){
+        if(activePass!=null)throw new IllegalStateException("Cannot copy texture inside a Metal render pass");
+        MetalTransfers.encodeCopyTexture(commandHandle(),metal(src),metal(dst),mip,destX,destY,sourceX,sourceY,width,height);
+    }
     @Override public GpuFence createFence(){submit();return new MetalFence(device);}
     @Override public void writeTimestamp(GpuQueryPool pool,int index){if(pool instanceof MetalQueryPool p)p.write(index);}
 

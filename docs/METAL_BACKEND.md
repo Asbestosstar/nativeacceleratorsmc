@@ -4,7 +4,7 @@ This tree adds an experimental Metal backend for Minecraft 26.3 RenderPearl usin
 
 ## Integration
 
-`PreferredGraphicsApiMetalMixin` inserts `MetalBackend` at the front of Minecraft's normal backend list only for the `DEFAULT` graphics choice and only when SDL reports that the `metal` GPU driver supports MSL shaders. Explicit OpenGL and Vulkan selections are preserved.
+Native Accelerator exposes its own four-value Graphics API selector in `VideoSettingsScreen` and redirects Minecraft's constructor-time backend-list lookup. This avoids modifying the JVM's fixed `PreferredGraphicsApi` enum while still preserving explicit OpenGL and Vulkan selections and Minecraft's boot fallback behavior.
 
 The backend implements the RenderPearl backend interfaces under:
 
@@ -46,12 +46,26 @@ The implementation was checked against the supplied Minecraft 26.3 decompiled Re
 
 ## Minecraft graphics-settings integration
 
-Minecraft 26.3 builds the Graphics API option list from `PreferredGraphicsApi.values()` and its
-codec from the same enum values. Merely inserting `MetalBackend` into `getBackendsToTry()` therefore
-makes Metal eligible for automatic startup but cannot add a fourth GUI choice.
+Minecraft 26.3's vanilla Graphics API option is hard-wired to the three constants in
+`PreferredGraphicsApi`: Default, OpenGL, and Vulkan. Earlier builds attempted to inject a fourth
+Java enum constant from the Mixin config plugin. That proved too fragile in a real launch and has
+been removed.
 
-Native Accelerator now installs `PreferredGraphicsApiEnumHook` from the Mixin config plugin. Before
-the target enum is defined, the hook adds a genuine `METAL("metal", "options.graphicsApi.metal")`
-constant, rewrites the enum's synthetic values-array factory to include it, and lets Minecraft build
-its ordinary codec afterward. `PreferredGraphicsApiMetalMixin` then maps that enum choice to the
-SDL3/Metal backend with OpenGL as a boot-safe fallback.
+The current integration does not alter the enum at all:
+
+1. `VideoSettingsMetalOptionMixin` redirects only the `preferredGraphicsBackend()` lookup used by
+   `VideoSettingsScreen.displayOptions()`.
+2. `MetalGraphicsOption` supplies a normal `OptionInstance<GraphicsApiChoice>` containing Default,
+   OpenGL, Vulkan, and Metal.
+3. Metal is persisted in `etc/nativeaccelerator-graphics-api.txt`; the vanilla `options.txt` mirrors
+   Metal as Default, so removing the mod leaves a safe vanilla configuration.
+4. `MinecraftStartupMixin` redirects the constructor's call to
+   `PreferredGraphicsApi.getBackendsToTry()`. When the Native Accelerator preference is Metal and
+   vanilla selection is Default, it returns Metal first and OpenGL second.
+5. A forced/crash-recovery OpenGL or Vulkan selection is not overridden, preserving Minecraft's
+   recovery path.
+6. `OptionsMetalRestartMixin` extends the ordinary restart-required warning to include a changed
+   Native Accelerator graphics preference.
+
+This path uses ordinary Mixins on `VideoSettingsScreen`, `Options`, and `Minecraft`. It no longer
+depends on the Mixin config plugin's `ClassNodeHook` mechanism for graphics API selection.

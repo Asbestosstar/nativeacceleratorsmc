@@ -3,10 +3,20 @@ package com.asbestosstar.nativeaccelerator.mixin.client;
 import com.asbestosstar.nativeaccelerator.cache.DeferredCacheWriter;
 import com.asbestosstar.nativeaccelerator.startup.StartupStages;
 import com.asbestosstar.nativeaccelerator.startup.StartupTimer;
+import com.asbestosstar.nativeaccelerator.renderer.metal.GraphicsBackendPreference;
+import com.asbestosstar.nativeaccelerator.renderer.RendererBackendRuntime;
+import com.mojang.renderpearl.api.device.BackendCreationException;
+import com.mojang.renderpearl.api.device.GpuBackend;
+import com.mojang.renderpearl.api.device.GpuDebugOptions;
+import com.mojang.renderpearl.api.device.GpuDevice;
+import com.mojang.renderpearl.backend.vulkan.VulkanBackend;
+import net.minecraft.client.PreferredGraphicsApi;
 import net.minecraft.client.Minecraft;
+import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
@@ -57,4 +67,54 @@ public abstract class MinecraftStartupMixin {
         StartupTimer.finish("client load finished (first screen shown)");
         DeferredCacheWriter.startupComplete();
     }
+    /**
+     * Replace only the backend-list lookup during client construction. This makes Metal selection
+     * independent of Minecraft's fixed PreferredGraphicsApi enum and independent of the options GUI.
+     */
+    @Redirect(
+            method = "<init>(Lnet/minecraft/client/main/GameConfig;)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/PreferredGraphicsApi;getBackendsToTry()[Lcom/mojang/renderpearl/api/device/GpuBackend;"))
+    private GpuBackend[] nativeaccelerator$selectGraphicsBackends(PreferredGraphicsApi preferred) {
+        return GraphicsBackendPreference.backendsToTry(preferred);
+    }
+
+    /**
+     * Minecraft's vanilla DEFAULT branch performs a separate Vulkan availability probe even before
+     * backend creation.  Metal is mirrored as DEFAULT in options.txt for fail-open compatibility, so
+     * suppress that probe when Native Accelerator explicitly selected Metal or OpenGL.
+     */
+    @Redirect(
+            method = "<init>(Lnet/minecraft/client/main/GameConfig;)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lcom/mojang/renderpearl/backend/vulkan/VulkanBackend;checkBackendAvailable()Lcom/mojang/renderpearl/api/device/BackendCreationException;"),
+            require = 1)
+    private @Nullable BackendCreationException nativeaccelerator$conditionalVulkanAvailabilityProbe() {
+        if (!GraphicsBackendPreference.shouldRunVanillaVulkanProbe()) {
+            System.out.println("[Native Accelerator] Explicit Metal/OpenGL selection: skipping Minecraft's Vulkan availability probe");
+            return null;
+        }
+        return VulkanBackend.checkBackendAvailable();
+    }
+
+    /**
+     * Observe the backend that actually succeeds. Vulkan-specific Native Accelerator services are
+     * started only here, after a Vulkan GpuDevice exists. Metal/OpenGL never touch the Vulkan
+     * companion library or Vulkan device probe.
+     */
+    @Redirect(
+            method = "<init>(Lnet/minecraft/client/main/GameConfig;)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lcom/mojang/renderpearl/api/device/GpuBackend;createDevice(Lcom/mojang/renderpearl/api/device/GpuDebugOptions;)Lcom/mojang/renderpearl/api/device/GpuDevice;"),
+            require = 1)
+    private GpuDevice nativeaccelerator$createGraphicsDevice(GpuBackend backend, GpuDebugOptions options)
+            throws BackendCreationException {
+        GpuDevice device = backend.createDevice(options);
+        RendererBackendRuntime.backendCreated(backend);
+        return device;
+    }
+
 }

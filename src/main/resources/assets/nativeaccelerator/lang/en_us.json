@@ -1,3 +1,8 @@
 {
-  "options.graphicsApi.metal": "Metal"
+  "nativeaccelerator.options.renderer": "Native Accelerator renderer",
+  "nativeaccelerator.options.renderer.tooltip": "Select the graphics backend Native Accelerator will request after restart. OpenGL and Metal do not initialize the Native Accelerator Vulkan renderer.",
+  "nativeaccelerator.graphicsApi.default": "Automatic",
+  "nativeaccelerator.graphicsApi.opengl": "OpenGL",
+  "nativeaccelerator.graphicsApi.vulkan": "Vulkan",
+  "nativeaccelerator.graphicsApi.metal": "Metal"
 }
