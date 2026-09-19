@@ -69,3 +69,10 @@ The current integration does not alter the enum at all:
 
 This path uses ordinary Mixins on `VideoSettingsScreen`, `Options`, and `Minecraft`. It no longer
 depends on the Mixin config plugin's `ClassNodeHook` mechanism for graphics API selection.
+
+## Performance diagnostics (buildfix11)
+
+The diagnostic Metal build exposes low-overhead per-frame counters. See
+`METAL_PERFORMANCE_BUILD_FIX11_2026-09-19.txt`. The most important correctness/performance rule is that
+RenderPearl fences must map to asynchronous SDL GPU fences; they must never call `SDL_WaitForGPUIdle` on
+creation, because Minecraft rotates fenced ring buffers continuously.

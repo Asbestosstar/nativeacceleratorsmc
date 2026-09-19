@@ -173,6 +173,7 @@ final class MetalInterop {
     }
 
     private static Object invoke(Method method, Object receiver, Object[] args) {
+        long perfStart = MetalPerfCounters.tic();
         try {
             return method.invoke(receiver, adapt(method.getParameterTypes(), args));
         } catch (IllegalAccessException e) {
@@ -182,6 +183,8 @@ final class MetalInterop {
             if (cause instanceof RuntimeException runtime) throw runtime;
             if (cause instanceof Error error) throw error;
             throw new IllegalStateException("Native binding failed: " + method, cause);
+        } finally {
+            MetalPerfCounters.interop(perfStart);
         }
     }
 

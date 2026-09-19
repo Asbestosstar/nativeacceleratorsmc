@@ -21,6 +21,7 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
     private final AtomicBoolean closed = new AtomicBoolean();
 
     MetalRenderPipeline(MetalDevice device, CreateInfo info) throws Exception {
+        long perfCompileStart = MetalPerfCounters.tic();
         this.device = device;
         this.uniformCount = info.uniforms().size();
         this.pushConstantSize = info.pushConstantsSize();
@@ -124,6 +125,7 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
             if (fragmentShader != 0L) try { MetalInterop.sdlCall("SDL_ReleaseGPUShader", device.handle(), fragmentShader); } catch(Throwable ignored){}
             MetalInterop.free(colorTargets); MetalInterop.free(attrs); MetalInterop.free(vbs); MetalInterop.free(pipelineInfo);
         }
+        MetalPerfCounters.pipelineCompile(perfCompileStart);
     }
 
     private long createShader(MetalSpirvCompiler.Compiled shader, boolean vertex) {

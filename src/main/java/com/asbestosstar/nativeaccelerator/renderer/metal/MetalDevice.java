@@ -77,6 +77,9 @@ final class MetalDevice implements GpuDeviceBackend {
      */
     void flushDirtyBuffers(long commandBuffer) {
         if (dirtyBuffers.isEmpty()) return;
+        long perfStart=MetalPerfCounters.tic();
+        int perfBuffers=0;
+        long perfBytes=0L;
         long copyPass = SDLGPU.SDL_BeginGPUCopyPass(commandBuffer);
         if (copyPass == 0L) throw new IllegalStateException("SDL_BeginGPUCopyPass failed: " + MetalInterop.lastSdlError());
         try {
@@ -88,11 +91,14 @@ final class MetalDevice implements GpuDeviceBackend {
                     continue;
                 }
                 uploads.add(new MetalTransfers.BufferUpload(buffer.handle(), range.offset(), range.bytes()));
+                perfBuffers++;
+                perfBytes += range.bytes().remaining();
                 if (!buffer.hasDirtyRange()) dirtyBuffers.remove(buffer);
             }
             MetalTransfers.encodeUploadBuffersInPass(handle(), copyPass, uploads);
         } finally {
             SDLGPU.SDL_EndGPUCopyPass(copyPass);
+            MetalPerfCounters.dirtyFlush(perfBuffers,perfBytes,perfStart);
         }
     }
     long handle(){if(closed.get())throw new IllegalStateException("Metal device is closed");return handle;}

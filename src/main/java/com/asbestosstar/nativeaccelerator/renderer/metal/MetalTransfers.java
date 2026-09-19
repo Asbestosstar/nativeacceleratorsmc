@@ -1,6 +1,8 @@
 package com.asbestosstar.nativeaccelerator.renderer.metal;
 
+import org.lwjgl.PointerBuffer;
 import org.lwjgl.sdl.SDLGPU;
+import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -213,9 +215,18 @@ final class MetalTransfers {
             MetalInterop.set(dst,"transfer_buffer",transfer);MetalInterop.set(dst,"offset",0);MetalInterop.set(dst,"pixels_per_row",width);MetalInterop.set(dst,"rows_per_layer",height);
             MetalInterop.sdlCall("SDL_DownloadFromGPUTexture",copy,src,dst);
             MetalInterop.sdlCall("SDL_EndGPUCopyPass",copy); copy=0L;
-            submit(command); command=0L;
-            Object idle=MetalInterop.sdlCall("SDL_WaitForGPUIdle",device);
-            if(idle instanceof Boolean ok && !ok) throw new IllegalStateException("SDL_WaitForGPUIdle failed: "+MetalInterop.lastSdlError());
+            long fence = SDLGPU.SDL_SubmitGPUCommandBufferAndAcquireFence(command);
+            command=0L;
+            require(fence,"submit texture download with fence");
+            long waitStart=MetalPerfCounters.tic();
+            try (MemoryStack stack=MemoryStack.stackPush()) {
+                PointerBuffer fences=stack.mallocPointer(1).put(0,fence);
+                if(!SDLGPU.SDL_WaitForGPUFences(device,true,fences))
+                    throw new IllegalStateException("SDL_WaitForGPUFences failed: "+MetalInterop.lastSdlError());
+            } finally {
+                MetalPerfCounters.fenceWait(waitStart);
+                SDLGPU.SDL_ReleaseGPUFence(device,fence);
+            }
             long mapped=((Number)MetalInterop.sdlCall("SDL_MapGPUTransferBuffer",device,transfer,false)).longValue(); require(mapped,"map download transfer buffer");
             ByteBuffer out=ByteBuffer.allocateDirect(size); out.put(MemoryUtil.memByteBuffer(mapped,size).duplicate()).flip();
             MetalInterop.sdlCall("SDL_UnmapGPUTransferBuffer",device,transfer);

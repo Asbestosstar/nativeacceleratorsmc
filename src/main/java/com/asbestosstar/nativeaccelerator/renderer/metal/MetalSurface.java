@@ -43,14 +43,18 @@ final class MetalSurface implements GpuSurfaceBackend {
         if(iconified.getAsBoolean()) return;
         try(MemoryStack stack=MemoryStack.stackPush()){
             PointerBuffer texture=stack.mallocPointer(1);IntBuffer w=stack.mallocInt(1),h=stack.mallocInt(1);
+            long waitStart=MetalPerfCounters.tic();
             Object ok=MetalInterop.sdlCall("SDL_WaitAndAcquireGPUSwapchainTexture",encoder.commandHandle(),window,texture,w,h);
+            MetalPerfCounters.swapAcquire(waitStart);
             if(ok instanceof Boolean b && !b)throw new IllegalStateException("SDL_WaitAndAcquireGPUSwapchainTexture failed: "+MetalInterop.lastSdlError());
             long swap=texture.get(0); if(swap==0L)return;
             int width=w.get(0),height=h.get(0);suboptimal=config!=null&&(width!=config.width()||height!=config.height());
+            long blitStart=MetalPerfCounters.tic();
             encoder.blitToSwapchain(view,swap,width,height);
+            MetalPerfCounters.blit(blitStart);
         }
     }
-    @Override public void present(){ acquired=false; /* SDL presents automatically when the acquiring command buffer is submitted. */ }
+    @Override public void present(){ acquired=false; MetalPerfCounters.present(); /* SDL presents automatically when the acquiring command buffer is submitted. */ }
     @Override public Collection<GpuSurface.PresentMode> supportedPresentModes(){
         List<GpuSurface.PresentMode> out=new ArrayList<>();out.add(GpuSurface.PresentMode.FIFO);
         if(supports("SDL_GPU_PRESENTMODE_MAILBOX"))out.add(GpuSurface.PresentMode.MAILBOX);
