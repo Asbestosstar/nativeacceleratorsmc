@@ -64,7 +64,8 @@
     "client.BlockStateMultipartProfilingMixin",
     "client.ResourceOpenProfilingMixin",
     "client.FileToIdConverterProfilingMixin",
-    "client.CuboidModelParseProfilingMixin"
+    "client.CuboidModelParseProfilingMixin",
+    "client.PreferredGraphicsApiMetalMixin"
   ],
   "server": [
     "server.DedicatedServerAffinityMixin",

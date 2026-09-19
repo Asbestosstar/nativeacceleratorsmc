@@ -249,6 +249,26 @@
             <scope>provided</scope>
         </dependency>
 
+<!-- Add these inside your existing <dependencies> element. -->
+<dependency>
+    <groupId>org.lwjgl</groupId>
+    <artifactId>lwjgl-spvc</artifactId>
+    <version>3.4.3</version>
+</dependency>
+<dependency>
+    <groupId>org.jspecify</groupId>
+    <artifactId>jspecify</artifactId>
+    <version>1.0.0</version>
+</dependency>
+
+
+
+
+
+
+
+
+
     </dependencies>
 
     <build>
