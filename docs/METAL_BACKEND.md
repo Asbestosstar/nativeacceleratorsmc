@@ -43,3 +43,15 @@ The lowering currently supports `R8_SINT` texel buffers only. A future RenderPea
 ## Validation status
 
 The implementation was checked against the supplied Minecraft 26.3 decompiled RenderPearl contracts and current SDL3 GPU/LWJGL/SPIRV-Cross API shape. SPIRV-Cross is a normal Maven compile dependency, not reflection; add `org.lwjgl:lwjgl-spvc:3.4.3` to the real project POM (see `MAVEN_DEPENDENCIES.md`). The supplied project export did not contain `pom.xml`, so a real project compile and runtime macOS launch could not be executed in this environment. Treat the first macOS launch as integration validation and keep vanilla OpenGL/Vulkan fallback enabled.
+
+## Minecraft graphics-settings integration
+
+Minecraft 26.3 builds the Graphics API option list from `PreferredGraphicsApi.values()` and its
+codec from the same enum values. Merely inserting `MetalBackend` into `getBackendsToTry()` therefore
+makes Metal eligible for automatic startup but cannot add a fourth GUI choice.
+
+Native Accelerator now installs `PreferredGraphicsApiEnumHook` from the Mixin config plugin. Before
+the target enum is defined, the hook adds a genuine `METAL("metal", "options.graphicsApi.metal")`
+constant, rewrites the enum's synthetic values-array factory to include it, and lets Minecraft build
+its ordinary codec afterward. `PreferredGraphicsApiMetalMixin` then maps that enum choice to the
+SDL3/Metal backend with OpenGL as a boot-safe fallback.
