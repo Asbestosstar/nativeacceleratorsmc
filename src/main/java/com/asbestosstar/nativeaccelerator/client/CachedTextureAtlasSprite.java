@@ -11,3 +11,4 @@ public final class CachedTextureAtlasSprite extends TextureAtlasSprite {
         super(atlasLocation, contents, atlasWidth, atlasHeight, x, y, padding);
     }
 }
+

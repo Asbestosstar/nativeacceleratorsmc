@@ -57,20 +57,20 @@ public final class Minecraft263AccelerationTargets {
      * AGENTS.MD, which is why the ready milestone is not in the shared class:</p>
      *
      * <ul>
-     *   <li>{@code MinecraftServerTimingMixin} (common) times {@code runServer()} and the
-     *       {@code initServer()} call inside it. {@code initServer} is abstract on the base class and
-     *       implemented by both {@code DedicatedServer} and {@code IntegratedServer}, so timing the call
-     *       site covers both without a Mixin per subclass.</li>
-     *   <li>{@code DedicatedServerReadyMixin} (server) times the {@code isReady = true} write. That single
-     *       write is in the shared {@code MinecraftServer#runServer()}, so this seam is gated to a
-     *       dedicated server to avoid reporting a single-player world load as a dedicated-server event.</li>
+     *   <li>{@code MinecraftServerTimingMixin} (common) times {@code runServer()}, the
+     *       {@code initServer()} call inside it, and splits fresh-world startup into
+     *       {@code setInitialSpawn(...)} versus {@code prepareLevels()} so global-spawn search and
+     *       initial-chunk readiness can be measured independently.</li>
+     *   <li>{@code DedicatedServerReadyMixin} (server) observes the {@code isReady = true} write. The write
+     *       occurs every run-loop iteration, so the Mixin has its own one-shot guard and never routes
+     *       steady-state ticks through synchronized startup-timer bookkeeping.</li>
      *   <li>{@code IntegratedServerMixin} (client) times {@code IntegratedServer#initServer()}, the
      *       single-player world load, and is the client counterpart of the dedicated ready milestone.</li>
      * </ul>
      */
     public static final List<Target> STARTUP_TIMING = List.of(
-            new Target(MINECRAFT_SERVER, "runServer()V / initServer()Z call site",
-                    "server.run-loop and server.init durations (shared by both server flavours)"),
+            new Target(MINECRAFT_SERVER, "runServer()V / initServer()Z / setInitialSpawn(...) / prepareLevels()",
+                    "server.run-loop, server.init, global-spawn, and initial-chunk durations"),
             new Target(DEDICATED_SERVER, "MinecraftServer.isReady = true (in runServer)",
                     "server.ready milestone; writes the report once a dedicated server accepts players"),
             new Target(INTEGRATED_SERVER, "initServer()Z",
@@ -114,3 +114,4 @@ public final class Minecraft263AccelerationTargets {
 
     public record Target(String className, String methods, String nativeKernel) {}
 }
+

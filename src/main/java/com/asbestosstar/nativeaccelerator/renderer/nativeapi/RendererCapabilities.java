@@ -40,3 +40,4 @@ public final class RendererCapabilities {
         if ((mask & bit) != 0) out.add(name);
     }
 }
+

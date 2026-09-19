@@ -4,10 +4,17 @@
   "package": "com.asbestosstar.nativeaccelerator.mixin",
   "plugin": "com.asbestosstar.nativeaccelerator.mixinconfig.NativeAcceleratorMixinConfigPlugin",
   "mixins": [
+    "common.NoiseStackPerlinMixin",
+    "common.GradientNoiseAccessor",
     "common.SimpleBitStorageMixin",
+    "common.DensityBufferAccessor",
+    "common.PerlinNoiseMixin",
     "common.BootstrapMixin",
     "common.FireBlockBootstrapTimingMixin",
-    "common.MinecraftServerTimingMixin"
+    "common.MinecraftServerTimingMixin",
+    "common.ChunkStepProfilingMixin",
+    "common.DensitySamplerBoundProfilingMixin",
+    "common.NoiseBasedChunkGeneratorProfilingMixin"
   ],
   "client": [
     "client.ClientMainMixin",

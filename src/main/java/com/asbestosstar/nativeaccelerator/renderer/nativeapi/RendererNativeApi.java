@@ -86,3 +86,4 @@ public interface RendererNativeApi {
                              MemorySegment occupancy, MemorySegment neighborPlanesOrNull,
                              int sectionCount);
 }
+

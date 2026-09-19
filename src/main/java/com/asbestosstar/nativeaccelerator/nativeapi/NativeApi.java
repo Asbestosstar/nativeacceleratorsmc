@@ -45,6 +45,21 @@ public interface NativeApi {
                           MemorySegment srcPixels, int srcWidth, int srcHeight, int srcX, int srcY,
                           int width, int height, boolean swapX, boolean swapY);
 
+    /**
+     * Optional ABI-v3 extension backed by Solaris libdax. Implementations that predate the extension
+     * simply return false here, keeping the base v3 ABI loadable. Ranges use signed Java int semantics.
+     */
+    default boolean daxIntScanAvailable() { return false; }
+
+    default long daxCountI32Range(MemorySegment srcI32, long count, int lowerInclusive, int upperInclusive) {
+        throw new UnsupportedOperationException("DAX int scan extension is unavailable");
+    }
+
+    default long daxSelectI32Range(MemorySegment dstI32, long dstCapacity, MemorySegment srcI32, long count,
+                                   int lowerInclusive, int upperInclusive) {
+        throw new UnsupportedOperationException("DAX int scan extension is unavailable");
+    }
+
     /** Minecraft-compatible Perlin kernel using the 256-byte GradientNoise permutation table. */
     void perlin3Batch(MemorySegment dstF32, MemorySegment xyzF64, long count, MemorySegment permutations256,
                       double offsetX, double offsetY, double offsetZ, boolean wrapCoordinates);
@@ -57,3 +72,4 @@ public interface NativeApi {
                           double offsetX, double offsetY, double offsetZ,
                           boolean wrapCoordinates);
 }
+

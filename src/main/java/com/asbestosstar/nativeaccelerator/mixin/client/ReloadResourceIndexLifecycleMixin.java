@@ -30,3 +30,4 @@ public abstract class ReloadResourceIndexLifecycleMixin {
         // A replaced/closed pack gets a different weak key; unchanged packs can reuse their lazy manifest.
     }
 }
+

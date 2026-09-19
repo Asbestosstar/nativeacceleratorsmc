@@ -225,3 +225,4 @@ public final class NativeAcceleratorMixinConfigPlugin implements IMixinConfigPlu
         return p == pattern.length();
     }
 }
+

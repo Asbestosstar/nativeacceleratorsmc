@@ -867,3 +867,52 @@ Profiler topology/capacity must be emitted as last-value gauges, not summed oper
 - Decoded texture cache hits must always return a newly owned NativeImage; never share mutable pixel storage.
 - GUI, animation, texture-metadata, additional-metadata, and font-sensitive sprites stay outside decoded-pixel reuse unless separately parity-validated.
 - CPU cache information is advisory/diagnostic. Do not derive worker counts from GHz/cache size alone; physical topology and JVM-visible CPUs remain authoritative.
+---
+
+## NativeServer0 reproducible benchmark contract
+
+Use this contract for all Native Accelerator dedicated-server performance work.
+
+- **Source distribution:** `~/Downloads/nativeserver0` (override only with `NATIVESERVER0_DIR`). It is read-only input: never add mods, worlds, EULA files, logs, or properties to it.
+- **Minecraft/Fabric version:** 26.3 / Fabric Loader 0.19.5, requiring **Java 25 or newer**.
+- **Fixed world seed:** `-4630982771278649347`. It is written by `scripts/setup-nativeserver0-benchmark.sh`; do not change it when comparing results.
+- **Comparable settings:** creative mode, one local player maximum, online mode off, view and simulation distance 10, no RCON/query, identical `-Xms2G -Xmx2G` default JVM flags, and a freshly generated `benchmark-world` for every cold-start sample.
+- **Isolation:** benchmark instances are disposable directories under `target/nativeserver0-benchmark`; results are written under `target/nativeserver0-results`. Neither directory is source-controlled.
+- **Paired procedure:** run `scripts/benchmark-nativeserver0-throughput.sh 3` with Java 25 selected (for example `NATIVESERVER0_JAVA=/path/to/java`). Each iteration runs an unmodded Fabric baseline then the same server with `target/native-accelerator-0.1.0-SNAPSHOT.jar` installed. Compare only successful paired runs from the emitted TSV.
+- **Metrics:** wall-clock readiness is measured for both modes. Native runs also capture the in-process `server.ready` and `server.init` timing stages from `logs/nativeaccelerator-startup-times.tsv`. The baseline readiness log line is used only because it has no Native Accelerator probe.
+- **Performance rule:** retain behavior parity and this workload contract. Do not claim an improvement from a changed seed, persisted world/cache, changed heap, different Java runtime, or a timeout/failed run.
+
+Before a test series, build the mod JAR and verify its Fabric metadata. The harness copies that JAR into the isolated native instance; it never edits the supplied server directory.
+
+
+## Worldgen throughput pass — whole-stack noise, phase profiling, Solaris DAX
+
+Cold FULL-chunk generation is the current NativeServer0 server-throughput target. Preserve these rules:
+
+- `noise.mode=stack` is the preferred Perlin path: stage one `DensityBuffer` once per private
+  `NoiseStack$Perlin.addToVolume` invocation, accumulate every native Perlin layer into that direct buffer,
+  then copy back once. `single` preserves the older per-layer A/B path and `off` is vanilla noise.
+- A failed native layer must commit already-completed additive native layers exactly once and continue the
+  current/remaining work in vanilla Java. Never lose or double-apply a layer.
+- `worldgen.profile=false` is the throughput default. Disabled profiling must not touch ThreadLocal timer
+  state. Diagnostic profiling records chunk-status completion plus `terrain.total`, `createNoiseChunk`,
+  `doFill`, `buildSurface`, `generateCarvers`, and `density.sampleVolume`.
+- Chunk-status/future totals overlap across background workers and may include dependency waiting; never sum
+  them into a claimed wall-clock duration.
+- The 26.3 FULL generation dependency radius is 11 chunks. Use the non-overlapping 16x16 target regions in
+  `docs/WORLDGEN_THROUGHPUT.md` for cold A/B runs.
+- DAX is a Solaris OS accelerator, not a SPARC SIMD implementation. Perlin/vector arithmetic remains in the
+  SPARC VIS/VIS2/VIS3 backend. `libdax` is used only for operations matching its scan/select/extract/
+  translate/logical model.
+- The historical Oracle `com.oracle.stream.DaxIntStream` JAR is an optional accelerator dependency. If it
+  is present, prefer `DaxIntStream.of(int[]).parallel()` for supported heap-int stream operations. Keep the
+  linkage optional/reflection-safe so non-SPARC/non-Solaris builds do not require the JAR. In `auto` mode
+  dispatch JAR -> optional ABI-v3 `libdax` symbols -> Java fallback; a JAR linkage failure on a newer JVM
+  disables only that path. Native-memory callers still use the libdax ABI directly.
+- A `dax_context_t` is thread-bound. Keep one lazy context per calling/native-worker thread; never share it.
+- DAX output buffers require 64-byte alignment/padding. Do not pass an arbitrary Panama/direct buffer as a
+  DAX output unless that contract is explicitly satisfied.
+- libdax compares fixed-width values unsigned and big-endian. Signed Java int ranges crossing zero require
+  the wraparound OR predicate documented in `docs/DAX_ACCELERATION.md`.
+- `scripts/run-dax-adapter-test.sh` uses a fake libdax surface to validate signed-range wraparound,
+  endian conversion and select ordering on development hosts without DAX hardware. Keep it passing.

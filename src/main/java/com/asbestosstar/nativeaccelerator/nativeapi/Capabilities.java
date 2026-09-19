@@ -32,6 +32,8 @@ public final class Capabilities {
     public static final long QUAD_SORT       = 1L << 23;
     public static final long IMAGE_KERNELS   = 1L << 24;
     public static final long NOISE_KERNELS   = 1L << 25;
+    /** Optional ABI-v3 extension: libdax-backed signed int32 range scan/select. */
+    public static final long DAX_INT_SCAN    = 1L << 26;
 
     public static List<String> names(long mask) {
         List<String> out = new ArrayList<>();
@@ -61,6 +63,7 @@ public final class Capabilities {
         add(out, mask, QUAD_SORT, "quad-sort");
         add(out, mask, IMAGE_KERNELS, "image-kernels");
         add(out, mask, NOISE_KERNELS, "noise-kernels");
+        add(out, mask, DAX_INT_SCAN, "dax-int-scan");
         return List.copyOf(out);
     }
 
@@ -68,3 +71,4 @@ public final class Capabilities {
         if ((mask & bit) != 0) out.add(name);
     }
 }
+

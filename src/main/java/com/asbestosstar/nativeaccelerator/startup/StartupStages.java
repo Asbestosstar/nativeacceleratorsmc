@@ -38,7 +38,12 @@ public final class StartupStages {
     /* ---- dedicated server --------------------------------------------------------- */
     public static final String SERVER_RUN_LOOP = "server.run-loop";
     public static final String SERVER_INIT = "server.init";
+    /** Fresh-world global spawn search, excluding subsequent initial-chunk readiness. */
+    public static final String SERVER_GLOBAL_SPAWN = "server.global-spawn";
+    /** Waiting for the server's initial chunk set after the global spawn has been selected. */
+    public static final String SERVER_INITIAL_CHUNKS = "server.initial-chunks";
     public static final String SERVER_READY = "server.ready";
 
     private StartupStages() {}
 }
+

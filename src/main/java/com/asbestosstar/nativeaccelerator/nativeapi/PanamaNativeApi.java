@@ -42,6 +42,8 @@ public final class PanamaNativeApi implements NativeApi, AutoCloseable {
     private final MethodHandle imageCopyU32Rect;
     private final MethodHandle perlin3Batch;
     private final MethodHandle perlin3VolumeAdd;
+    private final MethodHandle daxCountI32Range;
+    private final MethodHandle daxSelectI32Range;
 
     private PanamaNativeApi(Arena libraryArena, SymbolLookup lookup) {
         Linker linker = Linker.nativeLinker();
@@ -113,6 +115,13 @@ public final class PanamaNativeApi implements NativeApi, AutoCloseable {
                 ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_FLOAT,
                 ValueLayout.ADDRESS,
                 ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_INT);
+
+        // ABI-v3 optional extension. Older packaged native libraries remain valid and simply expose no DAX ops.
+        this.daxCountI32Range = optionalStatusCall(linker, lookup, "na_dax_i32_count_range",
+                ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.ADDRESS);
+        this.daxSelectI32Range = optionalStatusCall(linker, lookup, "na_dax_i32_select_range",
+                ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG,
+                ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.ADDRESS);
     }
 
     public static PanamaNativeApi loadBundled() throws IOException {
@@ -135,7 +144,11 @@ public final class PanamaNativeApi implements NativeApi, AutoCloseable {
     }
 
     @Override public int abiVersion() { return invokeInt(abiVersion); }
-    @Override public long capabilities() { return invokeLong(capabilities); }
+    @Override public long capabilities() {
+        long mask = invokeLong(capabilities);
+        if (daxIntScanAvailable()) mask |= Capabilities.DAX_INT_SCAN;
+        return mask;
+    }
 
     @Override
     public String backendName() {
@@ -265,7 +278,43 @@ public final class PanamaNativeApi implements NativeApi, AutoCloseable {
                 permutations, offsetX, offsetY, offsetZ, wrapCoordinates ? 1 : 0);
     }
 
+    @Override
+    public boolean daxIntScanAvailable() {
+        return daxCountI32Range != null && daxSelectI32Range != null;
+    }
+
+    @Override
+    public long daxCountI32Range(MemorySegment src, long count, int lowerInclusive, int upperInclusive) {
+        if (!daxIntScanAvailable()) throw new UnsupportedOperationException("DAX int scan extension is unavailable");
+        if (lowerInclusive > upperInclusive) throw new IllegalArgumentException("lowerInclusive > upperInclusive");
+        requireRange(src, mul(count, 4), "DAX int scan src");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment result = arena.allocate(ValueLayout.JAVA_LONG);
+            invokeStatus(daxCountI32Range, "daxCountI32Range", src, count, lowerInclusive, upperInclusive, result);
+            return result.get(ValueLayout.JAVA_LONG, 0);
+        }
+    }
+
+    @Override
+    public long daxSelectI32Range(MemorySegment dst, long dstCapacity, MemorySegment src, long count,
+                                  int lowerInclusive, int upperInclusive) {
+        if (!daxIntScanAvailable()) throw new UnsupportedOperationException("DAX int scan extension is unavailable");
+        if (lowerInclusive > upperInclusive) throw new IllegalArgumentException("lowerInclusive > upperInclusive");
+        requireRange(src, mul(count, 4), "DAX int select src");
+        requireRange(dst, mul(dstCapacity, 4), "DAX int select dst");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment result = arena.allocate(ValueLayout.JAVA_LONG);
+            invokeStatus(daxSelectI32Range, "daxSelectI32Range", dst, dstCapacity, src, count,
+                    lowerInclusive, upperInclusive, result);
+            return result.get(ValueLayout.JAVA_LONG, 0);
+        }
+    }
+
     @Override public void close() { libraryArena.close(); }
+
+    private static MethodHandle optionalStatusCall(Linker linker, SymbolLookup lookup, String symbol, java.lang.foreign.MemoryLayout... args) {
+        return lookup.find(symbol).map(address -> linker.downcallHandle(address, FunctionDescriptor.of(ValueLayout.JAVA_INT, args))).orElse(null);
+    }
 
     private static MethodHandle statusCall(Linker linker, SymbolLookup lookup, String symbol, java.lang.foreign.MemoryLayout... args) {
         return downcall(linker, lookup, symbol, FunctionDescriptor.of(ValueLayout.JAVA_INT, args));
@@ -334,3 +383,4 @@ public final class PanamaNativeApi implements NativeApi, AutoCloseable {
         return new RuntimeException(t);
     }
 }
+

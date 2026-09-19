@@ -268,3 +268,4 @@ public final class RendererPlatformPolicy {
         return LoaderEnvironment.gameDirectory();
     }
 }
+

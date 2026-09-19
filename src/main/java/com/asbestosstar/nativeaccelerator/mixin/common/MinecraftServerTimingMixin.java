@@ -2,6 +2,7 @@ package com.asbestosstar.nativeaccelerator.mixin.common;
 
 import com.asbestosstar.nativeaccelerator.startup.StartupStages;
 import com.asbestosstar.nativeaccelerator.startup.StartupTimer;
+import com.asbestosstar.nativeaccelerator.worldgen.WorldgenProfiler;
 import net.minecraft.server.MinecraftServer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -19,7 +20,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *   <li>the {@code initServer()} call inside it - the world/level load that happens before the first tick,
  *       which is the dominant part of "time until the server is usable". {@code initServer} is abstract
  *       on {@code MinecraftServer} and implemented by {@code DedicatedServer} and {@code IntegratedServer};
- *       timing the call site measures both without a mixin per subclass.</li>
+ *       timing the call site measures both without a mixin per subclass;</li>
+ *   <li>{@code setInitialSpawn(...)} and {@code prepareLevels()} separately, so the vanilla
+ *       "Time elapsed" interval can be split into spawn search versus initial-chunk readiness instead of
+ *       treating the entire interval as spawn selection.</li>
  * </ul>
  *
  * <p>The "server is up" milestone is deliberately <em>not</em> handled here. The sole write of
@@ -41,6 +45,11 @@ public abstract class MinecraftServerTimingMixin {
         StartupTimer.beginLifetime(StartupStages.SERVER_RUN_LOOP);
     }
 
+    @Inject(method = "runServer()V", at = @At("RETURN"), require = 0)
+    private void nativeaccelerator$serverRunLoopEnd(CallbackInfo ci) {
+        WorldgenProfiler.printFinalReport();
+    }
+
     @Inject(method = "runServer()V", require = 0,
             at = @At(value = "INVOKE", shift = Shift.BEFORE,
                     target = "Lnet/minecraft/server/MinecraftServer;initServer()Z"))
@@ -54,4 +63,25 @@ public abstract class MinecraftServerTimingMixin {
     private void nativeaccelerator$serverInitEnd(CallbackInfo ci) {
         StartupTimer.end(StartupStages.SERVER_INIT);
     }
+    @Inject(method = "setInitialSpawn", at = @At("HEAD"), require = 0)
+    private static void nativeaccelerator$globalSpawnBegin(CallbackInfo ci) {
+        StartupTimer.begin(StartupStages.SERVER_GLOBAL_SPAWN);
+    }
+
+    @Inject(method = "setInitialSpawn", at = @At("RETURN"), require = 0)
+    private static void nativeaccelerator$globalSpawnEnd(CallbackInfo ci) {
+        StartupTimer.end(StartupStages.SERVER_GLOBAL_SPAWN);
+    }
+
+    @Inject(method = "prepareLevels", at = @At("HEAD"), require = 0)
+    private void nativeaccelerator$initialChunksBegin(CallbackInfo ci) {
+        StartupTimer.begin(StartupStages.SERVER_INITIAL_CHUNKS);
+    }
+
+    @Inject(method = "prepareLevels", at = @At("RETURN"), require = 0)
+    private void nativeaccelerator$initialChunksEnd(CallbackInfo ci) {
+        StartupTimer.end(StartupStages.SERVER_INITIAL_CHUNKS);
+    }
+
 }
+

@@ -121,7 +121,25 @@ public final class NativeAccelerator {
                 if (unpacked.getAtIndex(java.lang.foreign.ValueLayout.JAVA_INT, i) != ((i * 7) & 31)) return false;
             }
 
+            // Optional Solaris/SPARC libdax extension: verify signed Java range semantics,
+            // including the unsigned wrap needed for a range crossing zero.
+            if (nativeApi.daxIntScanAvailable()
+                    && (nativeApi.capabilities() & Capabilities.DAX_DEVICE) != 0) {
+                int[] probe = {-100, -10, -9, -1, 0, 1, 9, 10, 11, 100};
+                MemorySegment daxSrc = arena.allocate((long) probe.length * Integer.BYTES, 64);
+                MemorySegment daxDst = arena.allocate((long) probe.length * Integer.BYTES, 64);
+                daxSrc.copyFrom(MemorySegment.ofArray(probe));
+                if (nativeApi.daxCountI32Range(daxSrc, probe.length, -10, 10) != 7L) return false;
+                long selected = nativeApi.daxSelectI32Range(daxDst, probe.length, daxSrc, probe.length, -10, 10);
+                if (selected != 7L) return false;
+                int[] expected = {-10, -9, -1, 0, 1, 9, 10};
+                for (int i = 0; i < expected.length; i++) {
+                    if (daxDst.getAtIndex(java.lang.foreign.ValueLayout.JAVA_INT, i) != expected[i]) return false;
+                }
+            }
+
             return true;
         }
     }
 }
+

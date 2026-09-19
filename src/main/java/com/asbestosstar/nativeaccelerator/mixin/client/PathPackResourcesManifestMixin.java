@@ -20,3 +20,4 @@ public abstract class PathPackResourcesManifestMixin {
         if (PathResourceIndex.tryList(namespace, topDir, decomposedPrefixPath, output)) ci.cancel();
     }
 }
+

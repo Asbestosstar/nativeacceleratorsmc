@@ -54,3 +54,4 @@ public final class ZipResourceIndexTest {
         if (!actual.equals(expected)) throw new AssertionError(prefix + " expected=" + expected + " actual=" + actual);
     }
 }
+

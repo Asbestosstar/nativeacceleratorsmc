@@ -154,3 +154,4 @@ public final class PersistentTextureCache {
         return "rgba\u0000" + id + '\u0000' + resource.sourcePackId();
     }
 }
+

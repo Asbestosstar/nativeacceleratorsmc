@@ -29,3 +29,4 @@ public abstract class StitcherThroughputMixin {
         StartupTimer.end(StartupStages.CLIENT_ATLAS_STITCH);
     }
 }
+

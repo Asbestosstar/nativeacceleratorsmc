@@ -35,3 +35,4 @@ public final class NativeGpuArena implements AutoCloseable {
         if (closed.compareAndSet(false, true)) api.destroyArena(handle);
     }
 }
+

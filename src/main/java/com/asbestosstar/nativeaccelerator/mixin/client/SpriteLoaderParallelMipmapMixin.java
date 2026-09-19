@@ -204,3 +204,4 @@ public abstract class SpriteLoaderParallelMipmapMixin {
         }
     }
 }
+

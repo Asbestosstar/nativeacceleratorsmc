@@ -310,3 +310,4 @@ public final class BitStorageHarness {
         }
     }
 }
+

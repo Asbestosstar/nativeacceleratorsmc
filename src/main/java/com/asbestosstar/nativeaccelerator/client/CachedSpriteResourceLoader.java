@@ -84,3 +84,4 @@ public final class CachedSpriteResourceLoader {
         return contents;
     }
 }
+

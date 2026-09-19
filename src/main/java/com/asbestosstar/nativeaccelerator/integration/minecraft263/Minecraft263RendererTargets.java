@@ -30,3 +30,4 @@ public final class Minecraft263RendererTargets {
 
     public record Target(String className, String methods, String role) {}
 }
+

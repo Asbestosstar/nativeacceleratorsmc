@@ -24,3 +24,4 @@ public abstract class EntityModelSetProfilingMixin {
         if (started != null) ModelDagProfiler.end("entity-model-set", started);
     }
 }
+

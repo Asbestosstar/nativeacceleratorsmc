@@ -260,3 +260,4 @@ public final class AtlasWorkScheduler {
                         + thread.getName() + ": " + throwable), false);
     }
 }
+

@@ -261,3 +261,4 @@ public final class FastStitcher<T extends Stitcher.Entry> extends Stitcher<T> {
         }
     }
 }
+

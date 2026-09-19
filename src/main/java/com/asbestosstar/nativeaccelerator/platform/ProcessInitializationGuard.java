@@ -94,3 +94,4 @@ public final class ProcessInitializationGuard {
         return "loader=" + loader + ", classloader=" + classLoader;
     }
 }
+

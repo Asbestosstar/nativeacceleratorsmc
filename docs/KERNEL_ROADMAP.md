@@ -65,25 +65,25 @@ Native ABI:
 - `na_perlin3_volume_add`
 
 The volume kernel is intentionally additive so it can match `DensityBuffer.addTo` and be composed for
-`NoiseStack` layers. The current implementation is scalar C compiled with the target compiler's optimizer;
-hand-written AVX/VIS/VSX versions can later replace the inner kernel behind the same ABI.
+`NoiseStack` layers. `PerlinNoiseMixin` now routes large `addToVolume` calls through the existing ABI using
+`NoiseAcceleration` as the heap-staging size gate; small calls and any failed/unsupported native path fall
+back to vanilla Java. The current implementation is scalar C compiled with the target compiler's optimizer;
+hand-written AVX/VIS/VSX versions can replace the inner kernel behind the same ABI.
 
 ## Mapping / Mixin policy
 
-Do not enable concrete 26.3 Mixins until the universal build has a deliberate mapping/remap strategy for
-all supported loaders. `Minecraft263AccelerationTargets` records the named-source targets without making
-the core JAR link to Minecraft classes.
+Concrete named-source 26.3 Mixins are supported. Keep each Mixin as a thin interception seam and put the
+loader-neutral eligibility/dispatch policy in ordinary Java classes; a missing capability or failed native
+operation must always fall back to vanilla behavior.
 
 For direct-memory targets, prefer one large native call over per-element Panama calls. For heap-backed
-targets, benchmark staging-copy cost before enabling an interception by default.
+targets, benchmark staging-copy cost and keep a tunable size gate around the measured crossover.
 
 ### Mixin selection gate (already in place)
 
-`nativeaccelerator.mixins.json` ships with empty `mixins`/`client`/`server` lists on purpose, but it
-already declares an `IMixinConfigPlugin`:
-`com.asbestosstar.nativeaccelerator.mixinconfig.NativeAcceleratorMixinConfigPlugin`.
-`SystemMixinGate` registers the built-in rules from the plugin `onLoad`, so conditional suppression
-works as soon as the first concrete mixin is added - no config change is needed for that.
+`nativeaccelerator.mixins.json` declares the common/client/server Mixins and the
+`NativeAcceleratorMixinConfigPlugin`. `SystemMixinGate` registers the built-in rules from the plugin
+`onLoad`, so every interception remains suppressible by the project-wide and per-Mixin switches.
 
 A mixin package is its own gate. Put a new mixin in the matching package and it is filtered
 automatically:
@@ -111,3 +111,4 @@ Registration API for code that must decide before mixins are selected:
 `src/test/java/.../SystemMixinGateTest.java` is a plain-main harness (no JUnit dependency) that
 exercises every switch and the precedence order; run it with `./run-mixin-gate-test.sh`. There is
 still no remapping strategy, so per the policy above no concrete mixin is registered yet.
+

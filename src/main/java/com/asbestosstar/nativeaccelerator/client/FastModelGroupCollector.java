@@ -69,3 +69,4 @@ public final class FastModelGroupCollector {
 
     private record GroupKey(Object equalityGroup, List<Object> coloringValues) {}
 }
+

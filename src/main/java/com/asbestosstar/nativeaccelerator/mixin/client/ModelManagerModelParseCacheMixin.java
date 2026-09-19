@@ -22,3 +22,4 @@ public abstract class ModelManagerModelParseCacheMixin {
         return ModelJsonParseCache.parse(reader);
     }
 }
+

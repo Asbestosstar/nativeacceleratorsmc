@@ -73,6 +73,91 @@ public final class NativeKernelBridge {
         }
     }
 
+    /**
+     * Add one Minecraft-compatible Perlin layer to a heap-backed DensityBuffer.
+     *
+     * <p>The native ABI operates on direct/native memory. The caller is expected to size-gate this
+     * operation because it requires one heap->direct copy and one direct->heap copy per invocation.
+     * The 256-byte permutation table is staged beside the output and is negligible for large volumes.</p>
+     */
+    public static boolean addPerlinVolume(float[] values,
+                                          int sizeX, int sizeY, int sizeZ,
+                                          int minBlockX, int minBlockY, int minBlockZ,
+                                          int stepBlockX, int stepBlockY, int stepBlockZ,
+                                          double xzScale, double yScale, float amplitude,
+                                          byte[] permutations,
+                                          double offsetX, double offsetY, double offsetZ,
+                                          boolean wrapCoordinates) {
+        if (values == null || permutations == null || permutations.length < 256) return false;
+        if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0) return false;
+        if (stepBlockX <= 0 || stepBlockY <= 0 || stepBlockZ <= 0) return false;
+
+        Optional<NativeApi> optional = NativeAccelerator.api();
+        if (optional.isEmpty() || (optional.get().capabilities() & Capabilities.NOISE_KERNELS) == 0) return false;
+
+        try {
+            long cells = Math.multiplyExact(Math.multiplyExact((long) sizeX, sizeY), sizeZ);
+            if (cells > values.length) return false;
+            long dstBytes = Math.multiplyExact(cells, Float.BYTES);
+
+            Scratch scratch = SCRATCH.get();
+            MemorySegment dst = scratch.first(dstBytes);
+            MemorySegment heapValues = MemorySegment.ofArray(values).asSlice(0, dstBytes);
+            dst.asSlice(0, dstBytes).copyFrom(heapValues);
+
+            MemorySegment permutationTable = scratch.second(256);
+            permutationTable.asSlice(0, 256).copyFrom(MemorySegment.ofArray(permutations).asSlice(0, 256));
+
+            optional.get().perlin3VolumeAdd(dst,
+                    sizeX, sizeY, sizeZ,
+                    minBlockX, minBlockY, minBlockZ,
+                    stepBlockX, stepBlockY, stepBlockZ,
+                    xzScale, yScale, amplitude,
+                    permutationTable,
+                    offsetX, offsetY, offsetZ,
+                    wrapCoordinates);
+
+            heapValues.copyFrom(dst.asSlice(0, dstBytes));
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+
+    /**
+     * Add one Perlin layer to an already-native DensityBuffer staging area. No heap copy occurs here.
+     * This is the preferred primitive for whole-NoiseStack batching.
+     */
+    public static boolean addPerlinVolumeDirect(MemorySegment dst,
+                                                int sizeX, int sizeY, int sizeZ,
+                                                int minBlockX, int minBlockY, int minBlockZ,
+                                                int stepBlockX, int stepBlockY, int stepBlockZ,
+                                                double xzScale, double yScale, float amplitude,
+                                                byte[] permutations,
+                                                double offsetX, double offsetY, double offsetZ,
+                                                boolean wrapCoordinates) {
+        if (dst == null || !dst.isNative() || permutations == null || permutations.length < 256) return false;
+        Optional<NativeApi> optional = NativeAccelerator.api();
+        if (optional.isEmpty() || (optional.get().capabilities() & Capabilities.NOISE_KERNELS) == 0) return false;
+        try {
+            long cells = Math.multiplyExact(Math.multiplyExact((long) sizeX, sizeY), sizeZ);
+            long bytes = Math.multiplyExact(cells, Float.BYTES);
+            if (bytes > dst.byteSize()) return false;
+            MemorySegment permutationTable = SCRATCH.get().second(256);
+            permutationTable.asSlice(0, 256).copyFrom(MemorySegment.ofArray(permutations).asSlice(0, 256));
+            optional.get().perlin3VolumeAdd(dst,
+                    sizeX, sizeY, sizeZ,
+                    minBlockX, minBlockY, minBlockZ,
+                    stepBlockX, stepBlockY, stepBlockZ,
+                    xzScale, yScale, amplitude,
+                    permutationTable, offsetX, offsetY, offsetZ, wrapCoordinates);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     /** NativeImage-style 32-bit fill. pixelArgb is converted to Minecraft's ABGR integer form. */
     public static boolean fillNativeImage(long pixelAddress, int imageWidth, int imageHeight,
                                           int x, int y, int width, int height, int pixelArgb) {
@@ -138,3 +223,4 @@ public final class NativeKernelBridge {
         }
     }
 }
+

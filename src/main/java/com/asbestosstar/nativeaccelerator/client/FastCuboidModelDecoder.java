@@ -353,3 +353,4 @@ public final class FastCuboidModelDecoder {
         public UnsupportedFastModelException(String message) { super(message); }
     }
 }
+

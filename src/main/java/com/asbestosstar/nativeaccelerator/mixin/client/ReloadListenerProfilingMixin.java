@@ -26,3 +26,4 @@ public abstract class ReloadListenerProfilingMixin {
         return com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig.booleanValue("reload.profile", false) || logger.isDebugEnabled();
     }
 }
+
