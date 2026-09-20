@@ -1,5 +1,6 @@
 package com.asbestosstar.nativeaccelerator.renderer.metal;
 
+import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.buffers.TransientMemory;
@@ -15,8 +16,11 @@ import org.lwjgl.sdl.SDL_GPUColorTargetInfo;
 import org.lwjgl.sdl.SDL_GPUDepthStencilTargetInfo;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class MetalCommandEncoder implements CommandEncoderBackend {
+    private static final AtomicBoolean REGIONAL_CLEAR_MARKER_REPORTED = new AtomicBoolean();
     private final MetalDevice device;
     private long command;
     private MetalRenderPass activePass;
@@ -89,12 +93,59 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
     @Override public void clearColorTexture(GpuTexture texture,Vector4fc value){ clear(texture,value,null,1.0,0,0,texture.getWidth(0),texture.getHeight(0),0); }
     @Override public void clearColorAndDepthTextures(GpuTexture color,Vector4fc value,GpuTexture depth,double depthValue){ clear(color,value,depth,depthValue,0,0,color.getWidth(0),color.getHeight(0),0); }
-    @Override public void clearColorAndDepthTextures(GpuTexture color,Vector4fc value,GpuTexture depth,double depthValue,int x,int y,int width,int height,int mip){ clear(color,value,depth,depthValue,x,y,width,height,mip); }
+    @Override public void clearColorAndDepthTextures(GpuTexture color,Vector4fc value,GpuTexture depth,double depthValue,int x,int y,int width,int height,int mip){
+        if (x == 0 && y == 0 && width == color.getWidth(mip) && height == color.getHeight(mip)) {
+            clear(color,value,depth,depthValue,x,y,width,height,mip);
+            return;
+        }
+        clearColorDepthRegionByUpload(color,value,depth,depthValue,x,y,width,height,mip);
+    }
     @Override public void clearDepthTexture(GpuTexture depth,double value){ clear(null,null,depth,value,0,0,depth.getWidth(0),depth.getHeight(0),0); }
     private void clear(GpuTexture color,Vector4fc colorValue,GpuTexture depth,double depthValue,int x,int y,int w,int h,int mip){
         var b=RenderPassDescriptor.builder(()->"Metal clear").withRenderArea(new com.mojang.renderpearl.api.commands.RenderPass.RenderArea(x,y,w,h));
         MetalTextureView cv=null,dv=null; if(color!=null){cv=new MetalTextureView(color,mip,1);b.withColorAttachment(cv,java.util.Optional.of(colorValue));} if(depth!=null){dv=new MetalTextureView(depth,mip,1);b.withDepthAttachment(dv,java.util.OptionalDouble.of(depthValue));}
         createRenderPass(b.build());submitRenderPass();if(cv!=null)cv.close();if(dv!=null)dv.close();
+    }
+
+    private void clearColorDepthRegionByUpload(GpuTexture color, Vector4fc colorValue,
+                                               GpuTexture depth, double depthValue,
+                                               int x, int y, int width, int height, int mip) {
+        if (activePass != null) throw new IllegalStateException("Cannot clear texture region inside a Metal render pass");
+        if (width <= 0 || height <= 0) return;
+        if (REGIONAL_CLEAR_MARKER_REPORTED.compareAndSet(false, true)) {
+            System.out.println("[Native Accelerator] Metal regional clear marker: subresource-upload-fix30");
+        }
+        if (color == null || depth == null) {
+            throw new UnsupportedOperationException("Metal regional clear currently requires color + depth together");
+        }
+        if (color.getFormat() != GpuFormat.RGBA8_UNORM || depth.getFormat() != GpuFormat.D32_FLOAT) {
+            throw new UnsupportedOperationException(
+                    "Metal regional clear currently supports RGBA8_UNORM + D32_FLOAT (got "
+                            + color.getFormat() + " + " + depth.getFormat() + ")");
+        }
+
+        int pixels = Math.multiplyExact(width, height);
+        ByteBuffer colorBytes = ByteBuffer.allocateDirect(Math.multiplyExact(pixels, 4));
+        byte r = unorm8(colorValue.x());
+        byte g = unorm8(colorValue.y());
+        byte b = unorm8(colorValue.z());
+        byte a = unorm8(colorValue.w());
+        for (int i = 0; i < pixels; i++) colorBytes.put(r).put(g).put(b).put(a);
+        colorBytes.flip();
+
+        ByteBuffer depthBytes = ByteBuffer.allocateDirect(Math.multiplyExact(pixels, Float.BYTES))
+                .order(ByteOrder.nativeOrder());
+        float z = (float)depthValue;
+        for (int i = 0; i < pixels; i++) depthBytes.putFloat(z);
+        depthBytes.flip();
+
+        writeToTexture(color, colorBytes, mip, 0, x, y, width, height);
+        writeToTexture(depth, depthBytes, mip, 0, x, y, width, height);
+    }
+
+    private static byte unorm8(float value) {
+        float clamped = Math.max(0.0f, Math.min(1.0f, value));
+        return (byte)Math.round(clamped * 255.0f);
     }
 
     @Override public void writeToBuffer(GpuBufferSlice dst,ByteBuffer data){

@@ -91,7 +91,7 @@ final class MetalDevice implements GpuDeviceBackend {
         int framesInFlight = Math.max(1, Math.min(3, Integer.getInteger(
                 "nativeaccelerator.renderer.metal.framesInFlight", 3)));
         try { SDLGPU.SDL_SetGPUAllowedFramesInFlight(handle,framesInFlight); } catch(Throwable ignored){}
-        System.out.println("[Native Accelerator] Metal core marker: clean-fix24-core-fix28; framesInFlight="
+        System.out.println("[Native Accelerator] Metal core marker: clean-fix24-core-fix31; framesInFlight="
                 + framesInFlight + "; fix25Cycling=false");
     }
 

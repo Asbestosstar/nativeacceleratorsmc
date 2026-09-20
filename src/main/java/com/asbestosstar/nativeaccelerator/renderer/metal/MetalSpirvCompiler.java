@@ -53,7 +53,7 @@ final class MetalSpirvCompiler {
             BackendRenderPipeline.CreateInfo pipeline,
             BackendRenderPipeline.CreateInfo.Shader shader) throws ShaderCompileException {
         if (GENERATOR_MARKER_REPORTED.compareAndSet(false, true)) {
-            System.out.println("[Native Accelerator] Metal generator marker: active-msl-layout-fix28");
+            System.out.println("[Native Accelerator] Metal generator marker: active-msl-layout-fix31");
         }
         SpvModule module = shader.module();
         SpvModule.Reflection reflection = module.reflect();
@@ -118,7 +118,9 @@ final class MetalSpirvCompiler {
             long compiler = pCompiler.get(0);
             int stage = module.type() == ShaderType.VERTEX ? 0 : 4; // SpvExecutionModelVertex/Fragment
 
-            if (storageBufferCount > 0) {
+            boolean flipGeneratedTextureY = module.type() == ShaderType.VERTEX
+                    && MetalCoordinatePolicy.flipGeneratedTextureVertexY(pipeline.name());
+            if (storageBufferCount > 0 || flipGeneratedTextureY) {
                 PointerBuffer pOptions = stack.mallocPointer(1);
                 check(context,
                         spvc_compiler_create_compiler_options(compiler, pOptions),
@@ -130,12 +132,23 @@ final class MetalSpirvCompiler {
                                 SPVC_COMPILER_OPTION_MSL_VERSION,
                                 20100),
                         "set MSL 2.1");
-                check(context,
-                        spvc_compiler_options_set_bool(
-                                options,
-                                SPVC_COMPILER_OPTION_MSL_TEXTURE_BUFFER_NATIVE,
-                                true),
-                        "enable native MSL texture buffers");
+                if (storageBufferCount > 0) {
+                    check(context,
+                            spvc_compiler_options_set_bool(
+                                    options,
+                                    SPVC_COMPILER_OPTION_MSL_TEXTURE_BUFFER_NATIVE,
+                                    true),
+                            "enable native MSL texture buffers");
+                }
+                if (flipGeneratedTextureY) {
+                    check(context,
+                            spvc_compiler_options_set_bool(
+                                    options,
+                                    SPVC_COMPILER_OPTION_FLIP_VERTEX_Y,
+                                    true),
+                            "flip generated-texture vertex Y for Metal");
+                    MetalCoordinatePolicy.report(pipeline.name());
+                }
                 check(context,
                         spvc_compiler_install_compiler_options(compiler, options),
                         "install MSL compiler options");

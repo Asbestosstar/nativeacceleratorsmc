@@ -43,7 +43,7 @@ public final class NativeAccelerator {
         }
 
         Platform platform = Platform.current();
-        System.out.println("[Native Accelerator] Build marker: metal-clean-generator-fix28");
+        System.out.println("[Native Accelerator] Build marker: metal-generated-texture-coordinates-fix31");
         System.out.println("[Native Accelerator] Platform: " + platform.id());
 
         try {

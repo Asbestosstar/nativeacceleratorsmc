@@ -80,7 +80,7 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
             Object raster = MetalInterop.get(pipelineInfo, "rasterizer_state");
             MetalInterop.set(raster, "fill_mode", MetalConversions.fillMode(info.polygonMode()));
             MetalInterop.set(raster, "cull_mode", MetalInterop.sdl(info.cull() ? "SDL_GPU_CULLMODE_BACK" : "SDL_GPU_CULLMODE_NONE"));
-            MetalInterop.set(raster, "front_face", MetalInterop.sdl("SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE"));
+            MetalInterop.set(raster, "front_face", MetalInterop.sdl(MetalCoordinatePolicy.frontFace(info.name())));
             DepthStencilState depth = info.depthStencilState();
             MetalInterop.set(raster, "depth_bias_constant_factor", depth == null ? 0f : depth.depthBiasConstant());
             MetalInterop.set(raster, "depth_bias_clamp", 0f);
