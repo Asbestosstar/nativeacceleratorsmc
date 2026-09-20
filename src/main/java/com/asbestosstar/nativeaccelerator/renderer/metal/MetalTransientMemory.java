@@ -66,6 +66,8 @@ final class MetalTransientMemory implements TransientMemory {
         return List.copyOf(out);
     }
     private static long alignUp(long value,long alignment){long mask=alignment-1;return (alignment&(alignment-1))==0?(value+mask)&~mask:((value+alignment-1)/alignment)*alignment;}
+    boolean isEmpty() { return owned.isEmpty(); }
+
     void release() { for (GpuBuffer b:owned) try { b.close(); } catch(Throwable ignored){} owned.clear(); }
     private static int checkedSize(long n){ if(n<=0||n>Integer.MAX_VALUE)throw new IllegalArgumentException("Transient allocation too large: "+n); return (int)n; }
 }

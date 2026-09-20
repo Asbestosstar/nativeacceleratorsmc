@@ -10,8 +10,10 @@ import org.jspecify.annotations.Nullable;
 import org.lwjgl.sdl.SDLGPU;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.List;
 import java.util.OptionalDouble;
 import java.util.Set;
@@ -31,10 +33,14 @@ final class MetalDevice implements GpuDeviceBackend {
     private final Set<MetalGpuBuffer> dirtyBuffers = ConcurrentHashMap.newKeySet();
     private final MetalRuntimeCapabilities runtime;
     private final MetalFanIndexBuffer fanIndexBuffer;
+    private final Deque<RetiredTransientMemory> retiredTransientMemory = new ArrayDeque<>();
+    private final int framesInFlight;
+    private final boolean mac1Compat;
 
     MetalDevice(long handle, GpuDebugOptions debug, MetalBackend.MetalCapabilityTier capabilityTier,
                 MacMetalCapabilities.Result metal) {
         this.handle=handle;this.debug=debug;
+        this.mac1Compat = capabilityTier == MetalBackend.MetalCapabilityTier.MAC1_COMPAT;
         this.runtime = MetalRuntimeCapabilities.probe(handle, capabilityTier, metal);
         this.fanIndexBuffer = new MetalFanIndexBuffer(this);
         String driver;
@@ -88,11 +94,16 @@ final class MetalDevice implements GpuDeviceBackend {
                 + "; model=" + metal.hardwareModel() + "; macOS=" + metal.osVersion();
         this.info=new DeviceInfo(deviceName,vendor,driverInfo,true,"Metal (SDL3)",1.0f,limits,features,
                 Set.copyOf(capabilities),hints,deviceType);
-        int framesInFlight = Math.max(1, Math.min(3, Integer.getInteger(
-                "nativeaccelerator.renderer.metal.framesInFlight", 3)));
-        try { SDLGPU.SDL_SetGPUAllowedFramesInFlight(handle,framesInFlight); } catch(Throwable ignored){}
-        System.out.println("[Native Accelerator] Metal core marker: clean-fix24-core-fix31; framesInFlight="
-                + framesInFlight + "; fix25Cycling=false");
+        int requestedFrames = Integer.getInteger("nativeaccelerator.renderer.metal.framesInFlight", 3);
+        if (this.mac1Compat) {
+            requestedFrames = Integer.getInteger("nativeaccelerator.renderer.metal.mac1FramesInFlight", 1);
+        }
+        this.framesInFlight = Math.max(1, Math.min(3, requestedFrames));
+        try { SDLGPU.SDL_SetGPUAllowedFramesInFlight(handle,this.framesInFlight); } catch(Throwable ignored){}
+        System.out.println("[Native Accelerator] Metal core marker: transient-retirement-fix32; framesInFlight="
+                + this.framesInFlight + "; mac1Compat=" + this.mac1Compat
+                + "; transientLifetime=fenced; clearedTargetCycling=" + cycleClearedTargets()
+                + "; fix25Cycling=false");
     }
 
     private static String vendorName(String deviceName) {
@@ -114,6 +125,73 @@ final class MetalDevice implements GpuDeviceBackend {
         return DeviceType.OTHER;
     }
 
+
+
+    /**
+     * Keep transient GPU buffers alive until the command buffer that references them has completed.
+     * SDL GPU submission is asynchronous; releasing these buffers at submit time can let later frames
+     * reuse/destroy resources that the Metal driver is still reading.
+     */
+    synchronized void retireTransientMemory(MetalTransientMemory memory, long fence) {
+        if (memory == null || memory.isEmpty()) {
+            if (fence != 0L) SDLGPU.SDL_ReleaseGPUFence(handle(), fence);
+            return;
+        }
+        if (fence == 0L) throw new IllegalArgumentException("retirement fence");
+        retiredTransientMemory.addLast(new RetiredTransientMemory(fence, memory));
+        reapCompletedTransientMemory(false);
+
+        // Bound retained memory even if the driver is several submissions behind. Waiting only happens
+        // when the queue grows beyond the configured frame window; normal completed fences are polled.
+        while (retiredTransientMemory.size() > Math.max(2, framesInFlight + 1)) {
+            reapCompletedTransientMemory(true);
+        }
+    }
+
+    synchronized void reapCompletedTransientMemory() {
+        reapCompletedTransientMemory(false);
+    }
+
+    private void reapCompletedTransientMemory(boolean waitForOldest) {
+        while (!retiredTransientMemory.isEmpty()) {
+            RetiredTransientMemory oldest = retiredTransientMemory.peekFirst();
+            boolean complete = SDLGPU.SDL_QueryGPUFence(handle(), oldest.fence());
+            if (!complete && waitForOldest) {
+                org.lwjgl.PointerBuffer fences;
+                try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+                    fences = stack.mallocPointer(1).put(0, oldest.fence());
+                    if (!SDLGPU.SDL_WaitForGPUFences(handle(), true, fences)) {
+                        throw new IllegalStateException("SDL_WaitForGPUFences failed: " + MetalInterop.lastSdlError());
+                    }
+                }
+                complete = true;
+            }
+            if (!complete) break;
+            retiredTransientMemory.removeFirst();
+            try { oldest.memory().release(); } finally {
+                SDLGPU.SDL_ReleaseGPUFence(handle(), oldest.fence());
+            }
+            if (waitForOldest) break;
+        }
+    }
+
+    private synchronized void releaseAllRetiredTransientMemory() {
+        while (!retiredTransientMemory.isEmpty()) {
+            RetiredTransientMemory retired = retiredTransientMemory.removeFirst();
+            try { retired.memory().release(); } catch (Throwable ignored) {}
+            try { SDLGPU.SDL_ReleaseGPUFence(handle, retired.fence()); } catch (Throwable ignored) {}
+        }
+    }
+
+    private record RetiredTransientMemory(long fence, MetalTransientMemory memory) {}
+
+
+    boolean mac1Compat() { return mac1Compat; }
+
+    boolean cycleClearedTargets() {
+        return mac1Compat && Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.mac1CycleClearedTargets", "true"));
+    }
 
     boolean nativeIndirectDrawSupported() { return runtime.nativeIndirectEnabled(); }
     void blacklistNativeIndirect(Throwable failure) { runtime.blacklistNativeIndirect(failure); }
@@ -164,7 +242,7 @@ final class MetalDevice implements GpuDeviceBackend {
     }
     long handle(){if(closed.get())throw new IllegalStateException("Metal device is closed");return handle;}
     @Override public GpuSurfaceBackend createSurface(long window,BooleanSupplier iconified){return new MetalSurface(this,window,iconified);}
-    @Override public CommandEncoderBackend createCommandEncoder(){return new MetalCommandEncoder(this);}
+    @Override public CommandEncoderBackend createCommandEncoder(){reapCompletedTransientMemory();return new MetalCommandEncoder(this);}
     @Override public GpuSampler createSampler(AddressMode u,AddressMode v,FilterMode min,FilterMode mag,int maxAnisotropy,OptionalDouble maxLod){
         int clamped=Math.max(1,Math.min(maxAnisotropy,runtime.maxAnisotropy()));
         try{return new MetalSampler(this,u,v,min,mag,clamped,maxLod);}
@@ -187,5 +265,5 @@ final class MetalDevice implements GpuDeviceBackend {
     @Override public GpuQueryPool createTimestampQueryPool(int size){return new MetalQueryPool(size);}
     @Override public long getTimestampCalibrationOffset(){return 0L;}
     @Override public DeviceInfo getDeviceInfo(){return info;}
-    @Override public void close(){if(closed.compareAndSet(false,true)){try{SDLGPU.SDL_WaitForGPUIdle(handle);}catch(Throwable ignored){}try{fanIndexBuffer.close();}catch(Throwable ignored){}SDLGPU.SDL_DestroyGPUDevice(handle);MetalBackend.deviceClosed();}}
+    @Override public void close(){if(closed.compareAndSet(false,true)){try{SDLGPU.SDL_WaitForGPUIdle(handle);}catch(Throwable ignored){}releaseAllRetiredTransientMemory();try{fanIndexBuffer.close();}catch(Throwable ignored){}SDLGPU.SDL_DestroyGPUDevice(handle);MetalBackend.deviceClosed();}}
 }

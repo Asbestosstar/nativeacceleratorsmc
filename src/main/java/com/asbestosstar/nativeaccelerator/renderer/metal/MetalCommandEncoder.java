@@ -38,16 +38,24 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         if(device.hasDirtyBuffers()) device.flushDirtyBuffers(commandHandle());
         if(command!=0L){
             long start=MetalPerfCounters.tic();
-            MetalTransfers.submit(command);
+            if (transientMemory.isEmpty()) {
+                MetalTransfers.submit(command);
+                transientMemory.release();
+            } else {
+                long fence = SDLGPU.SDL_SubmitGPUCommandBufferAndAcquireFence(command);
+                if (fence == 0L) {
+                    throw new IllegalStateException("SDL_SubmitGPUCommandBufferAndAcquireFence failed: " + MetalInterop.lastSdlError());
+                }
+                device.retireTransientMemory(transientMemory, fence);
+            }
             MetalPerfCounters.submit(start);
             command=0L;
+            transientMemory=new MetalTransientMemory(device);
+        } else {
+            transientMemory.release();
+            transientMemory=new MetalTransientMemory(device);
         }
-        resetTransientMemory();
-    }
-
-    private void resetTransientMemory() {
-        transientMemory.release();
-        transientMemory=new MetalTransientMemory(device);
+        device.reapCompletedTransientMemory();
     }
     @Override public TransientMemory transientMemory(){return transientMemory;}
 
@@ -69,7 +77,11 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                     if(!(a.textureView() instanceof MetalTextureView view))throw new IllegalArgumentException("Foreign color attachment");
                     Object out=MetalInterop.get(colors,i); MetalInterop.set(out,"texture",view.metalTexture().handle()); MetalInterop.set(out,"mip_level",view.baseMipLevel());MetalInterop.set(out,"layer_or_depth_plane",0);
                     MetalInterop.set(out,"load_op",MetalInterop.sdl(a.clearValue().isPresent()?"SDL_GPU_LOADOP_CLEAR":"SDL_GPU_LOADOP_LOAD"));
-                    MetalInterop.set(out,"store_op",MetalInterop.sdl("SDL_GPU_STOREOP_STORE"));MetalInterop.set(out,"cycle",false);
+                    MetalInterop.set(out,"store_op",MetalInterop.sdl("SDL_GPU_STOREOP_STORE"));
+                    // SDL resource cycling is safe when the attachment is fully cleared: no prior
+                    // contents need to survive. This avoids reusing a physical render target that a
+                    // previous in-flight frame may still be presenting on legacy MacFamily1 drivers.
+                    MetalInterop.set(out,"cycle",device.cycleClearedTargets() && a.clearValue().isPresent());
                     if(a.clearValue().isPresent())setColor(MetalInterop.get(out,"clear_color"),a.clearValue().get());
                 }
             }
@@ -79,7 +91,8 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 MetalInterop.set(depth,"clear_depth",(float)a.clearValue().orElse(1.0));
                 MetalInterop.set(depth,"load_op",MetalInterop.sdl(a.clearValue().isPresent()?"SDL_GPU_LOADOP_CLEAR":"SDL_GPU_LOADOP_LOAD"));MetalInterop.set(depth,"store_op",MetalInterop.sdl("SDL_GPU_STOREOP_STORE"));
                 MetalInterop.set(depth,"stencil_load_op",MetalInterop.sdl("SDL_GPU_LOADOP_DONT_CARE"));MetalInterop.set(depth,"stencil_store_op",MetalInterop.sdl("SDL_GPU_STOREOP_DONT_CARE"));
-                MetalInterop.set(depth,"cycle",false);MetalInterop.set(depth,"clear_stencil",(byte)0);MetalInterop.set(depth,"mip_level",view.baseMipLevel());MetalInterop.set(depth,"layer",(byte)0);
+                MetalInterop.set(depth,"cycle",device.cycleClearedTargets() && a.clearValue().isPresent());
+                MetalInterop.set(depth,"clear_stencil",(byte)0);MetalInterop.set(depth,"mip_level",view.baseMipLevel());MetalInterop.set(depth,"layer",(byte)0);
             }
             // Use LWJGL's typed Java overload directly. It derives num_color_targets from
             // SDL_GPUColorTargetInfo.Buffer; passing an explicit count belongs only to the
@@ -202,7 +215,18 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         MetalPerfCounters.submit(start);
         if(fence==0L) throw new IllegalStateException("SDL_SubmitGPUCommandBufferAndAcquireFence failed: "+MetalInterop.lastSdlError());
         command=0L;
-        resetTransientMemory();
+        // The returned fence is owned by MetalFence, so it cannot also be owned by the device's
+        // retirement queue. Keep transient resources alive until this submission completes.
+        if (!transientMemory.isEmpty()) {
+            try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+                org.lwjgl.PointerBuffer fences = stack.mallocPointer(1).put(0, fence);
+                if (!SDLGPU.SDL_WaitForGPUFences(device.handle(), true, fences)) {
+                    throw new IllegalStateException("SDL_WaitForGPUFences failed while retiring transient memory: " + MetalInterop.lastSdlError());
+                }
+            }
+        }
+        transientMemory.release();
+        transientMemory=new MetalTransientMemory(device);
         return new MetalFence(device,fence);
     }
     @Override public void writeTimestamp(GpuQueryPool pool,int index){if(pool instanceof MetalQueryPool p)p.write(index);}

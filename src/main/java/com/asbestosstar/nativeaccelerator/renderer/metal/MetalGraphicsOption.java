@@ -1,8 +1,8 @@
 package com.asbestosstar.nativeaccelerator.renderer.metal;
 
+import com.asbestosstar.nativeaccelerator.mixin.client.OptionInstanceCaptionAccessor;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
-import net.minecraft.network.chat.Component;
 
 import java.util.List;
 import java.util.Map;
@@ -13,8 +13,7 @@ public final class MetalGraphicsOption {
     private static final Map<Options, OptionInstance<GraphicsApiChoice>> INSTANCES = new WeakHashMap<>();
     private static final Map<Options, Boolean> INSERTED_BY_DISPLAY_OPTIONS = new WeakHashMap<>();
 
-    private MetalGraphicsOption() {
-    }
+    private MetalGraphicsOption() {}
 
     public static synchronized OptionInstance<GraphicsApiChoice> forOptions(Options options) {
         return INSTANCES.computeIfAbsent(options, MetalGraphicsOption::create);
@@ -33,10 +32,10 @@ public final class MetalGraphicsOption {
         System.out.println("[Native Accelerator] Renderer GUI option created; initial choice="
                 + initial.getSerializedName());
 
-        return new OptionInstance<>(
+        OptionInstance<GraphicsApiChoice> result = new OptionInstance<>(
                 "nativeaccelerator.options.renderer",
-                OptionInstance.cachedConstantTooltip(Component.translatable("nativeaccelerator.options.renderer.tooltip")),
-                (caption, value) -> Options.genericValueLabel(caption, value.caption()),
+                OptionInstance.cachedConstantTooltip(GraphicsMenuText.component(options, "nativeaccelerator.options.renderer.tooltip")),
+                (caption, value) -> Options.genericValueLabel(caption, value.caption(options)),
                 new OptionInstance.Enum<>(List.of(GraphicsApiChoice.values()), GraphicsApiChoice.CODEC),
                 GraphicsApiChoice.CODEC,
                 initial,
@@ -47,5 +46,8 @@ public final class MetalGraphicsOption {
                     System.out.println("[Native Accelerator] Renderer preference changed to "
                             + value.getSerializedName() + "; restart required");
                 });
+        ((OptionInstanceCaptionAccessor)(Object)result)
+                .nativeaccelerator$setCaption(GraphicsMenuText.component(options, "nativeaccelerator.options.renderer"));
+        return result;
     }
 }

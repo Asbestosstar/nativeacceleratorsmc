@@ -1,5 +1,7 @@
 package com.asbestosstar.nativeaccelerator.renderer.metal;
 
+import com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig;
+
 import com.mojang.renderpearl.api.device.GpuBackend;
 import com.mojang.renderpearl.backend.opengl.GlBackend;
 import com.mojang.renderpearl.backend.vulkan.VulkanBackend;
@@ -92,6 +94,7 @@ public final class GraphicsBackendPreference {
         // The GUI calls Options.save() immediately afterwards; write here as well so options.txt is
         // authoritative even if a caller changes the renderer outside the normal video-options path.
         saveStoredChoice(selected);
+        NativeAcceleratorConfig.setString("renderer.backend", selected.getSerializedName());
         System.out.println("[Native Accelerator] Saved preferredGraphicsBackend=\""
                 + selected.getSerializedName() + "\" in " + OPTIONS_FILE);
     }
@@ -208,6 +211,11 @@ public final class GraphicsBackendPreference {
     }
 
     private static GraphicsApiChoice loadStoredChoice() {
+        String configured = NativeAcceleratorConfig.stringValue("renderer.backend", "inherit");
+        if (!"inherit".equalsIgnoreCase(configured)) {
+            GraphicsApiChoice configChoice = parseChoice(configured);
+            if (configChoice != null) return configChoice;
+        }
         GraphicsApiChoice optionsChoice = readOptionsChoice(OPTIONS_FILE);
         if (optionsChoice != null) return optionsChoice;
 

@@ -1,6 +1,7 @@
 package com.asbestosstar.nativeaccelerator.renderer.metal;
 
 import com.mojang.serialization.Codec;
+import net.minecraft.client.Options;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.StringRepresentable;
 
@@ -14,15 +15,15 @@ public enum GraphicsApiChoice implements StringRepresentable {
     public static final Codec<GraphicsApiChoice> CODEC = StringRepresentable.fromEnum(GraphicsApiChoice::values);
 
     private final String serializedName;
-    private final Component caption;
+    private final String captionKey;
 
-    GraphicsApiChoice(String serializedName, String translationKey) {
+    GraphicsApiChoice(String serializedName, String captionKey) {
         this.serializedName = serializedName;
-        this.caption = Component.translatable(translationKey);
+        this.captionKey = captionKey;
     }
 
-    public Component caption() {
-        return this.caption;
+    public Component caption(Options options) {
+        return GraphicsMenuText.component(options, this.captionKey);
     }
 
     @Override

@@ -66,8 +66,12 @@
     "client.FileToIdConverterProfilingMixin",
     "client.CuboidModelParseProfilingMixin",
     "client.PreferredGraphicsApiMetalCodecMixin",
+    "client.OptionInstanceCaptionAccessor",
     "client.VideoSettingsMetalOptionMixin",
-    "client.OptionsMetalRestartMixin"
+    "client.OptionsMetalRestartMixin",
+    "client.VideoSettingsUnixThemeMixin",
+    "client.VideoSettingsUnixButtonMixin",
+    "client.VideoSettingsUnixListMixin"
   ],
   "server": [
     "server.DedicatedServerAffinityMixin",
