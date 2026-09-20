@@ -1,0 +1,6 @@
+Native Accelerator fix43
+- Reverts Mac1 strict raw swapchain copy by default; SDL blit restores correct BGRA/RGBA conversion.
+- Keeps conservative swapchain wait.
+- Disables cleared-target resource cycling by default on Mac1.
+- Adds stale-source guard: if the final presented framebuffer begins the next submission with LOAD, force a black CLEAR before drawing.
+- Adds renderer.metal.mac1ForcePresentedSourceFirstClear=true and GUI toggle.

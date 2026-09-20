@@ -1,0 +1,8 @@
+Native Accelerator fix42: legacy Mac1 strict swapchain presentation diagnostic.
+- Wait for the prior swapchain on MAC1_COMPAT before acquiring the next image.
+- Use a full-frame SDL GPU copy to the exact acquired swapchain texture when dimensions match.
+- Fall back to scaled blit only when source/destination sizes differ.
+- Log frame sequence, source texture, swapchain texture, size, and presentation mode.
+Properties:
+  renderer.metal.mac1StrictSwapchainPresent=true
+  renderer.metal.mac1WaitForSwapchain=true

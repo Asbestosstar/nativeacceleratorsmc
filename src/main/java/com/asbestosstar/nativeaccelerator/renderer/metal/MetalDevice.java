@@ -36,6 +36,7 @@ final class MetalDevice implements GpuDeviceBackend {
     private final Deque<RetiredTransientMemory> retiredTransientMemory = new ArrayDeque<>();
     private final int framesInFlight;
     private final boolean mac1Compat;
+    private volatile long lastPresentedSourceHandle;
 
     MetalDevice(long handle, GpuDebugOptions debug, MetalBackend.MetalCapabilityTier capabilityTier,
                 MacMetalCapabilities.Result metal) {
@@ -100,10 +101,21 @@ final class MetalDevice implements GpuDeviceBackend {
         }
         this.framesInFlight = Math.max(1, Math.min(3, requestedFrames));
         try { SDLGPU.SDL_SetGPUAllowedFramesInFlight(handle,this.framesInFlight); } catch(Throwable ignored){}
-        System.out.println("[Native Accelerator] Metal core marker: transient-retirement-fix32; framesInFlight="
+        System.out.println("[Native Accelerator] Metal core marker: residual-gui-dynamic-texture-fix51; framesInFlight="
                 + this.framesInFlight + "; mac1Compat=" + this.mac1Compat
                 + "; transientLifetime=fenced; clearedTargetCycling=" + cycleClearedTargets()
+                + "; guiRegionalClearUpload=" + guiRegionalClearUpload()
+                + "; resetSamplersPerPipeline=" + resetSamplersPerPipeline()
+                + "; forceRenderAreaScissor=" + forceRenderAreaScissor()
+                + "; explicitViewportPerPass=" + explicitViewportPerPass()
+                + "; serializeBufferUploads=" + mac1SerializeBufferUploads()
+                + "; retainTextureTransfers=" + mac1RetainTextureTransfers()
+                + "; regionalDepthAttachmentClear=" + mac1RegionalDepthAttachmentClear()
+                + "; relaxImplicitPassScissor=" + mac1RelaxImplicitPassScissor()
+                + "; strictSwapchainPresent=" + strictSwapchainPresent()
+                + "; forcePresentedSourceFirstClear=" + forcePresentedSourceFirstClear()
                 + "; fix25Cycling=false");
+        MetalTrace.log("DEVICE_READY", "handle=" + MetalTrace.hex(handle) + " name=\"" + MetalTrace.safe(deviceName) + "\" vendor=" + vendor + " mac1=" + mac1Compat + " framesInFlight=" + framesInFlight + " traceFile=\"" + MetalTrace.safe(MetalTrace.path()) + "\"");
     }
 
     private static String vendorName(String deviceName) {
@@ -190,8 +202,73 @@ final class MetalDevice implements GpuDeviceBackend {
 
     boolean cycleClearedTargets() {
         return mac1Compat && Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1CycleClearedTargets", "true"));
+                "nativeaccelerator.renderer.metal.mac1CycleClearedTargets", "false"));
     }
+
+    boolean guiRegionalClearUpload() {
+        return Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.guiRegionalClearUpload", "true"));
+    }
+
+    boolean resetSamplersPerPipeline() {
+        return Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.resetSamplersPerPipeline", "true"));
+    }
+
+    boolean forceRenderAreaScissor() {
+        return Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.forceRenderAreaScissor", "true"));
+    }
+
+
+    boolean mac1RetainTextureTransfers() {
+        return Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.mac1RetainTextureTransfers", "true"));
+    }
+
+    boolean mac1RegionalDepthAttachmentClear() {
+        return Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.mac1RegionalDepthAttachmentClear", "true"));
+    }
+
+    boolean mac1RelaxImplicitPassScissor() {
+        return Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.mac1RelaxImplicitPassScissor", "true"));
+    }
+    boolean explicitViewportPerPass() {
+        return Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.explicitViewportPerPass", "true"));
+    }
+
+    /**
+     * Diagnostic/safety path for legacy MacFamily1 drivers. SDL_UploadToGPUBuffer with cycle=false
+     * writes the existing backing allocation. If that allocation is still referenced by an earlier
+     * command buffer, old NVIDIA/OCLP Metal drivers can display torn or stale GUI geometry.
+     * Serializing only before dirty-buffer uploads preserves partial-buffer contents while proving
+     * or disproving that hazard without changing the higher-level RenderPearl buffer model.
+     */
+    boolean mac1SerializeBufferUploads() {
+        return mac1Compat && Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.mac1SerializeBufferUploads", "true"));
+    }
+
+    boolean strictSwapchainPresent() {
+        return mac1Compat && Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.mac1StrictSwapchainPresent", "false"));
+    }
+
+    boolean waitForSwapchainBeforeAcquire() {
+        return mac1Compat && Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.mac1WaitForSwapchain", "true"));
+    }
+
+    boolean forcePresentedSourceFirstClear() {
+        return mac1Compat && Boolean.parseBoolean(System.getProperty(
+                "nativeaccelerator.renderer.metal.mac1ForcePresentedSourceFirstClear", "true"));
+    }
+
+    long lastPresentedSourceHandle() { return lastPresentedSourceHandle; }
+    void notePresentedSourceHandle(long handle) { lastPresentedSourceHandle = handle; }
 
     boolean nativeIndirectDrawSupported() { return runtime.nativeIndirectEnabled(); }
     void blacklistNativeIndirect(Throwable failure) { runtime.blacklistNativeIndirect(failure); }
@@ -216,6 +293,12 @@ final class MetalDevice implements GpuDeviceBackend {
      */
     void flushDirtyBuffers(long commandBuffer) {
         if (dirtyBuffers.isEmpty()) return;
+        MetalTrace.log("BUFFER_FLUSH_BEGIN", "cmd=" + MetalTrace.hex(commandBuffer) + " dirtyCount=" + dirtyBuffers.size() + " serialize=" + mac1SerializeBufferUploads());
+        if (mac1SerializeBufferUploads()) {
+            // Conservative Mac1 diagnostic: do not overwrite a GPU buffer allocation until all
+            // previously submitted work is finished reading it. This is intentionally expensive.
+            SDLGPU.SDL_WaitForGPUIdle(handle());
+        }
         long perfStart=MetalPerfCounters.tic();
         int perfBuffers=0;
         long perfBytes=0L;
@@ -230,6 +313,7 @@ final class MetalDevice implements GpuDeviceBackend {
                     continue;
                 }
                 uploads.add(new MetalTransfers.BufferUpload(buffer.handle(), range.offset(), range.bytes()));
+                MetalTrace.log("BUFFER_UPLOAD", "buffer=" + MetalTrace.hex(buffer.handle()) + " offset=" + range.offset() + " bytes=" + range.bytes().remaining());
                 perfBuffers++;
                 perfBytes += range.bytes().remaining();
                 if (!buffer.hasDirtyRange()) dirtyBuffers.remove(buffer);
@@ -238,6 +322,7 @@ final class MetalDevice implements GpuDeviceBackend {
         } finally {
             SDLGPU.SDL_EndGPUCopyPass(copyPass);
             MetalPerfCounters.dirtyFlush(perfBuffers,perfBytes,perfStart);
+            MetalTrace.log("BUFFER_FLUSH_END", "cmd=" + MetalTrace.hex(commandBuffer) + " buffers=" + perfBuffers + " bytes=" + perfBytes);
         }
     }
     long handle(){if(closed.get())throw new IllegalStateException("Metal device is closed");return handle;}
@@ -252,15 +337,15 @@ final class MetalDevice implements GpuDeviceBackend {
             return new MetalSampler(this,u,v,min,mag,1,maxLod);
         }
     }
-    @Override public GpuTexture createTexture(@Nullable String label,int usage,GpuFormat format,int width,int height,int depthOrLayers,int mipLevels){return new MetalGpuTexture(this,label,usage,format,width,height,depthOrLayers,mipLevels);}
+    @Override public GpuTexture createTexture(@Nullable String label,int usage,GpuFormat format,int width,int height,int depthOrLayers,int mipLevels){MetalGpuTexture t=new MetalGpuTexture(this,label,usage,format,width,height,depthOrLayers,mipLevels);MetalTrace.log("TEXTURE_CREATE", "label=\"" + MetalTrace.safe(label) + "\" handle=" + MetalTrace.hex(t.handle()) + " usage=" + usage + " format=" + format + " size=" + width + "x" + height + " layers=" + depthOrLayers + " mips=" + mipLevels);return t;}
     @Override public GpuTextureView createTextureView(GpuTexture texture,int baseMip,int mipLevels){return new MetalTextureView(texture,baseMip,mipLevels);}
-    @Override public GpuBuffer createBuffer(@Nullable Supplier<String> label,int usage,long size){MetalGpuBuffer b=new MetalGpuBuffer(this,usage,size);nameBuffer(label,b);return b;}
-    @Override public GpuBuffer createBuffer(@Nullable Supplier<String> label,int usage,ByteBuffer data){MetalGpuBuffer b=new MetalGpuBuffer(this,usage,data);nameBuffer(label,b);return b;}
+    @Override public GpuBuffer createBuffer(@Nullable Supplier<String> label,int usage,long size){MetalGpuBuffer b=new MetalGpuBuffer(this,usage,size);nameBuffer(label,b);MetalTrace.log("BUFFER_CREATE", "handle=" + MetalTrace.hex(b.handle()) + " usage=" + usage + " size=" + size);return b;}
+    @Override public GpuBuffer createBuffer(@Nullable Supplier<String> label,int usage,ByteBuffer data){MetalGpuBuffer b=new MetalGpuBuffer(this,usage,data);nameBuffer(label,b);MetalTrace.log("BUFFER_CREATE_DATA", "handle=" + MetalTrace.hex(b.handle()) + " usage=" + usage + " bytes=" + data.remaining());return b;}
     private void nameBuffer(@Nullable Supplier<String> label,MetalGpuBuffer b){if(label==null)return;try{String name=label.get();if(name!=null&&!name.isBlank())MetalInterop.sdlCall("SDL_SetGPUBufferName",handle(),b.handle(),name);}catch(Throwable ignored){}}
     @Override public List<String> getLastDebugMessages(){synchronized(messages){return List.copyOf(messages);}}
     @Override public boolean isDebuggingEnabled(){return debug.logLevel()>0||debug.useLabels()||debug.useValidationLayers();}
     @Override public BackendRenderPipeline.Pending compilePipeline(BackendRenderPipeline.CreateInfo createInfo){
-        return ()->{try{return new MetalRenderPipeline(this,createInfo);}catch(Throwable t){messages.add("Metal pipeline '"+createInfo.name()+"' failed: "+t);return null;}};
+        return ()->{try{return new MetalRenderPipeline(this,createInfo);}catch(Throwable t){MetalTrace.logError("PIPELINE_COMPILE_FAIL name=\""+MetalTrace.safe(createInfo.name())+"\"",t);messages.add("Metal pipeline '"+createInfo.name()+"' failed: "+t);return null;}};
     }
     @Override public GpuQueryPool createTimestampQueryPool(int size){return new MetalQueryPool(size);}
     @Override public long getTimestampCalibrationOffset(){return 0L;}

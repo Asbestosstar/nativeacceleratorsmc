@@ -23,6 +23,7 @@ final class MetalTransfers {
      */
     static void encodeUploadBuffersInPass(long device, long copyPass, java.util.List<BufferUpload> uploads) {
         if (uploads.isEmpty()) return;
+        MetalTrace.log("TRANSFER_BUFFER_BATCH_BEGIN", "device=" + MetalTrace.hex(device) + " copyPass=" + MetalTrace.hex(copyPass) + " uploads=" + uploads.size());
         final int alignment = 16;
         int total = 0;
         int[] offsets = new int[uploads.size()];
@@ -64,6 +65,7 @@ final class MetalTransfers {
                     MetalInterop.set(dst, "buffer", upload.destination());
                     MetalInterop.set(dst, "offset", upload.destinationOffset());
                     MetalInterop.set(dst, "size", size);
+                    MetalTrace.log("TRANSFER_BUFFER_UPLOAD", "copyPass=" + MetalTrace.hex(copyPass) + " transfer=" + MetalTrace.hex(transfer) + " dst=" + MetalTrace.hex(upload.destination()) + " dstOffset=" + upload.destinationOffset() + " bytes=" + size + " cycle=false");
                     MetalInterop.sdlCall("SDL_UploadToGPUBuffer", copyPass, src, dst, false);
                 } finally {
                     MetalInterop.free(dst);
@@ -283,11 +285,11 @@ final class MetalTransfers {
     }
 
     /** Encode one texture upload on the caller's command buffer without an intermediate submit. */
-    static void encodeUploadTexture(long device, long command, MetalGpuTexture texture, ByteBuffer source,
-                                    int mipLevel, int layer, int x, int y, int width, int height) {
+    static long encodeUploadTexture(long device, long command, MetalGpuTexture texture, ByteBuffer source,
+                                    int mipLevel, int layer, int x, int y, int width, int height, boolean retainTransfer) {
         ByteBuffer bytes = source.duplicate();
         int size = bytes.remaining();
-        if (size == 0) return;
+        if (size == 0) return 0L;
         Object create = null, src = null, dst = null;
         long transfer = 0L, copy = 0L;
         try {
@@ -320,11 +322,23 @@ final class MetalTransfers {
             MetalInterop.sdlCall("SDL_UploadToGPUTexture", copy, src, dst, false);
             MetalInterop.sdlCall("SDL_EndGPUCopyPass", copy);
             copy = 0L;
+            if (retainTransfer) {
+                long retained = transfer;
+                transfer = 0L;
+                MetalTrace.log("TEXTURE_TRANSFER_RETAIN", "transfer=" + MetalTrace.hex(retained)
+                        + " texture=" + MetalTrace.hex(texture.handle()) + " rect=" + x + "," + y + "," + width + "x" + height);
+                return retained;
+            }
+            return 0L;
         } finally {
             if (copy != 0L) safe("SDL_EndGPUCopyPass", copy);
             if (transfer != 0L) safe("SDL_ReleaseGPUTransferBuffer", device, transfer);
             MetalInterop.free(dst); MetalInterop.free(src); MetalInterop.free(create);
         }
+    }
+
+    static void releaseTransferBuffer(long device, long transfer) {
+        if (transfer != 0L) safe("SDL_ReleaseGPUTransferBuffer", device, transfer);
     }
 
     static void encodeCopyBuffer(long command, MetalGpuBuffer source, long sourceOffset,
@@ -340,6 +354,34 @@ final class MetalTransfers {
             MetalInterop.set(src, "buffer", source.handle()); MetalInterop.set(src, "offset", sourceOffset);
             MetalInterop.set(dst, "buffer", destination.handle()); MetalInterop.set(dst, "offset", destinationOffset);
             MetalInterop.sdlCall("SDL_CopyGPUBufferToBuffer", copy, src, dst, (int)size, false);
+            MetalInterop.sdlCall("SDL_EndGPUCopyPass", copy); copy = 0L;
+        } finally {
+            if (copy != 0L) safe("SDL_EndGPUCopyPass", copy);
+            MetalInterop.free(dst); MetalInterop.free(src);
+        }
+    }
+
+    /** Strict full-frame copy used by the legacy Mac1 presentation path. The destination is the
+     * swapchain texture returned by SDL for the current command buffer, so it is intentionally
+     * passed as a raw SDL texture handle rather than wrapped as a persistent MetalGpuTexture. */
+    static void encodeCopyTextureToRawHandle(long command, MetalGpuTexture source, int sourceMip,
+                                             long destinationTexture, int width, int height) {
+        if (destinationTexture == 0L) throw new IllegalArgumentException("destinationTexture");
+        long copy = 0L; Object src = null, dst = null;
+        try {
+            copy = MetalInterop.sdlLong("SDL_BeginGPUCopyPass", command);
+            require(copy, "begin strict swapchain copy pass");
+            src = MetalInterop.calloc("SDL_GPUTextureLocation");
+            dst = MetalInterop.calloc("SDL_GPUTextureLocation");
+            MetalInterop.set(src, "texture", source.handle());
+            MetalInterop.set(src, "mip_level", sourceMip);
+            MetalInterop.set(src, "layer", 0); MetalInterop.set(src, "x", 0); MetalInterop.set(src, "y", 0); MetalInterop.set(src, "z", 0);
+            MetalInterop.set(dst, "texture", destinationTexture);
+            MetalInterop.set(dst, "mip_level", 0);
+            MetalInterop.set(dst, "layer", 0); MetalInterop.set(dst, "x", 0); MetalInterop.set(dst, "y", 0); MetalInterop.set(dst, "z", 0);
+            // Do not request SDL resource cycling here: this exact texture was acquired from the
+            // swapchain for this command buffer and must be the image that gets presented.
+            MetalInterop.sdlCall("SDL_CopyGPUTextureToTexture", copy, src, dst, width, height, 1, false);
             MetalInterop.sdlCall("SDL_EndGPUCopyPass", copy); copy = 0L;
         } finally {
             if (copy != 0L) safe("SDL_EndGPUCopyPass", copy);
@@ -370,7 +412,12 @@ final class MetalTransfers {
     }
 
     static void submit(long command) {
-        if (!SDLGPU.SDL_SubmitGPUCommandBuffer(command)) {
+        long start = System.nanoTime();
+        MetalTrace.log("RAW_SUBMIT_BEGIN", "cmd=" + MetalTrace.hex(command));
+        boolean ok = SDLGPU.SDL_SubmitGPUCommandBuffer(command);
+        long ns = System.nanoTime() - start;
+        MetalTrace.log("RAW_SUBMIT_END", "cmd=" + MetalTrace.hex(command) + " ok=" + ok + " ns=" + ns + (ok ? "" : " error=\"" + MetalTrace.safe(MetalInterop.lastSdlError()) + "\""));
+        if (!ok) {
             throw new IllegalStateException("SDL_SubmitGPUCommandBuffer failed: " + MetalInterop.lastSdlError());
         }
     }

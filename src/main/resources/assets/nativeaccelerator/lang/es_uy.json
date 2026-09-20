@@ -32,5 +32,16 @@
   "nativeaccelerator.menu.preferences": "Preferencias",
   "nativeaccelerator.menu.native": "Native Accelerator",
   "nativeaccelerator.options.mac1Frames": "Fotogramas Mac1 en vuelo",
-  "nativeaccelerator.options.mac1CycleClearedTargets": "Ciclo seguro de destinos Mac1"
+  "nativeaccelerator.options.mac1CycleClearedTargets": "Ciclo seguro de destinos Mac1",
+  "nativeaccelerator.options.guiRegionalClearUpload": "Carga de limpieza regional GUI",
+  "nativeaccelerator.options.resetSamplersPerPipeline": "Reiniciar samplers por pipeline",
+  "nativeaccelerator.options.forceRenderAreaScissor": "Forzar tijera del área de render",
+  "nativeaccelerator.options.mac1StrictSwapchainPresent": "Presentación estricta Mac1",
+  "nativeaccelerator.options.mac1WaitForSwapchain": "Esperar swapchain Mac1 antes de adquirir",
+  "nativeaccelerator.options.mac1ForcePresentedSourceFirstClear": "Limpiar destino presentado obsoleto Mac1",
+  "nativeaccelerator.options.explicitViewportPerPass": "Restablecer viewport por pase",
+  "nativeaccelerator.options.mac1SerializeBufferUploads": "Serializar cargas de búfer Mac1",
+  "nativeaccelerator.options.mac1RetainTextureTransfers": "Retener cargas de textura Mac1",
+  "nativeaccelerator.options.mac1RegionalDepthAttachmentClear": "Limpieza segura de profundidad del atlas Mac1",
+  "nativeaccelerator.options.mac1RelaxImplicitPassScissor": "Relajar tijera de pase Mac1"
 }

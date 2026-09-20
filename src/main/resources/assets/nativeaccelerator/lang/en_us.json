@@ -32,5 +32,16 @@
   "nativeaccelerator.menu.preferences": "Preferences",
   "nativeaccelerator.menu.native": "Native Accelerator",
   "nativeaccelerator.options.mac1Frames": "Mac1 frames in flight",
-  "nativeaccelerator.options.mac1CycleClearedTargets": "Mac1 safe target cycling"
+  "nativeaccelerator.options.mac1CycleClearedTargets": "Mac1 safe target cycling",
+  "nativeaccelerator.options.guiRegionalClearUpload": "GUI regional clear upload",
+  "nativeaccelerator.options.resetSamplersPerPipeline": "Reset samplers per pipeline",
+  "nativeaccelerator.options.forceRenderAreaScissor": "Force render-area scissor",
+  "nativeaccelerator.options.mac1StrictSwapchainPresent": "Mac1 strict swapchain present",
+  "nativeaccelerator.options.mac1WaitForSwapchain": "Mac1 wait before swapchain acquire",
+  "nativeaccelerator.options.mac1ForcePresentedSourceFirstClear": "Mac1 clear stale presented target",
+  "nativeaccelerator.options.explicitViewportPerPass": "Reset viewport each pass",
+  "nativeaccelerator.options.mac1SerializeBufferUploads": "Mac1 serialize buffer uploads",
+  "nativeaccelerator.options.mac1RetainTextureTransfers": "Retain Mac1 texture uploads",
+  "nativeaccelerator.options.mac1RegionalDepthAttachmentClear": "Safe Mac1 item-atlas depth clear",
+  "nativeaccelerator.options.mac1RelaxImplicitPassScissor": "Relax Mac1 pass scissor"
 }

@@ -16,7 +16,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 final class MetalRenderPipeline implements BackendRenderPipeline {
     private final MetalDevice device;
-    private final long handle;
+    private final String name;
+    private final long withDepthHandle;
+    private final long withoutDepthHandle;
     private final MetalSpirvCompiler.StageLayout vertexLayout;
     private final MetalSpirvCompiler.StageLayout fragmentLayout;
     private final int uniformCount;
@@ -27,6 +29,8 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
     MetalRenderPipeline(MetalDevice device, CreateInfo info) throws Exception {
         long perfCompileStart = MetalPerfCounters.tic();
         this.device = device;
+        this.name = String.valueOf(info.name());
+        MetalTrace.log("PIPELINE_COMPILE_BEGIN", "name=\"" + MetalTrace.safe(this.name) + "\" topology=" + info.primitiveTopology() + " depthState=" + (info.depthStencilState()!=null) + " colors=" + info.colorTargetStates().size() + " uniforms=" + info.uniforms().size() + " pushBytes=" + info.pushConstantsSize());
         this.uniformCount = info.uniforms().size();
         this.pushConstantSize = info.pushConstantsSize();
         this.triangleFan = info.primitiveTopology() == PrimitiveTopology.TRIANGLE_FAN;
@@ -113,6 +117,7 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
                 }
                 MetalInterop.set(out, "format", MetalConversions.textureFormat(target.format()));
                 Object blend = MetalInterop.get(out, "blend_state");
+                MetalTrace.log("PIPELINE_COLOR_TARGET", "name=\"" + MetalTrace.safe(name) + "\" slot=" + i + " format=" + target.format() + " writeMask=" + target.writeMask() + " blend=" + (target.blendFunction().isPresent() ? MetalTrace.safe(target.blendFunction().get()) : "disabled"));
                 MetalInterop.set(blend, "color_write_mask", target.writeMask());
                 MetalInterop.set(blend, "enable_color_write_mask", target.writeMask() != 15);
                 if (target.blendFunction().isPresent()) applyBlend(blend, target.blendFunction().get());
@@ -120,17 +125,35 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
             }
             MetalInterop.set(targetInfo, "color_target_descriptions", colorTargets);
             MetalInterop.set(targetInfo, "num_color_targets", targets.size());
-            MetalInterop.set(targetInfo, "has_depth_stencil_target", depth != null);
-            if (depth != null) MetalInterop.set(targetInfo, "depth_stencil_format", MetalConversions.textureFormat(GpuFormat.D32_FLOAT));
+            // RenderPearl/Vulkan compiles depth-attachment and no-depth-attachment variants for
+            // pipelines whose own depth state is disabled.  The attachment signature is part of
+            // the graphics pipeline compatibility contract even when depth testing itself is off.
+            // In-world GUI passes can retain the world depth attachment, while title/menu passes
+            // commonly have no depth target.  Compile both forms so Metal matches Vulkan exactly.
+            MetalInterop.set(targetInfo, "has_depth_stencil_target", true);
+            MetalInterop.set(targetInfo, "depth_stencil_format", MetalConversions.textureFormat(GpuFormat.D32_FLOAT));
+            long withDepth = MetalInterop.sdlLong("SDL_CreateGPUGraphicsPipeline", device.handle(), pipelineInfo);
+            if (withDepth == 0L) throw new IllegalStateException("SDL_CreateGPUGraphicsPipeline(with-depth) failed for " + info.name() + ": " + MetalInterop.lastSdlError());
 
-            this.handle = MetalInterop.sdlLong("SDL_CreateGPUGraphicsPipeline", device.handle(), pipelineInfo);
-            if (handle == 0L) throw new IllegalStateException("SDL_CreateGPUGraphicsPipeline failed for " + info.name() + ": " + MetalInterop.lastSdlError());
+            long withoutDepth = 0L;
+            if (depth == null) {
+                MetalInterop.set(targetInfo, "has_depth_stencil_target", false);
+                // SDL ignores depth_stencil_format when has_depth_stencil_target is false.
+                withoutDepth = MetalInterop.sdlLong("SDL_CreateGPUGraphicsPipeline", device.handle(), pipelineInfo);
+                if (withoutDepth == 0L) {
+                    try { MetalInterop.sdlCall("SDL_ReleaseGPUGraphicsPipeline", device.handle(), withDepth); } catch (Throwable ignored) {}
+                    throw new IllegalStateException("SDL_CreateGPUGraphicsPipeline(no-depth) failed for " + info.name() + ": " + MetalInterop.lastSdlError());
+                }
+            }
+            this.withDepthHandle = withDepth;
+            this.withoutDepthHandle = withoutDepth;
         } finally {
             if (vertexShader != 0L) try { MetalInterop.sdlCall("SDL_ReleaseGPUShader", device.handle(), vertexShader); } catch(Throwable ignored){}
             if (fragmentShader != 0L) try { MetalInterop.sdlCall("SDL_ReleaseGPUShader", device.handle(), fragmentShader); } catch(Throwable ignored){}
             MetalInterop.free(colorTargets); MetalInterop.free(attrs); MetalInterop.free(vbs); MetalInterop.free(pipelineInfo);
         }
         MetalPerfCounters.pipelineCompile(perfCompileStart);
+        MetalTrace.log("PIPELINE_COMPILE_END", "name=\"" + MetalTrace.safe(name) + "\" withDepth=" + MetalTrace.hex(withDepthHandle) + " withoutDepth=" + MetalTrace.hex(withoutDepthHandle) + " vsSamplers=" + vertexLayout.samplerCount() + " fsSamplers=" + fragmentLayout.samplerCount());
     }
 
     private long createShader(MetalSpirvCompiler.Compiled shader, boolean vertex) {
@@ -179,12 +202,24 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
     }
 
     @SuppressWarnings({"unchecked","rawtypes"}) private static List<ColorTargetState> castTargets(List input) { return (List<ColorTargetState>)input; }
-    long handle(){ if(closed.get())throw new IllegalStateException("Pipeline closed"); return handle; }
+    long handle(boolean passHasDepth) {
+        if (closed.get()) throw new IllegalStateException("Pipeline closed");
+        if (passHasDepth) return withDepthHandle;
+        if (withoutDepthHandle != 0L) return withoutDepthHandle;
+        throw new IllegalStateException("Pipeline requires a depth attachment but current Metal render pass has none");
+    }
+    String name(){ return name; }
     MetalSpirvCompiler.StageLayout vertexLayout(){ return vertexLayout; }
     MetalSpirvCompiler.StageLayout fragmentLayout(){ return fragmentLayout; }
     int uniformCount(){ return uniformCount; }
     int pushConstantSize(){ return pushConstantSize; }
     @Override public boolean isClosed(){ return closed.get(); }
     boolean triangleFan(){return triangleFan;}
-    @Override public void close(){ if(closed.compareAndSet(false,true)) MetalInterop.sdlCall("SDL_ReleaseGPUGraphicsPipeline",device.handle(),handle); }
+    @Override public void close() {
+        if (!closed.compareAndSet(false, true)) return;
+        MetalTrace.log("PIPELINE_CLOSE", "name=\"" + MetalTrace.safe(name) + "\" withDepth=" + MetalTrace.hex(withDepthHandle) + " withoutDepth=" + MetalTrace.hex(withoutDepthHandle));
+        if (withDepthHandle != 0L) MetalInterop.sdlCall("SDL_ReleaseGPUGraphicsPipeline", device.handle(), withDepthHandle);
+        if (withoutDepthHandle != 0L && withoutDepthHandle != withDepthHandle)
+            MetalInterop.sdlCall("SDL_ReleaseGPUGraphicsPipeline", device.handle(), withoutDepthHandle);
+    }
 }

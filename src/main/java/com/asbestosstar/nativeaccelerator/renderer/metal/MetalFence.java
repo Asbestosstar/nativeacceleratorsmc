@@ -8,16 +8,28 @@ import org.lwjgl.system.MemoryStack;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
-/** Real SDL GPU fence. Unlike the old implementation this does not idle the entire GPU. */
+/** Metal fence. Mac1 can use Vulkan-style logical-submit fences; other paths retain native SDL fences. */
 final class MetalFence implements GpuFence {
     private final MetalDevice device;
+    private final MetalCommandEncoder logicalEncoder;
+    private final long logicalSubmitIndex;
     private final AtomicBoolean closed = new AtomicBoolean();
     private long handle;
     private volatile boolean complete;
 
+    MetalFence(MetalCommandEncoder encoder, long submitIndex) {
+        this.device = encoder.device();
+        this.logicalEncoder = encoder;
+        this.logicalSubmitIndex = submitIndex;
+        this.handle = 0L;
+        MetalPerfCounters.fenceCreate();
+    }
+
     MetalFence(MetalDevice device, long handle) {
         if (handle == 0L) throw new IllegalArgumentException("fence handle");
         this.device = device;
+        this.logicalEncoder = null;
+        this.logicalSubmitIndex = 0L;
         this.handle = handle;
         MetalPerfCounters.fenceCreate();
     }
@@ -25,6 +37,11 @@ final class MetalFence implements GpuFence {
     @Override
     public boolean awaitCompletion(long timeoutNs) {
         if (closed.get() || complete) return true;
+        if (logicalEncoder != null) {
+            complete = logicalEncoder.awaitLogicalFence(logicalSubmitIndex, timeoutNs);
+            return complete;
+        }
+
         MetalPerfCounters.fenceQuery();
         if (SDLGPU.SDL_QueryGPUFence(device.handle(), handle)) {
             complete = true;

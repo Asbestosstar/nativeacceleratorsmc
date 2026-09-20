@@ -53,7 +53,23 @@ public final class GraphicsTuningOptions {
                 booleanOption(options, "nativeaccelerator.options.metalYFlip", "renderer.metal.generatedTextureYFlip", true));
         list.addSmall(
                 intOption(options, "nativeaccelerator.options.mac1Frames", "renderer.metal.mac1FramesInFlight", 1, 1, 3),
-                booleanOption(options, "nativeaccelerator.options.mac1CycleClearedTargets", "renderer.metal.mac1CycleClearedTargets", true));
+                booleanOption(options, "nativeaccelerator.options.mac1CycleClearedTargets", "renderer.metal.mac1CycleClearedTargets", false));
+        list.addSmall(
+                booleanOption(options, "nativeaccelerator.options.guiRegionalClearUpload", "renderer.metal.guiRegionalClearUpload", true),
+                booleanOption(options, "nativeaccelerator.options.resetSamplersPerPipeline", "renderer.metal.resetSamplersPerPipeline", true));
+        list.addSmall(
+                booleanOption(options, "nativeaccelerator.options.forceRenderAreaScissor", "renderer.metal.forceRenderAreaScissor", true),
+                booleanOption(options, "nativeaccelerator.options.explicitViewportPerPass", "renderer.metal.explicitViewportPerPass", true));
+        list.addSmall(
+                booleanOption(options, "nativeaccelerator.options.mac1StrictSwapchainPresent", "renderer.metal.mac1StrictSwapchainPresent", false),
+                booleanOption(options, "nativeaccelerator.options.mac1WaitForSwapchain", "renderer.metal.mac1WaitForSwapchain", true));
+        list.addSmall(
+                booleanOption(options, "nativeaccelerator.options.mac1ForcePresentedSourceFirstClear", "renderer.metal.mac1ForcePresentedSourceFirstClear", true),
+                booleanOption(options, "nativeaccelerator.options.mac1SerializeBufferUploads", "renderer.metal.mac1SerializeBufferUploads", true));
+        list.addSmall(
+                booleanOption(options, "nativeaccelerator.options.mac1RetainTextureTransfers", "renderer.metal.mac1RetainTextureTransfers", true),
+                booleanOption(options, "nativeaccelerator.options.mac1RegionalDepthAttachmentClear", "renderer.metal.mac1RegionalDepthAttachmentClear", true));
+        list.addBig(booleanOption(options, "nativeaccelerator.options.mac1RelaxImplicitPassScissor", "renderer.metal.mac1RelaxImplicitPassScissor", true));
     }
 
     private static OptionInstance<Boolean> booleanOption(Options options, String caption, String key, boolean fallback) {
