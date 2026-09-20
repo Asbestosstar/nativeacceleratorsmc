@@ -66,6 +66,7 @@ public abstract class MinecraftStartupMixin {
         StartupTimer.mark(StartupStages.CLIENT_TITLE_SCREEN);
         StartupTimer.finish("client load finished (first screen shown)");
         DeferredCacheWriter.startupComplete();
+        GraphicsBackendPreference.startupComplete();
     }
     /**
      * Replace only the backend-list lookup during client construction. This makes Metal selection
@@ -82,8 +83,9 @@ public abstract class MinecraftStartupMixin {
 
     /**
      * Minecraft's vanilla DEFAULT branch performs a separate Vulkan availability probe even before
-     * backend creation.  Metal is mirrored as DEFAULT in options.txt for fail-open compatibility, so
-     * suppress that probe when Native Accelerator explicitly selected Metal or OpenGL.
+     * backend creation. Metal is represented as DEFAULT only inside Mojang's three-value Java enum;
+     * options.txt itself stores "metal" through our extended codec. Suppress the Vulkan probe whenever
+     * Native Accelerator explicitly selected Metal or OpenGL.
      */
     @Redirect(
             method = "<init>(Lnet/minecraft/client/main/GameConfig;)V",
@@ -113,6 +115,7 @@ public abstract class MinecraftStartupMixin {
     private GpuDevice nativeaccelerator$createGraphicsDevice(GpuBackend backend, GpuDebugOptions options)
             throws BackendCreationException {
         GpuDevice device = backend.createDevice(options);
+        GraphicsBackendPreference.backendCreated(backend);
         RendererBackendRuntime.backendCreated(backend);
         return device;
     }

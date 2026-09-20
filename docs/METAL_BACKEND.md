@@ -57,13 +57,14 @@ The current integration does not alter the enum at all:
    `VideoSettingsScreen.displayOptions()`.
 2. `MetalGraphicsOption` supplies a normal `OptionInstance<GraphicsApiChoice>` containing Default,
    OpenGL, Vulkan, and Metal.
-3. Metal is persisted in `etc/nativeaccelerator-graphics-api.txt`; the vanilla `options.txt` mirrors
-   Metal as Default, so removing the mod leaves a safe vanilla configuration.
+3. Minecraft's ordinary `options.txt` is authoritative. The same key now round-trips four values:
+   `preferredGraphicsBackend:"default"`, `"opengl"`, `"vulkan"`, or `"metal"`. The old
+   `etc/nativeaccelerator-graphics-api.txt` file is migration-only when the standard option is absent.
 4. `MinecraftStartupMixin` redirects the constructor's call to
-   `PreferredGraphicsApi.getBackendsToTry()`. When the Native Accelerator preference is Metal and
-   vanilla selection is Default, it returns Metal first and OpenGL second.
-5. A forced/crash-recovery OpenGL or Vulkan selection is not overridden, preserving Minecraft's
-   recovery path.
+   `PreferredGraphicsApi.getBackendsToTry()`. When `options.txt` selects Metal it returns Metal first
+   and OpenGL second without touching Vulkan.
+5. Metal crash-loop recovery is owned by Native Accelerator so a prior vanilla OpenGL value cannot
+   silently become a permanent override of an explicit Metal selection.
 6. `OptionsMetalRestartMixin` extends the ordinary restart-required warning to include a changed
    Native Accelerator graphics preference.
 
@@ -76,3 +77,35 @@ The diagnostic Metal build exposes low-overhead per-frame counters. See
 `METAL_PERFORMANCE_BUILD_FIX11_2026-09-19.txt`. The most important correctness/performance rule is that
 RenderPearl fences must map to asynchronous SDL GPU fences; they must never call `SDL_WaitForGPUIdle` on
 creation, because Minecraft rotates fenced ring buffers continuously.
+
+
+## Runtime capability verification and patched/spoofed macOS stacks (buildfix16 + buildfix17)
+
+Metal feature policy is driven by the actual `MTLDevice`, never by SMBIOS/model allow-lists. This is
+important for real Intel Macs, Apple Silicon, OCLP/legacy graphics stacks, Hackintoshes, dual-GPU Macs,
+and eGPU configurations.
+
+Before SDL creates its GPU device, `MacMetalCapabilities` queries both `supportsFamily:` and the
+non-destructive `supportsFeatureSet:MTLFeatureSet_macOS_GPUFamily2_v1` capability bit documented for
+macOS graphics ICB support. It never creates an ICB merely to test support: on legacy hardware Apple's
+validation layer may turn that unsupported-resource attempt into a process abort rather than a recoverable
+failure. Native ICB drawing requires the Mac2 feature-set result plus matching Mac2/Apple7+ family evidence.
+
+macOS NVIDIA devices are a deliberate exception to advertised-family trust. Any `MTLDevice` name identifying
+NVIDIA, GeForce, or Quadro is hard-capped to `MAC1_COMPAT`, even if an OCLP/legacy stack reports Mac2,
+Metal3/4, or newer family bits. For that tier Metal validation stays off by default and indirect commands are
+CPU-decoded into direct SDL draws. After SDL device creation the SDL-reported GPU is also compared with the
+preflight device; a dual-GPU/eGPU mismatch disables native indirect because the preflight query covered a
+different GPU. Mac model and macOS version are diagnostic strings only.
+
+After SDL device creation, `MetalRuntimeCapabilities` verifies the portable facilities this backend actually
+requires: graphics storage buffers, 2D texture arrays, command submission/fences, and sampler anisotropy.
+Failure of a required facility aborts Metal initialization so Minecraft can use the existing OpenGL fallback.
+Optional native indirect rendering and anisotropy are one-run blacklisted if they fail at use time.
+
+RenderPearl still sees logical indirect-draw support on every otherwise-usable Metal device. When native
+Metal/SDL indirect drawing is unsafe or unavailable (notably MacFamily1), Native Accelerator decodes the
+standard 16-byte draw / 20-byte indexed-draw argument structures from the buffer's CPU shadow and emits
+semantically equivalent direct SDL draws. This deliberately keeps Minecraft on its instanced
+`prepareChunkRendersIndirect` terrain preparation path without creating a graphics ICB on legacy hardware.
+Use `-Dnativeaccelerator.renderer.metal.forceCpuIndirect=true` to force this compatibility path for testing.

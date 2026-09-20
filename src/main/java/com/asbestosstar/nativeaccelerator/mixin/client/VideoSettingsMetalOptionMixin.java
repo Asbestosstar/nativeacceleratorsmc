@@ -19,9 +19,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * Exposes Native Accelerator's renderer selector in Minecraft's Graphics screen.
  *
  * <p>Minecraft 26.3 hard-codes its built-in graphics selector to the three-value
- * {@code PreferredGraphicsApi} enum. Metal therefore cannot be represented by mutating the vanilla
- * option value alone. This mixin deliberately owns a separate four-value renderer option and inserts
- * it directly into the Display section.</p>
+ * {@code PreferredGraphicsApi} enum. This mixin owns the four-value GUI selector, while
+ * {@code PreferredGraphicsApiMetalCodecMixin} makes the ordinary Minecraft options.txt entry persist
+ * the fourth serialized value "metal".</p>
  *
  * <p>The {@link #nativeaccelerator$insertRendererSelector(CallbackInfo)} injection is the primary
  * path. It adds a full-width row immediately before Minecraft adds the normal small Display-option

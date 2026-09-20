@@ -11,6 +11,8 @@ import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
 import com.mojang.renderpearl.backend.api.RenderPassBackend;
 import org.joml.Vector4fc;
 import org.lwjgl.sdl.SDLGPU;
+import org.lwjgl.sdl.SDL_GPUColorTargetInfo;
+import org.lwjgl.sdl.SDL_GPUDepthStencilTargetInfo;
 
 import java.nio.ByteBuffer;
 
@@ -51,11 +53,12 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         // Upload all mapped vertex/index/storage/indirect buffers once, immediately before the frame's
         // render work. This replaces the old one-submit-per-map behavior.
         device.flushDirtyBuffers(commandHandle());
-        Object colors=null,depth=null;
+        SDL_GPUColorTargetInfo.Buffer colors=null;
+        SDL_GPUDepthStencilTargetInfo depth=null;
         try {
             int count=d.colorAttachments().size();
             if(count>0){
-                colors=MetalInterop.calloc("SDL_GPUColorTargetInfo",count);
+                colors=(SDL_GPUColorTargetInfo.Buffer)MetalInterop.calloc("SDL_GPUColorTargetInfo",count);
                 for(int i=0;i<count;i++){
                     RenderPassDescriptor.Attachment<java.util.Optional<Vector4fc>> a=d.colorAttachments().get(i);
                     if(a==null)throw new UnsupportedOperationException("SDL GPU Metal backend does not support sparse/unused color attachment slots");
@@ -68,13 +71,16 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             }
             if(d.depthAttachment()!=null){
                 var a=d.depthAttachment(); if(!(a.textureView() instanceof MetalTextureView view))throw new IllegalArgumentException("Foreign depth attachment");
-                depth=MetalInterop.calloc("SDL_GPUDepthStencilTargetInfo"); MetalInterop.set(depth,"texture",view.metalTexture().handle());
+                depth=(SDL_GPUDepthStencilTargetInfo)MetalInterop.calloc("SDL_GPUDepthStencilTargetInfo"); MetalInterop.set(depth,"texture",view.metalTexture().handle());
                 MetalInterop.set(depth,"clear_depth",(float)a.clearValue().orElse(1.0));
                 MetalInterop.set(depth,"load_op",MetalInterop.sdl(a.clearValue().isPresent()?"SDL_GPU_LOADOP_CLEAR":"SDL_GPU_LOADOP_LOAD"));MetalInterop.set(depth,"store_op",MetalInterop.sdl("SDL_GPU_STOREOP_STORE"));
                 MetalInterop.set(depth,"stencil_load_op",MetalInterop.sdl("SDL_GPU_LOADOP_DONT_CARE"));MetalInterop.set(depth,"stencil_store_op",MetalInterop.sdl("SDL_GPU_STOREOP_DONT_CARE"));
                 MetalInterop.set(depth,"cycle",false);MetalInterop.set(depth,"clear_stencil",(byte)0);MetalInterop.set(depth,"mip_level",view.baseMipLevel());MetalInterop.set(depth,"layer",(byte)0);
             }
-            long pass=MetalInterop.sdlLong("SDL_BeginGPURenderPass",commandHandle(),colors,count,depth);
+            // Use LWJGL's typed Java overload directly. It derives num_color_targets from
+            // SDL_GPUColorTargetInfo.Buffer; passing an explicit count belongs only to the
+            // raw nSDL_BeginGPURenderPass C-shaped entry point.
+            long pass=SDLGPU.SDL_BeginGPURenderPass(commandHandle(),colors,depth);
             if(pass==0L)throw new IllegalStateException("SDL_BeginGPURenderPass failed: "+MetalInterop.lastSdlError());
             activePass=new MetalRenderPass(this,pass,d.renderArea()); return activePass;
         } finally { MetalInterop.free(depth);MetalInterop.free(colors); MetalPerfCounters.renderPass(perfStart); }

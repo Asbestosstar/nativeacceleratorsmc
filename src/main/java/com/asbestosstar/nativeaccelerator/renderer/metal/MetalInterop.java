@@ -5,6 +5,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
+import org.lwjgl.system.MemoryUtil;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -114,7 +115,22 @@ final class MetalInterop {
     }
 
     static Object set(Object object, String method, Object value) {
-        return call(object, method, value);
+        try {
+            return call(object, method, value);
+        } catch (IllegalStateException missingInstanceSetter) {
+            /*
+             * Some LWJGL generated structs expose a read-only-looking instance accessor for a
+             * count field and only provide the writable form as static n<field>(address, value).
+             * Try that generated unsafe setter before declaring the binding unavailable.
+             */
+            try {
+                long address = nativeAddress(object);
+                return callStatic(object.getClass(), "n" + method, address, value);
+            } catch (RuntimeException noRawSetter) {
+                missingInstanceSetter.addSuppressed(noRawSetter);
+                throw missingInstanceSetter;
+            }
+        }
     }
 
     static Object set(Object object, String method, Object a, Object b) {
@@ -152,6 +168,93 @@ final class MetalInterop {
     static int sdlInt(String method, Object... args) {
         Object value = sdlCall(method, args);
         return ((Number)value).intValue();
+    }
+
+    /**
+     * Maps an SDL GPU transfer buffer across LWJGL SDL binding variants.
+     *
+     * <p>LWJGL's safe Java binding adds a fourth {@code buffer_size} argument and returns a
+     * {@link ByteBuffer}, while the generated raw C-shaped entry point is named
+     * {@code nSDL_MapGPUTransferBuffer} and keeps SDL's three arguments. Do not reflectively call
+     * {@code SDL_MapGPUTransferBuffer(device, transfer, cycle)}: that signature does not exist in
+     * current LWJGL SDL bindings even though the underlying C function has three parameters.</p>
+     */
+    static ByteBuffer mapGpuTransferBuffer(long device, long transfer, boolean cycle, int bufferSize) {
+        if (bufferSize < 0) throw new IllegalArgumentException("bufferSize");
+
+        Object[] friendlyArgs = {device, transfer, cycle, (long)bufferSize};
+        Method friendly;
+        try {
+            friendly = resolve(type(SDL_GPU), "SDL_MapGPUTransferBuffer", true, friendlyArgs);
+        } catch (IllegalStateException noFriendlyBinding) {
+            // Compatibility fallback for generated LWJGL snapshots that expose only the raw
+            // pointer-shaped entry point. Keep this fallback isolated here so callers never have
+            // to know whether the binding returns a ByteBuffer or a native address.
+            Object raw = sdlCall("nSDL_MapGPUTransferBuffer", device, transfer, cycle);
+            long address = ((Number)raw).longValue();
+            if (address == 0L) {
+                throw new IllegalStateException("SDL_MapGPUTransferBuffer failed: " + lastSdlError());
+            }
+            return MemoryUtil.memByteBuffer(address, bufferSize);
+        }
+
+        Object mapped = invoke(friendly, null, friendlyArgs);
+        if (mapped == null) {
+            throw new IllegalStateException("SDL_MapGPUTransferBuffer failed: " + lastSdlError());
+        }
+        if (mapped instanceof ByteBuffer buffer) {
+            return buffer;
+        }
+        // Be tolerant of a binding variant that exposes the safe name but still returns a pointer.
+        if (mapped instanceof Number number) {
+            long address = number.longValue();
+            if (address == 0L) {
+                throw new IllegalStateException("SDL_MapGPUTransferBuffer failed: " + lastSdlError());
+            }
+            return MemoryUtil.memByteBuffer(address, bufferSize);
+        }
+        throw new IllegalStateException("Unexpected SDL_MapGPUTransferBuffer return type: "
+                + mapped.getClass().getName());
+    }
+
+    /**
+     * Begins an SDL GPU render pass across LWJGL SDL binding variants.
+     *
+     * <p>The C API has four parameters, including {@code num_color_targets}. Current LWJGL
+     * exposes a Java-friendly overload with only three parameters because it derives that count
+     * from {@code SDL_GPUColorTargetInfo.Buffer}. Older/generated snapshots may also expose only
+     * the raw {@code nSDL_BeginGPURenderPass} entry point. Keep that signature churn isolated here
+     * rather than making render code guess which generated shape is present.</p>
+     */
+    static long beginGpuRenderPass(long commandBuffer, Object colorTargetInfos, int colorTargetCount,
+                                   Object depthStencilTargetInfo) {
+        if (colorTargetCount < 0) throw new IllegalArgumentException("colorTargetCount");
+
+        Object[] friendlyArgs = {commandBuffer, colorTargetInfos, depthStencilTargetInfo};
+        try {
+            Method friendly = resolve(type(SDL_GPU), "SDL_BeginGPURenderPass", true, friendlyArgs);
+            Object value = invoke(friendly, null, friendlyArgs);
+            return ((Number)value).longValue();
+        } catch (IllegalStateException noFriendlyBinding) {
+            // Raw LWJGL entry points preserve the original C signature and therefore still take
+            // the explicit color-target count plus native struct addresses.
+            long colorsAddress = nativeAddress(colorTargetInfos);
+            long depthAddress = nativeAddress(depthStencilTargetInfo);
+            Object value = sdlCall("nSDL_BeginGPURenderPass", commandBuffer, colorsAddress,
+                    colorTargetCount, depthAddress);
+            return ((Number)value).longValue();
+        }
+    }
+
+    /** Return the address of an LWJGL Struct/Struct.Buffer, or NULL for a nullable argument. */
+    private static long nativeAddress(Object value) {
+        if (value == null) return 0L;
+        Object address = call(value, "address");
+        if (!(address instanceof Number number)) {
+            throw new IllegalStateException("LWJGL native object has non-numeric address(): "
+                    + value.getClass().getName());
+        }
+        return number.longValue();
     }
 
     static String lastSdlError() {

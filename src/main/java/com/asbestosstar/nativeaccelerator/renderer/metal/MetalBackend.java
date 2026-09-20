@@ -13,9 +13,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * RenderPearl backend backed by SDL3's Metal GPU driver.
  *
- * <p>The backend is deliberately selected by a runtime capability probe rather than by an operating
- * system name. SDL's driver probe is authoritative: a host that exposes a usable {@code metal}
- * driver is eligible, and a host that does not is not.</p>
+ * <p>The backend is selected from runtime capabilities rather than Mac model allow-lists. SDL proves
+ * that its Metal GPU driver is usable; before device creation Native Accelerator also asks the real
+ * {@code MTLDevice} which GPU families it supports so legacy Mac1, Mac2+, and Apple Silicon can use
+ * different safe feature profiles.</p>
  */
 public final class MetalBackend implements GpuBackend {
     public static final String ENABLE_PROPERTY = "nativeaccelerator.renderer.metal";
@@ -23,11 +24,14 @@ public final class MetalBackend implements GpuBackend {
     public static final String ALLOW_MAC_FAMILY1_PROPERTY = "nativeaccelerator.renderer.metal.allowMacFamily1";
     /** Force an actual Metal device attempt even when SDL's non-creating support probe says no. */
     public static final String FORCE_ATTEMPT_PROPERTY = "nativeaccelerator.renderer.metal.forceAttempt";
+    /** Opt back into Apple Metal validation on MacFamily1. Unsafe on many OCLP/legacy drivers. */
+    public static final String MAC1_VALIDATION_PROPERTY = "nativeaccelerator.renderer.metal.mac1Validation";
 
     private static final AtomicInteger ACTIVE_DEVICES = new AtomicInteger();
     private static volatile String lastProbeReason = "not probed";
 
     enum MetalCapabilityTier {
+        APPLE_SILICON,
         MAC2_OR_NEWER,
         MAC1_COMPAT,
         UNKNOWN
@@ -43,20 +47,27 @@ public final class MetalBackend implements GpuBackend {
         return isSupported();
     }
 
-    /** Probe only SDL/LWJGL symbols and Metal capability properties; no device is created. */
+    /** Probe the real Metal device first, then verify that SDL can expose its Metal GPU backend. */
     public static boolean isSupported() {
         try {
             if (!MetalInterop.classPresent(MetalInterop.SDL_GPU)) {
                 lastProbeReason = "LWJGL SDL GPU binding is not present";
                 return false;
             }
+
+            MacMetalCapabilities.Result metal = MacMetalCapabilities.current();
+            boolean allowMacFamily1 = shouldAllowMacFamily1(metal);
             if (MetalInterop.classPresent(MetalInterop.SDL_PROPERTIES)) {
-                int props = createDeviceProperties(false);
+                int props = createDeviceProperties(false, false, allowMacFamily1);
                 try {
                     boolean supported = (Boolean)MetalInterop.sdlCall("SDL_GPUSupportsProperties", props);
+                    String nativeSummary = metal.available()
+                            ? metal.deviceName() + " [" + metal.familySummary() + "]"
+                            : "native Metal probe unavailable (" + metal.detail() + ")";
                     lastProbeReason = supported
-                            ? "SDL reports Metal/MSL support"
-                            : "SDL_GPUSupportsProperties returned false: " + MetalInterop.lastSdlError();
+                            ? "Metal=" + nativeSummary + "; SDL reports Metal/MSL support"
+                            : "Metal=" + nativeSummary + "; SDL_GPUSupportsProperties returned false: "
+                                    + MetalInterop.lastSdlError();
                     return supported;
                 } finally {
                     MetalInterop.propertiesCall("SDL_DestroyProperties", props);
@@ -77,32 +88,33 @@ public final class MetalBackend implements GpuBackend {
     }
 
     /**
-     * Classify the Metal device conservatively without parsing a GPU marketing name. SDL's normal
-     * Metal probe requires MacFamily2+. We then retry with the explicit MacFamily1 opt-in.
-     *
-     * <p>MacFamily1 must not use graphics indirect command buffers. If the strict probe cannot
-     * prove MacFamily2 support, we deliberately choose the compatibility tier.</p>
+     * Classify from the actual MTLDevice first. SDL probing remains only a compatibility fallback for
+     * unusual runtimes where the direct framework query is unavailable.
      */
     static MetalCapabilityTier detectCapabilityTier() {
-        if (!MetalInterop.classPresent(MetalInterop.SDL_PROPERTIES)) {
-            // Old SDL did not expose the MacFamily1 opt-in path. A successful legacy Metal device
-            // therefore normally implies the stricter support tier, but keep the result explicit.
-            return MetalCapabilityTier.UNKNOWN;
+        MacMetalCapabilities.Result metal = MacMetalCapabilities.current();
+        if (metal.available()) {
+            return switch (metal.tier()) {
+                case APPLE_SILICON -> MetalCapabilityTier.APPLE_SILICON;
+                case MAC2_OR_NEWER -> MetalCapabilityTier.MAC2_OR_NEWER;
+                case MAC1_COMPAT -> MetalCapabilityTier.MAC1_COMPAT;
+                case UNKNOWN, UNAVAILABLE -> MetalCapabilityTier.UNKNOWN;
+            };
         }
+
+        if (!MetalInterop.classPresent(MetalInterop.SDL_PROPERTIES)) return MetalCapabilityTier.UNKNOWN;
         try {
             if (supportsWithMacFamily1(false)) return MetalCapabilityTier.MAC2_OR_NEWER;
-            boolean allowMacFamily1 = Boolean.parseBoolean(
-                    System.getProperty(ALLOW_MAC_FAMILY1_PROPERTY, "true"));
-            if (allowMacFamily1 && supportsWithMacFamily1(true)) return MetalCapabilityTier.MAC1_COMPAT;
+            if (shouldAllowMacFamily1(metal) && supportsWithMacFamily1(true)) {
+                return MetalCapabilityTier.MAC1_COMPAT;
+            }
         } catch (Throwable ignored) {
-            // A real device creation can still succeed on patched/OCLP systems. Unknown is handled
-            // conservatively by MetalDevice when MacFamily1 opt-in is enabled.
         }
         return MetalCapabilityTier.UNKNOWN;
     }
 
     private static boolean supportsWithMacFamily1(boolean allowMacFamily1) {
-        int props = createDeviceProperties(false, allowMacFamily1);
+        int props = createDeviceProperties(false, false, allowMacFamily1);
         try {
             return (Boolean)MetalInterop.sdlCall("SDL_GPUSupportsProperties", props);
         } finally {
@@ -110,16 +122,30 @@ public final class MetalBackend implements GpuBackend {
         }
     }
 
+    private static boolean shouldAllowMacFamily1(MacMetalCapabilities.Result metal) {
+        String override = System.getProperty(ALLOW_MAC_FAMILY1_PROPERTY);
+        if (override != null) return Boolean.parseBoolean(override);
+        if (metal.available()) {
+            return metal.tier() == MacMetalCapabilities.Tier.MAC1_COMPAT
+                    || metal.tier() == MacMetalCapabilities.Tier.UNKNOWN;
+        }
+        // Preserve compatibility with older/patched stacks if the direct query itself was unavailable.
+        return true;
+    }
+
     public static String lastProbeReason() {
         return lastProbeReason;
     }
 
     private static int createDeviceProperties(boolean debug) {
-        boolean allowMacFamily1 = Boolean.parseBoolean(System.getProperty(ALLOW_MAC_FAMILY1_PROPERTY, "true"));
-        return createDeviceProperties(debug, allowMacFamily1);
+        return createDeviceProperties(debug, debug, shouldAllowMacFamily1(MacMetalCapabilities.current()));
     }
 
     private static int createDeviceProperties(boolean debug, boolean allowMacFamily1) {
+        return createDeviceProperties(debug, debug, allowMacFamily1);
+    }
+
+    private static int createDeviceProperties(boolean debug, boolean verbose, boolean allowMacFamily1) {
         int props = ((Number)MetalInterop.propertiesCall("SDL_CreateProperties")).intValue();
         if (props == 0) throw new IllegalStateException("SDL_CreateProperties failed: " + MetalInterop.lastSdlError());
         try {
@@ -130,11 +156,11 @@ public final class MetalBackend implements GpuBackend {
             MetalInterop.propertiesCall("SDL_SetBooleanProperty", props,
                     MetalInterop.sdlString("SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN"), debug);
             MetalInterop.propertiesCall("SDL_SetBooleanProperty", props,
-                    MetalInterop.sdlString("SDL_PROP_GPU_DEVICE_CREATE_VERBOSE_BOOLEAN"), debug);
+                    MetalInterop.sdlString("SDL_PROP_GPU_DEVICE_CREATE_VERBOSE_BOOLEAN"), verbose);
 
-            // SDL normally requires Metal MacFamily2. Native Accelerator's SDL backend intentionally
-            // maps RenderPearl color formats to linear UNORM/float targets rather than SDL sRGB texture
-            // formats, so allow MacFamily1 by default for older Macs/OCLP. It can be disabled explicitly.
+            // SDL normally requires MacFamily2. Enable its documented MacFamily1 compatibility path
+            // only when the direct Metal probe says it is needed (or when explicitly overridden).
+            // Native Accelerator does not write to sRGB render targets through this backend.
             if (allowMacFamily1) {
                 MetalInterop.propertiesCall("SDL_SetBooleanProperty", props,
                         MetalInterop.sdlString("SDL_PROP_GPU_DEVICE_CREATE_METAL_ALLOW_MACFAMILY1_BOOLEAN"), true);
@@ -204,12 +230,54 @@ public final class MetalBackend implements GpuBackend {
 
     @Override
     public GpuDevice createDevice(GpuDebugOptions options) throws BackendCreationException {
-        boolean debug = options.logLevel() > 0 || options.useLabels() || options.useValidationLayers();
+        boolean requestedDebug = options.logLevel() > 0 || options.useLabels() || options.useValidationLayers();
+        MacMetalCapabilities.Result metal = MacMetalCapabilities.current();
         MetalCapabilityTier capabilityTier = detectCapabilityTier();
+        boolean allowMacFamily1 = shouldAllowMacFamily1(metal);
+        System.out.println("[Native Accelerator] Metal preflight: device=" + metal.deviceName()
+                + ", tier=" + metal.tier()
+                + ", families={mac1=" + metal.mac1()
+                + ", mac2=" + metal.mac2()
+                + ", apple=" + metal.highestAppleFamily()
+                + ", metal3=" + metal.metal3()
+                + ", metal4=" + metal.metal4() + "}"
+                + ", mac2FeatureSet=" + metal.mac2FeatureSet()
+                + ", legacyNvidia=" + metal.legacyNvidia()
+                + ", icb=" + (metal.indirectCommandBufferSupported() ? "supported" : "CPU-fallback")
+                + " (" + metal.indirectCommandBufferSupportDetail() + ")"
+                + ", unified=" + metal.unifiedMemory()
+                + ", lowPower=" + metal.lowPower()
+                + ", removable=" + metal.removable()
+                + ", model=" + metal.hardwareModel()
+                + ", macOS=" + metal.osVersion());
+
+        // SDL's Metal backend implements debug mode by setting MTL_DEBUG_LAYER=1 *before*
+        // MTLCreateSystemDefaultDevice(). Apple validation then remains enabled for the entire
+        // process. Legacy/OCLP MacFamily1 drivers can abort inside device creation while the
+        // validation layer probes graphics ICB support, before our RenderPearl feature mask is
+        // even installed. Unless the user explicitly opts back in, only enable Metal validation
+        // when the non-destructive capability query proves MacFamily2-or-newer support. Keep SDL verbose logs enabled.
+        boolean compatibilityTier = capabilityTier == MetalCapabilityTier.MAC1_COMPAT
+                || capabilityTier == MetalCapabilityTier.UNKNOWN;
+        // Also disable Apple's validation layer unless the non-destructive Mac2 feature-set query
+        // and family evidence agree. NVIDIA is hard-capped to MacFamily1 even when OCLP reports newer
+        // families, so it always takes the validation-off / CPU-indirect compatibility path.
+        boolean runtimeProbeUnsafe = metal.available() && !metal.validationSafeByDefault();
+        boolean forceMac1Validation = Boolean.parseBoolean(System.getProperty(MAC1_VALIDATION_PROPERTY, "false"));
+        boolean effectiveDebug = requestedDebug && (!(compatibilityTier || runtimeProbeUnsafe) || forceMac1Validation);
+        if (requestedDebug && !effectiveDebug) {
+            System.out.println("[Native Accelerator] Metal validation disabled before device creation: "
+                    + "legacy/patched capability path (tier=" + capabilityTier
+                    + ", legacyNvidia=" + metal.legacyNvidia()
+                    + ", icbSupported=" + metal.indirectCommandBufferSupported() + "). "
+                    + "SDL verbose logging remains enabled. Override only for diagnostics with -D"
+                    + MAC1_VALIDATION_PROPERTY + "=true");
+        }
+
         long handle;
         try {
             if (MetalInterop.classPresent(MetalInterop.SDL_PROPERTIES)) {
-                int props = createDeviceProperties(debug);
+                int props = createDeviceProperties(effectiveDebug, requestedDebug, allowMacFamily1);
                 try {
                     handle = MetalInterop.sdlLong("SDL_CreateGPUDeviceWithProperties", props);
                 } finally {
@@ -217,7 +285,7 @@ public final class MetalBackend implements GpuBackend {
                 }
             } else {
                 int msl = MetalInterop.sdl("SDL_GPU_SHADERFORMAT_MSL");
-                handle = MetalInterop.sdlLong("SDL_CreateGPUDevice", msl, debug, DRIVER_NAME);
+                handle = MetalInterop.sdlLong("SDL_CreateGPUDevice", msl, effectiveDebug, DRIVER_NAME);
             }
         } catch (Throwable t) {
             throw new BackendCreationException("SDL3 Metal device creation failed: " + t.getMessage(),
@@ -228,7 +296,6 @@ public final class MetalBackend implements GpuBackend {
                     + "': " + MetalInterop.lastSdlError(),
                     BackendCreationException.Reason.PLATFORM_ERROR);
         }
-        boolean allowMacFamily1 = Boolean.parseBoolean(System.getProperty(ALLOW_MAC_FAMILY1_PROPERTY, "true"));
         if (capabilityTier == MetalCapabilityTier.UNKNOWN && allowMacFamily1) {
             // The device creation itself succeeded after an inconclusive strict probe. On an OCLP or
             // otherwise patched host, treating this as Mac1 is safer than touching unsupported ICBs.
@@ -239,7 +306,7 @@ public final class MetalBackend implements GpuBackend {
                 + ", capabilityTier=" + capabilityTier);
 
         try {
-            MetalDevice backend = new MetalDevice(handle, options, capabilityTier);
+            MetalDevice backend = new MetalDevice(handle, options, capabilityTier, metal);
             GpuDevice frontend = new FrontendGpuDevice(backend);
             deviceOpened();
             return frontend;

@@ -65,6 +65,7 @@
     "client.ResourceOpenProfilingMixin",
     "client.FileToIdConverterProfilingMixin",
     "client.CuboidModelParseProfilingMixin",
+    "client.PreferredGraphicsApiMetalCodecMixin",
     "client.VideoSettingsMetalOptionMixin",
     "client.OptionsMetalRestartMixin"
   ],

@@ -5,7 +5,10 @@ import com.mojang.renderpearl.api.pipeline.BlendFunction;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.ShaderType;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
+import org.lwjgl.sdl.SDLGPU;
+import org.lwjgl.sdl.SDL_GPUShaderCreateInfo;
 
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -18,6 +21,7 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
     private final MetalSpirvCompiler.StageLayout fragmentLayout;
     private final int uniformCount;
     private final int pushConstantSize;
+    private final boolean triangleFan;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     MetalRenderPipeline(MetalDevice device, CreateInfo info) throws Exception {
@@ -25,6 +29,7 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
         this.device = device;
         this.uniformCount = info.uniforms().size();
         this.pushConstantSize = info.pushConstantsSize();
+        this.triangleFan = info.primitiveTopology() == PrimitiveTopology.TRIANGLE_FAN;
         BackendRenderPipeline.CreateInfo.Shader vsDef = null, fsDef = null;
         for (BackendRenderPipeline.CreateInfo.Shader shader : info.shaders()) {
             if (shader.module().type() == ShaderType.VERTEX) vsDef = shader;
@@ -129,22 +134,38 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
     }
 
     private long createShader(MetalSpirvCompiler.Compiled shader, boolean vertex) {
-        Object ci = MetalInterop.calloc("SDL_GPUShaderCreateInfo");
+        /*
+         * LWJGL deliberately does not expose SDL_GPUShaderCreateInfo.code_size(long) as an
+         * instance setter. The safe code(ByteBuffer) binding owns the count relationship, while
+         * ncode_size(address, value) is the explicit generated field setter. Also, entrypoint()
+         * takes a null-terminated UTF-8 ByteBuffer rather than a Java String.
+         *
+         * Keep shader creation typed instead of routing these special generated fields through
+         * the generic reflection bridge.
+         */
+        SDL_GPUShaderCreateInfo ci = SDL_GPUShaderCreateInfo.calloc();
         ByteBuffer code = MetalSpirvCompiler.utf8z(shader.source());
+        ByteBuffer entrypoint = MetalSpirvCompiler.utf8z(shader.entryPoint());
         try {
-            MetalInterop.set(ci, "code_size", (long)code.remaining());
-            MetalInterop.set(ci, "code", code);
-            MetalInterop.set(ci, "entrypoint", shader.entryPoint());
-            MetalInterop.set(ci, "format", MetalInterop.sdl("SDL_GPU_SHADERFORMAT_MSL"));
-            MetalInterop.set(ci, "stage", MetalInterop.sdl(vertex ? "SDL_GPU_SHADERSTAGE_VERTEX" : "SDL_GPU_SHADERSTAGE_FRAGMENT"));
-            MetalInterop.set(ci, "num_samplers", shader.layout().samplerCount());
-            MetalInterop.set(ci, "num_storage_textures", 0);
-            MetalInterop.set(ci, "num_storage_buffers", shader.layout().storageBufferCount());
-            MetalInterop.set(ci, "num_uniform_buffers", shader.layout().uniformBufferCount());
-            long h = MetalInterop.sdlLong("SDL_CreateGPUShader", device.handle(), ci);
-            if (h == 0L) throw new IllegalStateException("SDL_CreateGPUShader failed: " + MetalInterop.lastSdlError());
+            ci.code(code);
+            // Preserve the exact byte count we supplied previously. utf8z() includes the final NUL.
+            SDL_GPUShaderCreateInfo.ncode_size(ci.address(), code.remaining());
+            ci.entrypoint(entrypoint);
+            ci.format(MetalInterop.sdl("SDL_GPU_SHADERFORMAT_MSL"));
+            ci.stage(MetalInterop.sdl(vertex ? "SDL_GPU_SHADERSTAGE_VERTEX" : "SDL_GPU_SHADERSTAGE_FRAGMENT"));
+            ci.num_samplers(shader.layout().samplerCount());
+            ci.num_storage_textures(0);
+            ci.num_storage_buffers(shader.layout().storageBufferCount());
+            ci.num_uniform_buffers(shader.layout().uniformBufferCount());
+
+            long h = SDLGPU.SDL_CreateGPUShader(device.handle(), ci);
+            if (h == 0L) {
+                throw new IllegalStateException("SDL_CreateGPUShader failed: " + MetalInterop.lastSdlError());
+            }
             return h;
-        } finally { MetalInterop.free(ci); }
+        } finally {
+            ci.free();
+        }
     }
 
     private static void applyBlend(Object out, BlendFunction blend) {
@@ -164,5 +185,6 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
     int uniformCount(){ return uniformCount; }
     int pushConstantSize(){ return pushConstantSize; }
     @Override public boolean isClosed(){ return closed.get(); }
+    boolean triangleFan(){return triangleFan;}
     @Override public void close(){ if(closed.compareAndSet(false,true)) MetalInterop.sdlCall("SDL_ReleaseGPUGraphicsPipeline",device.handle(),handle); }
 }

@@ -32,7 +32,7 @@ final class MetalGpuBuffer extends BaseGpuBuffer {
         this.device = device;
         Object info = MetalInterop.calloc("SDL_GPUBufferCreateInfo");
         try {
-            MetalInterop.set(info, "usage", MetalConversions.bufferUsage(usage));
+            MetalInterop.set(info, "usage", MetalConversions.bufferUsage(usage, device.nativeIndirectDrawSupported()));
             MetalInterop.set(info, "size", (int)size);
             this.handle = MetalInterop.sdlLong("SDL_CreateGPUBuffer", device.handle(), info);
         } finally {
@@ -101,8 +101,8 @@ final class MetalGpuBuffer extends BaseGpuBuffer {
         int gpuReadUsage = GpuBuffer.USAGE_COPY_SRC
                 | GpuBuffer.USAGE_VERTEX
                 | GpuBuffer.USAGE_INDEX
-                | GpuBuffer.USAGE_UNIFORM_TEXEL_BUFFER
-                | GpuBuffer.USAGE_INDIRECT_PARAMETERS;
+                | GpuBuffer.USAGE_UNIFORM_TEXEL_BUFFER;
+        if (device.nativeIndirectDrawSupported()) gpuReadUsage |= GpuBuffer.USAGE_INDIRECT_PARAMETERS;
         return (usage() & gpuReadUsage) != 0;
     }
 

@@ -30,6 +30,10 @@ final class MetalRenderPass implements RenderPassBackend {
     private boolean[] dirtyUniforms = new boolean[0];
     private ByteBuffer pushConstants;
     private boolean pushConstantsDirty;
+    private ByteBuffer vertexPackedUniforms;
+    private ByteBuffer fragmentPackedUniforms;
+    private boolean vertexPackedDirty;
+    private boolean fragmentPackedDirty;
     private final MetalGpuBuffer[] boundVertexBuffers = new MetalGpuBuffer[16];
     private final long[] boundVertexOffsets = new long[16];
     private MetalGpuBuffer boundIndexBuffer;
@@ -61,6 +65,10 @@ final class MetalRenderPass implements RenderPassBackend {
         if (dirtyUniforms.length != uniforms.length) dirtyUniforms = Arrays.copyOf(dirtyUniforms, uniforms.length);
         Arrays.fill(dirtyUniforms, true);
         pushConstantsDirty = pushConstants != null;
+        vertexPackedUniforms = packedBuffer(vertexPackedUniforms, p.vertexLayout().packedUniformBytes());
+        fragmentPackedUniforms = packedBuffer(fragmentPackedUniforms, p.fragmentLayout().packedUniformBytes());
+        vertexPackedDirty = p.vertexLayout().hasPackedUniforms();
+        fragmentPackedDirty = p.fragmentLayout().hasPackedUniforms();
         long perfStart=MetalPerfCounters.tic();
         SDLGPU.SDL_BindGPUGraphicsPipeline(handle, p.handle());
         MetalPerfCounters.pipelineBind(perfStart);
@@ -119,69 +127,271 @@ final class MetalRenderPass implements RenderPassBackend {
     }
 
     @Override public void drawIndexed(int indexCount,int instanceCount,int firstIndex,int vertexOffset,int firstInstance) {
+        if (pipeline != null && pipeline.triangleFan()) {
+            throw new UnsupportedOperationException(
+                    "Indexed triangle-fan expansion is not yet needed by vanilla Minecraft 26.3; "
+                            + "the Metal compatibility path currently handles non-indexed fans");
+        }
         beforeDraw(); long perfStart=MetalPerfCounters.tic(); SDLGPU.SDL_DrawGPUIndexedPrimitives(handle,indexCount,instanceCount,firstIndex,vertexOffset,firstInstance); MetalPerfCounters.draw(true,inTerrainGroup(),perfStart);
     }
     @Override public void multiDrawIndexed(IntBuffer p,int instanceCount,int firstInstance,int drawCount) { throw new UnsupportedOperationException("Direct multi-draw is intentionally disabled on the Metal backend"); }
     @Override public void multiDrawIndexed(PointerBuffer a,IntBuffer b,IntBuffer c,int drawCount) { throw new UnsupportedOperationException("Direct multi-draw is intentionally disabled on the Metal backend"); }
     @Override public void drawIndexedIndirect(GpuBufferSlice commands,int drawCount) {
-        if (!encoder.device().indirectDrawSupported()) {
-            throw new UnsupportedOperationException("Metal indirect draws are unavailable in MacFamily1 compatibility mode");
+        if (pipeline != null && pipeline.triangleFan()) {
+            throw new UnsupportedOperationException("Indexed indirect triangle-fan draws are not supported by the Metal compatibility path");
         }
-        beforeDraw(); MetalGpuBuffer b=metal(commands.buffer()); SDLGPU.SDL_DrawGPUIndexedPrimitivesIndirect(handle,b.handle(),Math.toIntExact(commands.offset()),drawCount);
+        beforeDraw();
+        MetalGpuBuffer b=metal(commands.buffer());
+        if (encoder.device().nativeIndirectDrawSupported()) {
+            try {
+                SDLGPU.SDL_DrawGPUIndexedPrimitivesIndirect(handle,b.handle(),Math.toIntExact(commands.offset()),drawCount);
+                MetalPerfCounters.nativeIndirectCall();
+                return;
+            } catch (Throwable failure) {
+                encoder.device().blacklistNativeIndirect(failure);
+            }
+        }
+        drawIndexedIndirectCpuFallback(b,commands.offset(),drawCount);
     }
-    @Override public void draw(int vertexCount,int instanceCount,int firstVertex,int firstInstance) { beforeDraw();long perfStart=MetalPerfCounters.tic();SDLGPU.SDL_DrawGPUPrimitives(handle,vertexCount,instanceCount,firstVertex,firstInstance);MetalPerfCounters.draw(false,inTerrainGroup(),perfStart); }
+    @Override public void draw(int vertexCount,int instanceCount,int firstVertex,int firstInstance) {
+        beforeDraw();
+        if (pipeline != null && pipeline.triangleFan()) {
+            drawTriangleFan(vertexCount, instanceCount, firstVertex, firstInstance);
+            return;
+        }
+        long perfStart=MetalPerfCounters.tic();
+        SDLGPU.SDL_DrawGPUPrimitives(handle,vertexCount,instanceCount,firstVertex,firstInstance);
+        MetalPerfCounters.draw(false,inTerrainGroup(),perfStart);
+    }
     @Override public void multiDraw(IntBuffer p,int instanceCount,int firstInstance,int drawCount) { throw new UnsupportedOperationException("Direct multi-draw is intentionally disabled on the Metal backend"); }
     @Override public void multiDraw(IntBuffer a,IntBuffer b,int drawCount) { throw new UnsupportedOperationException("Direct multi-draw is intentionally disabled on the Metal backend"); }
     @Override public void drawIndirect(GpuBufferSlice commands,int drawCount) {
-        if (!encoder.device().indirectDrawSupported()) {
-            throw new UnsupportedOperationException("Metal indirect draws are unavailable in MacFamily1 compatibility mode");
+        if (pipeline != null && pipeline.triangleFan()) {
+            throw new UnsupportedOperationException("Indirect triangle-fan draws are not supported by the Metal compatibility path");
         }
-        beforeDraw();MetalGpuBuffer b=metal(commands.buffer());SDLGPU.SDL_DrawGPUPrimitivesIndirect(handle,b.handle(),Math.toIntExact(commands.offset()),drawCount);
+        beforeDraw();
+        MetalGpuBuffer b=metal(commands.buffer());
+        if (encoder.device().nativeIndirectDrawSupported()) {
+            try {
+                SDLGPU.SDL_DrawGPUPrimitivesIndirect(handle,b.handle(),Math.toIntExact(commands.offset()),drawCount);
+                MetalPerfCounters.nativeIndirectCall();
+                return;
+            } catch (Throwable failure) {
+                encoder.device().blacklistNativeIndirect(failure);
+            }
+        }
+        drawIndirectCpuFallback(b,commands.offset(),drawCount);
     }
     @Override public void writeTimestamp(GpuQueryPool pool,int index) { if(pool instanceof MetalQueryPool p)p.write(index); }
 
+    /**
+     * RenderPearl/Vulkan indexed indirect layout is byte-for-byte compatible with Metal's
+     * MTLDrawIndexedPrimitivesIndirectArguments: five 32-bit fields. When native graphics ICBs are
+     * unavailable we keep Minecraft's efficient instanced terrain preparation and decode those
+     * commands from MetalGpuBuffer's CPU shadow, issuing equivalent direct draws.
+     */
+    private void drawIndexedIndirectCpuFallback(MetalGpuBuffer buffer,long offset,int drawCount) {
+        ByteBuffer bytes=buffer.shadowSlice(offset,Math.multiplyExact((long)drawCount,MetalIndirectCommandDecoder.INDEXED_DRAW_BYTES));
+        boolean terrain=inTerrainGroup();
+        for(int i=0;i<drawCount;i++){
+            MetalIndirectCommandDecoder.IndexedDraw command=MetalIndirectCommandDecoder.indexed(bytes,i);
+            long perfStart=MetalPerfCounters.tic();
+            SDLGPU.SDL_DrawGPUIndexedPrimitives(handle,command.indexCount(),command.instanceCount(),command.firstIndex(),command.vertexOffset(),command.firstInstance());
+            MetalPerfCounters.cpuIndirectCommand();
+            MetalPerfCounters.draw(true,terrain,perfStart);
+        }
+    }
+
+    /** MTLDrawPrimitivesIndirectArguments / VkDrawIndirectCommand: four 32-bit fields. */
+    private void drawIndirectCpuFallback(MetalGpuBuffer buffer,long offset,int drawCount) {
+        ByteBuffer bytes=buffer.shadowSlice(offset,Math.multiplyExact((long)drawCount,MetalIndirectCommandDecoder.DRAW_BYTES));
+        boolean terrain=inTerrainGroup();
+        for(int i=0;i<drawCount;i++){
+            MetalIndirectCommandDecoder.Draw command=MetalIndirectCommandDecoder.draw(bytes,i);
+            long perfStart=MetalPerfCounters.tic();
+            SDLGPU.SDL_DrawGPUPrimitives(handle,command.vertexCount(),command.instanceCount(),command.firstVertex(),command.firstInstance());
+            MetalPerfCounters.cpuIndirectCommand();
+            MetalPerfCounters.draw(false,terrain,perfStart);
+        }
+    }
+
     private void beforeDraw() {
         if(pipeline==null)throw new IllegalStateException("No Metal pipeline bound");
+
+        boolean packedVertexChanged = false;
+        boolean packedFragmentChanged = false;
+
         for (int i = 0; i < uniforms.length; i++) {
             if (i >= dirtyUniforms.length || !dirtyUniforms[i]) continue;
-            bindDirtyUniform(i, uniforms[i]);
+            Object value = uniforms[i];
+
+            if (value instanceof GpuBufferSlice slice) {
+                MetalGpuBuffer b = metal(slice.buffer());
+                ByteBuffer bytes = b.shadowSlice(slice.offset(), slice.length());
+
+                int vsUniform = slot(pipeline.vertexLayout().uniformSlots(), i);
+                int fsUniform = slot(pipeline.fragmentLayout().uniformSlots(), i);
+                if (vsUniform >= 0) {
+                    ByteBuffer copy = bytes.duplicate();
+                    long t=MetalPerfCounters.tic();
+                    SDLGPU.SDL_PushGPUVertexUniformData(encoder.commandHandle(), vsUniform, copy);
+                    MetalPerfCounters.uniformPush(copy.remaining(),inTerrainGroup(),t);
+                }
+                if (fsUniform >= 0) {
+                    ByteBuffer copy = bytes.duplicate();
+                    long t=MetalPerfCounters.tic();
+                    SDLGPU.SDL_PushGPUFragmentUniformData(encoder.commandHandle(), fsUniform, copy);
+                    MetalPerfCounters.uniformPush(copy.remaining(),inTerrainGroup(),t);
+                }
+
+                int vsPacked = slot(pipeline.vertexLayout().packedUniformOffsets(), i);
+                int fsPacked = slot(pipeline.fragmentLayout().packedUniformOffsets(), i);
+                if (vsPacked >= 0) {
+                    putPacked(vertexPackedUniforms, vsPacked, bytes, "vertex uniform " + i);
+                    packedVertexChanged = true;
+                }
+                if (fsPacked >= 0) {
+                    putPacked(fragmentPackedUniforms, fsPacked, bytes, "fragment uniform " + i);
+                    packedFragmentChanged = true;
+                }
+
+                int vsStorage = slot(pipeline.vertexLayout().storageBufferSlots(), i);
+                int fsStorage = slot(pipeline.fragmentLayout().storageBufferSlots(), i);
+                if (vsStorage >= 0 || fsStorage >= 0) {
+                    bindStorageBuffer(i, slice, b, vsStorage, fsStorage);
+                }
+            } else if (value instanceof TextureViewAndSampler) {
+                bindSampler(i, value);
+            }
+
             dirtyUniforms[i] = false;
         }
-        if (pushConstantsDirty) {
-            pushPushConstants();
+
+        if (pushConstantsDirty && pushConstants != null) {
+            int vs=pipeline.vertexLayout().pushConstantSlot(),fs=pipeline.fragmentLayout().pushConstantSlot();
+            if(vs>=0) {
+                ByteBuffer b=pushConstants.duplicate();
+                long t=MetalPerfCounters.tic();
+                SDLGPU.SDL_PushGPUVertexUniformData(encoder.commandHandle(),vs,b);
+                MetalPerfCounters.uniformPush(b.remaining(),inTerrainGroup(),t);
+            }
+            if(fs>=0) {
+                ByteBuffer b=pushConstants.duplicate();
+                long t=MetalPerfCounters.tic();
+                SDLGPU.SDL_PushGPUFragmentUniformData(encoder.commandHandle(),fs,b);
+                MetalPerfCounters.uniformPush(b.remaining(),inTerrainGroup(),t);
+            }
+
+            int vsPacked = pipeline.vertexLayout().pushConstantPackedOffset();
+            int fsPacked = pipeline.fragmentLayout().pushConstantPackedOffset();
+            if (vsPacked >= 0) {
+                putPacked(vertexPackedUniforms, vsPacked, pushConstants, "vertex push constants");
+                packedVertexChanged = true;
+            }
+            if (fsPacked >= 0) {
+                putPacked(fragmentPackedUniforms, fsPacked, pushConstants, "fragment push constants");
+                packedFragmentChanged = true;
+            }
             pushConstantsDirty = false;
         }
+
+        vertexPackedDirty |= packedVertexChanged;
+        fragmentPackedDirty |= packedFragmentChanged;
+        pushPackedUniforms();
     }
 
-    /** Bind only state that changed since the last draw or pipeline switch. */
-    private void bindDirtyUniform(int index, Object value) {
-        if (value instanceof GpuBufferSlice slice) {
-            MetalGpuBuffer b = metal(slice.buffer());
-            int vsUniform = slot(pipeline.vertexLayout().uniformSlots(), index);
-            int fsUniform = slot(pipeline.fragmentLayout().uniformSlots(), index);
-            if (vsUniform >= 0 || fsUniform >= 0) {
-                ByteBuffer bytes = b.shadowSlice(slice.offset(), slice.length());
-                if (vsUniform >= 0) { long t=MetalPerfCounters.tic(); SDLGPU.SDL_PushGPUVertexUniformData(encoder.commandHandle(), vsUniform, bytes); MetalPerfCounters.uniformPush(bytes.remaining(),inTerrainGroup(),t); }
-                if (fsUniform >= 0) { long t=MetalPerfCounters.tic(); SDLGPU.SDL_PushGPUFragmentUniformData(encoder.commandHandle(), fsUniform, bytes); MetalPerfCounters.uniformPush(bytes.remaining(),inTerrainGroup(),t); }
-            }
+    private void pushPackedUniforms() {
+        if (pipeline.vertexLayout().hasPackedUniforms() && vertexPackedDirty) {
+            ByteBuffer b = fullPacked(vertexPackedUniforms, pipeline.vertexLayout().packedUniformBytes());
+            long t=MetalPerfCounters.tic();
+            SDLGPU.SDL_PushGPUVertexUniformData(
+                    encoder.commandHandle(), MetalUniformPacking.PACKED_SLOT, b);
+            MetalPerfCounters.uniformPush(b.remaining(),inTerrainGroup(),t);
+            vertexPackedDirty = false;
+        }
+        if (pipeline.fragmentLayout().hasPackedUniforms() && fragmentPackedDirty) {
+            ByteBuffer b = fullPacked(fragmentPackedUniforms, pipeline.fragmentLayout().packedUniformBytes());
+            long t=MetalPerfCounters.tic();
+            SDLGPU.SDL_PushGPUFragmentUniformData(
+                    encoder.commandHandle(), MetalUniformPacking.PACKED_SLOT, b);
+            MetalPerfCounters.uniformPush(b.remaining(),inTerrainGroup(),t);
+            fragmentPackedDirty = false;
+        }
+    }
 
-            int vsStorage = slot(pipeline.vertexLayout().storageBufferSlots(), index);
-            int fsStorage = slot(pipeline.fragmentLayout().storageBufferSlots(), index);
-            if (vsStorage >= 0 || fsStorage >= 0) {
-                bindStorageBuffer(index, slice, b, vsStorage, fsStorage);
-            }
-            return;
+    private static ByteBuffer packedBuffer(ByteBuffer current, int bytes) {
+        if (bytes <= 0) return null;
+        if (current == null || current.capacity() < bytes) {
+            current = ByteBuffer.allocateDirect(bytes);
         }
-        if (value instanceof TextureViewAndSampler) {
-            bindSampler(index, value);
+        ByteBuffer clear = current.duplicate();
+        clear.clear();
+        while (clear.hasRemaining()) clear.put((byte)0);
+        return current;
+    }
+
+    private static void putPacked(ByteBuffer packed, int offset, ByteBuffer source, String label) {
+        if (packed == null) throw new IllegalStateException("Missing packed Metal uniform buffer for " + label);
+        ByteBuffer src = source.duplicate();
+        if (src.remaining() > MetalUniformPacking.PACK_STRIDE) {
+            throw new UnsupportedOperationException(
+                    label + " is " + src.remaining() + " bytes; packed Metal UBO stride is "
+                            + MetalUniformPacking.PACK_STRIDE);
+        }
+        if (offset < 0 || offset + src.remaining() > packed.capacity()) {
+            throw new IllegalArgumentException("Packed Metal uniform range outside allocation for " + label);
+        }
+        ByteBuffer dst = packed.duplicate();
+        dst.position(offset).limit(offset + src.remaining());
+        dst.put(src);
+    }
+
+    private static ByteBuffer fullPacked(ByteBuffer packed, int bytes) {
+        ByteBuffer out = packed.duplicate();
+        out.position(0).limit(bytes);
+        return out.slice();
+    }
+
+    private void drawTriangleFan(int vertexCount, int instanceCount, int firstVertex, int firstInstance) {
+        int fanIndexCount = encoder.device().fanIndexBuffer().indexCountForVertices(vertexCount);
+        if (fanIndexCount == 0 || instanceCount == 0) return;
+
+        MetalGpuBuffer previous = boundIndexBuffer;
+        IndexType previousType = boundIndexType;
+        bindFanIndexBuffer();
+        long perfStart = MetalPerfCounters.tic();
+        SDLGPU.SDL_DrawGPUIndexedPrimitives(
+                handle, fanIndexCount, instanceCount, 0, firstVertex, firstInstance);
+        MetalPerfCounters.draw(true,inTerrainGroup(),perfStart);
+
+        // Preserve RenderPearl state for callers that had already bound an index buffer.
+        if (previous != null && previousType != null) {
+            bindIndexBufferHandle(previous.handle(), MetalConversions.indexType(previousType));
+            boundIndexBuffer = previous;
+            boundIndexType = previousType;
+        } else {
+            // SDL has no explicit index-buffer unbind. Invalidate our cache so the next ordinary
+            // indexed draw necessarily binds its own buffer.
+            boundIndexBuffer = null;
+            boundIndexType = null;
         }
     }
-    private void pushPushConstants() {
-        if(pipeline==null||pushConstants==null)return;
-        int vs=pipeline.vertexLayout().pushConstantSlot(),fs=pipeline.fragmentLayout().pushConstantSlot();
-        if(vs>=0) { ByteBuffer b=pushConstants.duplicate(); long t=MetalPerfCounters.tic(); SDLGPU.SDL_PushGPUVertexUniformData(encoder.commandHandle(),vs,b); MetalPerfCounters.uniformPush(b.remaining(),inTerrainGroup(),t); }
-        if(fs>=0) { ByteBuffer b=pushConstants.duplicate(); long t=MetalPerfCounters.tic(); SDLGPU.SDL_PushGPUFragmentUniformData(encoder.commandHandle(),fs,b); MetalPerfCounters.uniformPush(b.remaining(),inTerrainGroup(),t); }
+
+    private void bindFanIndexBuffer() {
+        bindIndexBufferHandle(
+                encoder.device().fanIndexBuffer().handle(),
+                MetalInterop.sdl("SDL_GPU_INDEXELEMENTSIZE_32BIT"));
+        boundIndexBuffer = null;
+        boundIndexType = null;
     }
+
+    private void bindIndexBufferHandle(long buffer, int indexType) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            SDL_GPUBufferBinding binding = SDL_GPUBufferBinding.calloc(stack).set(buffer, 0);
+            SDLGPU.SDL_BindGPUIndexBuffer(handle, binding, indexType);
+        }
+    }
+
     private void bindStorageBuffer(int index, GpuBufferSlice slice, MetalGpuBuffer buffer, int vs, int fs) {
         // SDL's graphics-storage-buffer binding is whole-buffer only. RenderPearl's current
         // texel-buffer user (CloudFaces) binds the whole ring-buffer allocation, so preserve

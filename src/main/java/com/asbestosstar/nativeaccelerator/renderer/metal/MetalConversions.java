@@ -114,7 +114,7 @@ final class MetalConversions {
             case LINES, DEBUG_LINES -> "SDL_GPU_PRIMITIVETYPE_LINELIST";
             case DEBUG_LINE_STRIP -> "SDL_GPU_PRIMITIVETYPE_LINESTRIP";
             case POINTS -> "SDL_GPU_PRIMITIVETYPE_POINTLIST";
-            case TRIANGLE_FAN -> throw new IllegalArgumentException("SDL GPU has no triangle-fan primitive; RenderPearl must triangulate it before Metal");
+            case TRIANGLE_FAN -> "SDL_GPU_PRIMITIVETYPE_TRIANGLELIST"; // draw path expands fan indices
         });
     }
 
@@ -190,10 +190,14 @@ final class MetalConversions {
     }
 
     static int bufferUsage(int usage) {
+        return bufferUsage(usage, true);
+    }
+
+    static int bufferUsage(int usage, boolean nativeIndirect) {
         int result = 0;
         if ((usage & 32) != 0) result |= MetalInterop.sdl("SDL_GPU_BUFFERUSAGE_VERTEX");
         if ((usage & 64) != 0) result |= MetalInterop.sdl("SDL_GPU_BUFFERUSAGE_INDEX");
-        if ((usage & 512) != 0) result |= MetalInterop.sdl("SDL_GPU_BUFFERUSAGE_INDIRECT");
+        if (nativeIndirect && (usage & 512) != 0) result |= MetalInterop.sdl("SDL_GPU_BUFFERUSAGE_INDIRECT");
         // RenderPearl texel buffers are lowered to read-only Metal storage buffers. SDL requires the
         // GRAPHICS_STORAGE_READ usage bit for buffers passed to SDL_BindGPU*StorageBuffers.
         if ((usage & 256) != 0) result |= MetalInterop.sdl("SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ");

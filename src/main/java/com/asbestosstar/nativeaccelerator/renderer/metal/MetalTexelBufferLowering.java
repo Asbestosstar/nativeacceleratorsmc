@@ -3,23 +3,23 @@ package com.asbestosstar.nativeaccelerator.renderer.metal;
 import com.mojang.renderpearl.api.GpuFormat;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Lowers the native MSL texture-buffer form emitted by SPIRV-Cross into an SDL-GPU-compatible
- * read-only storage buffer.
- *
- * <p>SDL's Metal shader ABI has no texel-buffer binding category, but it does expose graphics
- * storage buffers. Minecraft 26.3's CloudFaces resource is R8_SINT and is only fetched by integer
- * element index, so the native {@code texture_buffer<int>} can be represented losslessly as a
- * {@code device const char*}. Reads are expanded back to the four-component integer value that a
- * texel fetch returns.</p>
+ * Lowers active native MSL texture buffers into SDL-GPU-compatible read-only storage buffers.
+ * Inactive SPIR-V descriptors are discarded and the surviving storage-buffer table is compacted.
  */
 final class MetalTexelBufferLowering {
-    record Binding(int textureSlot, int storageSlot, int mslBufferIndex, GpuFormat format) {}
+    record Binding(int textureSlot, int storageSlot, GpuFormat format) {}
+    record Result(String source, int[] physicalSlotsByLogical, int storageBufferCount) {
+        int physicalSlot(int logical) {
+            return logical >= 0 && logical < physicalSlotsByLogical.length ? physicalSlotsByLogical[logical] : -1;
+        }
+    }
 
     private static final Pattern TEXTURE_BUFFER_DECLARATION = Pattern.compile(
             "texture_buffer\\s*<\\s*int(?:\\s*,\\s*access::read)?\\s*>\\s+" +
@@ -27,24 +27,40 @@ final class MetalTexelBufferLowering {
 
     private MetalTexelBufferLowering() {}
 
-    static String lower(String source, List<Binding> bindings) {
-        if (bindings.isEmpty()) return source;
+    static Result lower(String source, List<Binding> bindings, int uniformBufferCount, int logicalStorageCount) {
+        int[] physical = new int[logicalStorageCount];
+        Arrays.fill(physical, -1);
+        if (bindings.isEmpty()) return new Result(source, physical, 0);
 
-        String lowered = source;
-        // Work from the highest temporary texture slot down simply to make diagnostics deterministic.
-        List<Binding> ordered = new ArrayList<>(bindings);
-        ordered.sort(Comparator.comparingInt(Binding::textureSlot).reversed());
-        for (Binding binding : ordered) {
+        List<Binding> active = new ArrayList<>();
+        for (Binding binding : bindings) {
             if (binding.format() != GpuFormat.R8_SINT) {
                 throw new UnsupportedOperationException(
                         "Metal texel-buffer lowering currently supports R8_SINT only; got " + binding.format());
             }
-            lowered = lowerOne(lowered, binding);
+            if (hasTextureSlot(source, binding.textureSlot())) active.add(binding);
         }
-        return lowered;
+        active.sort(Comparator.comparingInt(Binding::storageSlot));
+        for (int i = 0; i < active.size(); i++) physical[active.get(i).storageSlot()] = i;
+
+        String lowered = source;
+        // Replace higher temporary texture slots first for deterministic source editing.
+        List<Binding> replacementOrder = new ArrayList<>(active);
+        replacementOrder.sort(Comparator.comparingInt(Binding::textureSlot).reversed());
+        for (Binding binding : replacementOrder) {
+            int physicalStorage = physical[binding.storageSlot()];
+            lowered = lowerOne(lowered, binding, uniformBufferCount + physicalStorage);
+        }
+        return new Result(lowered, physical, active.size());
     }
 
-    private static String lowerOne(String source, Binding binding) {
+    private static boolean hasTextureSlot(String source, int wanted) {
+        Matcher matcher = TEXTURE_BUFFER_DECLARATION.matcher(source);
+        while (matcher.find()) if (Integer.parseInt(matcher.group(2)) == wanted) return true;
+        return false;
+    }
+
+    private static String lowerOne(String source, Binding binding, int mslBufferIndex) {
         Matcher matcher = TEXTURE_BUFFER_DECLARATION.matcher(source);
         String variable = null;
         StringBuffer declarations = new StringBuffer(source.length());
@@ -58,16 +74,15 @@ final class MetalTexelBufferLowering {
                 throw new IllegalStateException("Multiple MSL texture buffers use temporary texture slot " + textureSlot);
             }
             variable = matcher.group(1);
-            String replacement = "device const char* " + variable + " [[buffer(" + binding.mslBufferIndex() + ")]]";
+            String replacement = "device const char* " + variable + " [[buffer(" + mslBufferIndex + ")]]";
             matcher.appendReplacement(declarations, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(declarations);
         if (variable == null) {
             throw new IllegalStateException(
-                    "SPIRV-Cross did not emit the expected native texture_buffer<int> declaration for temporary texture slot "
+                    "SPIRV-Cross did not emit active texture_buffer<int> for temporary texture slot "
                             + binding.textureSlot());
         }
-
         return replaceReadCalls(declarations.toString(), variable);
     }
 
@@ -91,9 +106,7 @@ final class MetalTexelBufferLowering {
                 if (c == '(') depth++;
                 else if (c == ')') depth--;
             }
-            if (depth != 0) {
-                throw new IllegalStateException("Unbalanced MSL texture-buffer read for " + variable);
-            }
+            if (depth != 0) throw new IllegalStateException("Unbalanced MSL texture-buffer read for " + variable);
             int expressionEnd = p - 1;
             String expression = source.substring(expressionStart, expressionEnd);
             out.append("int4(int(").append(variable).append('[').append(expression)

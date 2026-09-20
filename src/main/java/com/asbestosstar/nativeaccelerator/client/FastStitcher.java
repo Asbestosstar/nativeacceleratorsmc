@@ -125,8 +125,11 @@ public final class FastStitcher<T extends Stitcher.Entry> extends Stitcher<T> {
     }
 
     private static int smallestFittingMinTexel(int input, int maxMipLevel) {
+        // Keep the exact bit-level rounding form used by Minecraft's Stitcher. Besides avoiding a
+        // division in this very hot registration loop, it also avoids introducing a second semantic
+        // definition of mip alignment into the fast packer.
         int quantum = 1 << maxMipLevel;
-        return ((input + quantum - 1) / quantum) * quantum;
+        return (input + quantum - 1) & -quantum;
     }
 
     private record FastHolder<T extends Stitcher.Entry>(T entry, int width, int height) {}

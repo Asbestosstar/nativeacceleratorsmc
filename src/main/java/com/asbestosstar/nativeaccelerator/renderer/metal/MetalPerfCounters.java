@@ -31,6 +31,7 @@ final class MetalPerfCounters {
     private static long maxFrameNs;
 
     private static long draws, indexedDraws, terrainDraws;
+    private static long nativeIndirectCalls, cpuIndirectCommands;
     private static long drawNs;
     private static long pipelineBinds, pipelineBindSkips;
     private static long vertexBinds, vertexBindSkips, indexBinds, indexBindSkips;
@@ -54,6 +55,8 @@ final class MetalPerfCounters {
     private static long elapsed(long start) { return ENABLED && start != 0L ? System.nanoTime() - start : 0L; }
 
     static void draw(boolean indexed, boolean terrain, long start) { if (!ENABLED) return; draws++; if (indexed) indexedDraws++; if (terrain) terrainDraws++; drawNs += elapsed(start); }
+    static void nativeIndirectCall() { if (ENABLED) nativeIndirectCalls++; }
+    static void cpuIndirectCommand() { if (ENABLED) cpuIndirectCommands++; }
     static void pipelineBind(long start) { if (!ENABLED) return; pipelineBinds++; }
     static void pipelineBindSkip() { if (ENABLED) pipelineBindSkips++; }
     static void vertexBind() { if (ENABLED) vertexBinds++; }
@@ -95,12 +98,12 @@ final class MetalPerfCounters {
         double denom = Math.max(1.0, frames);
         double avgFrameMs = frameNs == 0 ? 0.0 : frameNs / Math.max(1.0, frames - 1.0) / 1_000_000.0;
         String line = String.format(Locale.ROOT,
-                "[Native Accelerator][MetalPerf] fps=%.1f frame=%.2fms max=%.2fms draws=%.0f/f terrain=%.0f/f indexed=%.0f/f " +
+                "[Native Accelerator][MetalPerf] fps=%.1f frame=%.2fms max=%.2fms draws=%.0f/f terrain=%.0f/f indexed=%.0f/f indirectNative=%.2f/f indirectCPU=%.0f/f " +
                 "uboPush=%.0f/f(terrain=%.0f) %.1fKiB/f pipe=%.0f/f vb=%.0f/f(vbSkip=%.0f) pass=%.1f/f " +
                 "flush=%.2f/f %.1fKiB/f submit=%.2f/f fences=%.2f/f wait=%.2fms/f swapWait=%.2fms/f " +
                 "drawCPU=%.2fms/f uniformCPU=%.2fms/f interop=%.2fms/f",
                 fps, avgFrameMs, maxFrameNs / 1_000_000.0,
-                draws / denom, terrainDraws / denom, indexedDraws / denom,
+                draws / denom, terrainDraws / denom, indexedDraws / denom, nativeIndirectCalls / denom, cpuIndirectCommands / denom,
                 uniformPushes / denom, terrainUniformPushes / denom, uniformBytes / denom / 1024.0,
                 pipelineBinds / denom, vertexBinds / denom, vertexBindSkips / denom, renderPasses / denom,
                 dirtyFlushes / denom, dirtyBytes / denom / 1024.0, submits / denom,
@@ -122,15 +125,16 @@ final class MetalPerfCounters {
                 csv = Files.newBufferedWriter(file, StandardCharsets.UTF_8,
                         StandardOpenOption.CREATE, StandardOpenOption.APPEND);
                 if (empty) {
-                    csv.write("time,fps,avg_frame_ms,max_frame_ms,draws_per_frame,terrain_draws_per_frame,indexed_draws_per_frame,uniform_pushes_per_frame,terrain_uniform_pushes_per_frame,uniform_kib_per_frame,pipeline_binds_per_frame,vertex_binds_per_frame,vertex_bind_skips_per_frame,index_binds_per_frame,index_bind_skips_per_frame,render_passes_per_frame,dirty_flushes_per_frame,dirty_buffers_per_frame,dirty_kib_per_frame,submits_per_frame,fences_per_frame,fence_queries_per_frame,fence_waits_per_frame,fence_wait_ms_per_frame,swap_wait_ms_per_frame,blit_ms_per_frame,draw_cpu_ms_per_frame,uniform_cpu_ms_per_frame,dirty_flush_cpu_ms_per_frame,submit_cpu_ms_per_frame,interop_calls_per_frame,interop_cpu_ms_per_frame,pipeline_compiles,pipeline_compile_ms,texture_uploads,texture_upload_kib\n");
+                    csv.write("time,fps,avg_frame_ms,max_frame_ms,draws_per_frame,terrain_draws_per_frame,indexed_draws_per_frame,native_indirect_calls_per_frame,cpu_indirect_commands_per_frame,uniform_pushes_per_frame,terrain_uniform_pushes_per_frame,uniform_kib_per_frame,pipeline_binds_per_frame,vertex_binds_per_frame,vertex_bind_skips_per_frame,index_binds_per_frame,index_bind_skips_per_frame,render_passes_per_frame,dirty_flushes_per_frame,dirty_buffers_per_frame,dirty_kib_per_frame,submits_per_frame,fences_per_frame,fence_queries_per_frame,fence_waits_per_frame,fence_wait_ms_per_frame,swap_wait_ms_per_frame,blit_ms_per_frame,draw_cpu_ms_per_frame,uniform_cpu_ms_per_frame,dirty_flush_cpu_ms_per_frame,submit_cpu_ms_per_frame,interop_calls_per_frame,interop_cpu_ms_per_frame,pipeline_compiles,pipeline_compile_ms,texture_uploads,texture_upload_kib\n");
                 }
                 System.out.println("[Native Accelerator][MetalPerf] CSV: " + file.toAbsolutePath());
             }
             double d = Math.max(1.0, frames);
             csv.write(String.format(Locale.ROOT,
-                    "%s,%.3f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.3f,%.4f,%d,%.4f,%d,%.3f%n",
+                    "%s,%.3f,%.4f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.3f,%.4f,%d,%.4f,%d,%.3f%n",
                     Instant.now(), fps, avgFrameMs, maxFrameNs / 1_000_000.0,
-                    draws/d, terrainDraws/d, indexedDraws/d, uniformPushes/d, terrainUniformPushes/d, uniformBytes/d/1024.0,
+                    draws/d, terrainDraws/d, indexedDraws/d, nativeIndirectCalls/d, cpuIndirectCommands/d,
+                    uniformPushes/d, terrainUniformPushes/d, uniformBytes/d/1024.0,
                     pipelineBinds/d, vertexBinds/d, vertexBindSkips/d, indexBinds/d, indexBindSkips/d,
                     renderPasses/d, dirtyFlushes/d, dirtyBuffers/d, dirtyBytes/d/1024.0,
                     submits/d, fenceCreates/d, fenceQueries/d, fenceWaits/d, fenceWaitNs/d/1_000_000.0,
@@ -161,6 +165,7 @@ final class MetalPerfCounters {
         intervalStartNs = now;
         frames=frameNs=maxFrameNs=0L;
         draws=indexedDraws=terrainDraws=drawNs=0L;
+        nativeIndirectCalls=cpuIndirectCommands=0L;
         pipelineBinds=pipelineBindSkips=0L;
         vertexBinds=vertexBindSkips=indexBinds=indexBindSkips=0L;
         uniformPushes=uniformBytes=uniformPushNs=terrainUniformPushes=0L;

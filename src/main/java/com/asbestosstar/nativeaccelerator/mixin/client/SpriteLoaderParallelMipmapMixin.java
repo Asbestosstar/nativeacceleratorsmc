@@ -1,9 +1,9 @@
 package com.asbestosstar.nativeaccelerator.mixin.client;
 
 import com.asbestosstar.nativeaccelerator.cache.PersistentAtlasLayoutCache;
+import com.asbestosstar.nativeaccelerator.client.AtlasWorkScheduler;
 import com.asbestosstar.nativeaccelerator.client.CachedTextureAtlasSprite;
 import com.asbestosstar.nativeaccelerator.client.FastStitcher;
-import com.asbestosstar.nativeaccelerator.client.AtlasWorkScheduler;
 import com.asbestosstar.nativeaccelerator.client.ModelPipelineProfiler;
 import com.asbestosstar.nativeaccelerator.client.StitcherParityVerifier;
 import com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig;
@@ -27,6 +27,7 @@ import net.minecraft.util.profiling.Zone;
 import org.slf4j.Logger;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.gen.Invoker;
 import org.spongepowered.asm.mixin.injection.At;
@@ -39,23 +40,29 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 /**
- * High-throughput SpriteLoader.stitch replacement.
+ * High-throughput SpriteLoader.stitch replacement with a correctness fence around atlas placement.
  *
- * <p>FastStitcher preserves vanilla placement semantics while pruning fragmented subtrees. GUI uses
- * the fast live stitcher too, but deliberately never replays a persistent layout: every GUI reload
- * computes fresh coordinates from the current sprite set and metadata.</p>
+ * <p>The expensive work (sprite decoding and mip generation) remains parallel. FastStitcher remains the
+ * primary packer, but a cold layout is structurally checked and, by default, compared once against
+ * Minecraft's Stitcher before the layout is allowed into the persistent cache. Warm reloads then reuse
+ * only that verified layout, keeping the normal fast path fast while preventing a stale/bad placement
+ * from surviving across launches.</p>
  */
 @Mixin(SpriteLoader.class)
 public abstract class SpriteLoaderParallelMipmapMixin {
+    @Unique private static final AtomicBoolean NATIVEACCELERATOR_FIX28_ATLAS_MARKER = new AtomicBoolean();
     private static final Logger NATIVEACCELERATOR_LOGGER = LogUtils.getLogger();
     private static final Identifier NATIVEACCELERATOR_GUI_ATLAS =
             Identifier.withDefaultNamespace("textures/atlas/gui.png");
     private static final boolean NATIVEACCELERATOR_FAST_STITCHER =
             NativeAcceleratorConfig.booleanValue("atlas.fastStitcher", true);
+    private static final boolean NATIVEACCELERATOR_SAFE_FAST_STITCHER =
+            NativeAcceleratorConfig.booleanValue("atlas.safeFastStitcher", true);
     private static final boolean NATIVEACCELERATOR_PARALLEL_MIPS =
             NativeAcceleratorConfig.booleanValue("atlas.parallelMipmaps", true);
     private static final boolean NATIVEACCELERATOR_VERIFY_FAST_STITCHER =
@@ -63,6 +70,7 @@ public abstract class SpriteLoaderParallelMipmapMixin {
 
     @Shadow @Final private Identifier location;
     @Shadow @Final private int maxSupportedTextureSize;
+
     @Invoker("getStitchedSprites")
     protected abstract Map<Identifier, TextureAtlasSprite> nativeaccelerator$invokeGetStitchedSprites(
             Stitcher<SpriteContents> stitcher, int atlasWidth, int atlasHeight);
@@ -70,6 +78,9 @@ public abstract class SpriteLoaderParallelMipmapMixin {
     @Inject(method = "stitch", at = @At("HEAD"), cancellable = true, require = 0)
     private void nativeaccelerator$parallelMipmaps(List<SpriteContents> sprites, int maxMipmapLevels,
             Executor executor, CallbackInfoReturnable<SpriteLoader.Preparations> cir) {
+        if (NATIVEACCELERATOR_FIX28_ATLAS_MARKER.compareAndSet(false, true)) {
+            System.out.println("[Native Accelerator] Atlas marker: optimized-restored-fix28");
+        }
         if (!NATIVEACCELERATOR_FAST_STITCHER && !NATIVEACCELERATOR_PARALLEL_MIPS) return;
 
         long totalStarted = ModelPipelineProfiler.start();
@@ -103,12 +114,12 @@ public abstract class SpriteLoaderParallelMipmapMixin {
             int anisotropyBit = options.textureFiltering().get() != TextureFilteringMethod.ANISOTROPIC
                     ? 0 : options.maxAnisotropyBit().get();
             boolean guiAtlas = NATIVEACCELERATOR_GUI_ATLAS.equals(this.location);
+            int padding = 1 << mipLevel << Mth.clamp(anisotropyBit - 1, 0, 4);
 
-            // Persistent placement replay remains disabled for GUI. The fast stitcher itself is safe for GUI
-            // because it computes a fresh vanilla-compatible placement from the live sprites every reload.
+            // GUI still avoids placement replay because widget metadata is correctness-sensitive. All
+            // non-GUI cached layouts are v2 records that were validated before persistence.
             PersistentAtlasLayoutCache.Layout cachedLayout = guiAtlas ? null : PersistentAtlasLayoutCache.load(
                     this.location, sprites, maxTextureSize, mipLevel, anisotropyBit);
-            int padding = 1 << mipLevel << Mth.clamp(anisotropyBit - 1, 0, 4);
             int width;
             int height;
             Map<Identifier, TextureAtlasSprite> result;
@@ -130,6 +141,7 @@ public abstract class SpriteLoaderParallelMipmapMixin {
                 if (cachedSprites.size() == sprites.size()) {
                     result = cachedSprites;
                     ModelPipelineProfiler.addCount("atlas.stitch.layout-skipped", 1);
+                    ModelPipelineProfiler.addCount("atlas.stitch.verified-layout-replay", 1);
                 } else {
                     result = null;
                 }
@@ -144,6 +156,8 @@ public abstract class SpriteLoaderParallelMipmapMixin {
                         ? new FastStitcher<>(maxTextureSize, maxTextureSize, mipLevel, anisotropyBit)
                         : new Stitcher<>(maxTextureSize, maxTextureSize, mipLevel, anisotropyBit);
                 for (SpriteContents spriteInfo : sprites) stitcher.registerSprite(spriteInfo);
+                boolean placementVerified = !NATIVEACCELERATOR_FAST_STITCHER;
+
                 try {
                     long stitchStarted = ModelPipelineProfiler.start();
                     stitcher.stitch();
@@ -151,21 +165,33 @@ public abstract class SpriteLoaderParallelMipmapMixin {
                             ? "atlas.fast-stitcher.placement" : "atlas.stitch.placement", stitchStarted);
                     if (NATIVEACCELERATOR_FAST_STITCHER) {
                         ModelPipelineProfiler.addCount("atlas.fast-stitcher.sprites", sprites.size());
-                    }
 
-                    if (NATIVEACCELERATOR_FAST_STITCHER && NATIVEACCELERATOR_VERIFY_FAST_STITCHER) {
-                        Stitcher<SpriteContents> vanilla = new Stitcher<>(
-                                maxTextureSize, maxTextureSize, mipLevel, anisotropyBit);
-                        for (SpriteContents spriteInfo : sprites) vanilla.registerSprite(spriteInfo);
-                        vanilla.stitch();
-                        if (StitcherParityVerifier.equivalent(stitcher, vanilla)) {
-                            ModelPipelineProfiler.addCount("atlas.fast-stitcher.parity-match", 1);
-                        } else {
+                        String structuralError = StitcherParityVerifier.validationError(stitcher, mipLevel);
+                        if (structuralError != null) {
                             NATIVEACCELERATOR_LOGGER.warn(
-                                    "FastStitcher parity mismatch for {}; using vanilla placement for this atlas",
-                                    this.location);
-                            ModelPipelineProfiler.addCount("atlas.fast-stitcher.parity-mismatch", 1);
-                            stitcher = vanilla;
+                                    "FastStitcher produced an invalid layout for {} ({}); falling back to vanilla",
+                                    this.location, structuralError);
+                            ModelPipelineProfiler.addCount("atlas.fast-stitcher.validation-failure", 1);
+                            stitcher = nativeaccelerator$vanillaStitcher(
+                                    sprites, maxTextureSize, mipLevel, anisotropyBit);
+                            placementVerified = true;
+                        } else if (NATIVEACCELERATOR_SAFE_FAST_STITCHER || NATIVEACCELERATOR_VERIFY_FAST_STITCHER) {
+                            long verifyStarted = ModelPipelineProfiler.start();
+                            Stitcher<SpriteContents> vanilla = nativeaccelerator$vanillaStitcher(
+                                    sprites, maxTextureSize, mipLevel, anisotropyBit);
+                            String mismatch = StitcherParityVerifier.mismatch(stitcher, vanilla, mipLevel);
+                            ModelPipelineProfiler.end("atlas.fast-stitcher.parity", verifyStarted);
+                            if (mismatch == null) {
+                                placementVerified = true;
+                                ModelPipelineProfiler.addCount("atlas.fast-stitcher.parity-match", 1);
+                            } else {
+                                NATIVEACCELERATOR_LOGGER.warn(
+                                        "FastStitcher parity mismatch for {} ({}); using vanilla placement",
+                                        this.location, mismatch);
+                                ModelPipelineProfiler.addCount("atlas.fast-stitcher.parity-mismatch", 1);
+                                stitcher = vanilla;
+                                placementVerified = true;
+                            }
                         }
                     }
                 } catch (StitcherException exception) {
@@ -177,12 +203,13 @@ public abstract class SpriteLoaderParallelMipmapMixin {
                     category.setDetail("Max Texture Size", maxTextureSize);
                     throw new ReportedException(report);
                 }
+
                 width = stitcher.getWidth();
                 height = stitcher.getHeight();
                 result = this.nativeaccelerator$invokeGetStitchedSprites(stitcher, width, height);
                 if (!guiAtlas) {
                     PersistentAtlasLayoutCache.store(this.location, sprites, maxTextureSize, mipLevel, anisotropyBit,
-                            width, height, padding, result);
+                            width, height, padding, placementVerified, result);
                 }
             }
 
@@ -202,5 +229,13 @@ public abstract class SpriteLoaderParallelMipmapMixin {
             ModelPipelineProfiler.end("atlas.stitch.setup", totalStarted);
             cir.setReturnValue(new SpriteLoader.Preparations(width, height, mipLevel, missingSprite, result, readyForUpload));
         }
+    }
+
+    private static Stitcher<SpriteContents> nativeaccelerator$vanillaStitcher(
+            List<SpriteContents> sprites, int maxTextureSize, int mipLevel, int anisotropyBit) {
+        Stitcher<SpriteContents> vanilla = new Stitcher<>(maxTextureSize, maxTextureSize, mipLevel, anisotropyBit);
+        for (SpriteContents spriteInfo : sprites) vanilla.registerSprite(spriteInfo);
+        vanilla.stitch();
+        return vanilla;
     }
 }

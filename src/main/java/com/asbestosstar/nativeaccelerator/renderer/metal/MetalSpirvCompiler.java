@@ -18,6 +18,7 @@ import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.lwjgl.util.spvc.Spvc.*;
 
@@ -28,14 +29,21 @@ import static org.lwjgl.util.spvc.Spvc.*;
  * the LWJGL generation used by Minecraft 26.3. No reflective SPVC dispatch is used here.</p>
  */
 final class MetalSpirvCompiler {
+    private static final AtomicBoolean GENERATOR_MARKER_REPORTED = new AtomicBoolean();
     record StageLayout(
             int[] uniformSlots,
+            int[] packedUniformOffsets,
             int[] samplerSlots,
             int[] storageBufferSlots,
             int uniformBufferCount,
+            int logicalUniformBufferCount,
             int samplerCount,
             int storageBufferCount,
-            int pushConstantSlot) {}
+            int pushConstantSlot,
+            int pushConstantPackedOffset,
+            int packedUniformBytes) {
+        boolean hasPackedUniforms() { return packedUniformBytes > 0; }
+    }
 
     record Compiled(String source, String entryPoint, StageLayout layout) {}
 
@@ -44,11 +52,15 @@ final class MetalSpirvCompiler {
     static Compiled compile(
             BackendRenderPipeline.CreateInfo pipeline,
             BackendRenderPipeline.CreateInfo.Shader shader) throws ShaderCompileException {
+        if (GENERATOR_MARKER_REPORTED.compareAndSet(false, true)) {
+            System.out.println("[Native Accelerator] Metal generator marker: active-msl-layout-fix28");
+        }
         SpvModule module = shader.module();
         SpvModule.Reflection reflection = module.reflect();
         List<BindGroupLayout.UniformDescription> uniforms = pipeline.uniforms();
 
         int[] uniformSlots = filled(uniforms.size(), -1);
+        int[] packedUniformOffsets = filled(uniforms.size(), -1);
         int[] samplerSlots = filled(uniforms.size(), -1);
         int[] storageBufferSlots = filled(uniforms.size(), -1);
         int uniformCount = 0;
@@ -74,13 +86,12 @@ final class MetalSpirvCompiler {
             }
         }
 
-        int pushSlot = pipeline.pushConstantsSize() > 0 ? uniformCount++ : -1;
-        if (uniformCount > 4) {
-            throw new UnsupportedOperationException(
-                    "SDL GPU exposes four uniform-buffer slots per shader stage; pipeline "
-                            + pipeline.name() + " needs " + uniformCount + " in "
-                            + shader.module().type().getName());
-        }
+        int logicalPushSlot = pipeline.pushConstantsSize() > 0 ? uniformCount++ : -1;
+        int logicalUniformCount = uniformCount;
+        int physicalUniformCount = 0; // derived from active generated MSL, not declared pipeline resources
+        int pushSlot = logicalPushSlot >= 0 && logicalPushSlot < 4 ? logicalPushSlot : -1;
+        int pushPackedOffset = -1;
+        int packedBytes = 0;
 
         long context = 0L;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -143,7 +154,8 @@ final class MetalSpirvCompiler {
                         .binding(descriptor.binding());
 
                 if (type == UniformType.UNIFORM_BUFFER) {
-                    binding.msl_buffer(uniformSlots[global]);
+                    int logicalSlot = uniformSlots[global];
+                    binding.msl_buffer(logicalSlot);
                 } else if (type == UniformType.COMBINED_IMAGE_SAMPLER) {
                     binding.msl_texture(samplerSlots[global]);
                     binding.msl_sampler(samplerSlots[global]);
@@ -154,7 +166,6 @@ final class MetalSpirvCompiler {
                     texelBindings.add(new MetalTexelBufferLowering.Binding(
                             temporaryTextureSlot,
                             storageSlot,
-                            uniformCount + storageSlot,
                             uniforms.get(global).gpuFormat()));
                 }
 
@@ -163,13 +174,13 @@ final class MetalSpirvCompiler {
                         "remap MSL resource " + descriptor.name());
             }
 
-            if (pushSlot >= 0) {
+            if (logicalPushSlot >= 0) {
                 SpvcMslResourceBinding push = SpvcMslResourceBinding.calloc(stack);
                 spvc_msl_resource_binding_init(push);
                 push.stage(stage)
                         .desc_set(SPVC_MSL_PUSH_CONSTANT_DESC_SET)
                         .binding(SPVC_MSL_PUSH_CONSTANT_BINDING)
-                        .msl_buffer(pushSlot);
+                        .msl_buffer(logicalPushSlot);
                 check(context,
                         spvc_compiler_msl_add_resource_binding(compiler, push),
                         "remap MSL push constants");
@@ -178,23 +189,83 @@ final class MetalSpirvCompiler {
             PointerBuffer pSource = stack.mallocPointer(1);
             check(context, spvc_compiler_compile(compiler, pSource), "compile MSL");
             String source = MemoryUtil.memUTF8(pSource.get(0));
-            source = MetalTexelBufferLowering.lower(source, texelBindings);
 
             String entryPoint = spvc_compiler_get_cleansed_entry_point_name(
                     compiler, shader.entryPoint(), stage);
             if (entryPoint == null || entryPoint.isBlank()) entryPoint = shader.entryPoint();
+
+            /*
+             * SDL's Metal ABI is defined by the resources that actually survived SPIRV-Cross,
+             * not by RenderPearl's superset pipeline layout. Compact both tables before shader
+             * creation so [[buffer]], [[texture]] and [[sampler]] are consecutive from zero.
+             */
+            MetalUniformPacking.Result uniformsLayout = MetalUniformPacking.lower(
+                    source, entryPoint, logicalUniformCount);
+            source = uniformsLayout.source();
+            physicalUniformCount = uniformsLayout.physicalUniformCount();
+            packedBytes = uniformsLayout.packedBytes();
+
+            for (int i = 0; i < uniformSlots.length; i++) {
+                int logical = uniformSlots[i];
+                if (logical < 0) continue;
+                int physical = uniformsLayout.physicalSlot(logical);
+                int packed = uniformsLayout.packedOffset(logical);
+                uniformSlots[i] = physical;
+                packedUniformOffsets[i] = packed;
+            }
+            if (logicalPushSlot >= 0) {
+                pushSlot = uniformsLayout.physicalSlot(logicalPushSlot);
+                pushPackedOffset = uniformsLayout.packedOffset(logicalPushSlot);
+            }
+
+            MetalSamplerLayout.Result samplerLayout = MetalSamplerLayout.lower(
+                    source, entryPoint, samplerCount);
+            source = samplerLayout.source();
+            int physicalSamplerCount = samplerLayout.samplerCount();
+            for (int i = 0; i < samplerSlots.length; i++) {
+                int logical = samplerSlots[i];
+                if (logical >= 0) samplerSlots[i] = samplerLayout.physicalSlot(logical);
+            }
+            samplerCount = physicalSamplerCount;
+
+            // Texel buffers become SDL Metal storage buffers after the final active uniform table,
+            // exactly as SDL_CreateGPUShader requires.
+            MetalTexelBufferLowering.Result storageLayout = MetalTexelBufferLowering.lower(
+                    source, texelBindings, physicalUniformCount, storageBufferCount);
+            source = storageLayout.source();
+            int physicalStorageBufferCount = storageLayout.storageBufferCount();
+            for (int i = 0; i < storageBufferSlots.length; i++) {
+                int logical = storageBufferSlots[i];
+                if (logical >= 0) storageBufferSlots[i] = storageLayout.physicalSlot(logical);
+            }
+            storageBufferCount = physicalStorageBufferCount;
+
+            if (logicalUniformCount > 0 || physicalSamplerCount > 0 || storageBufferCount > 0) {
+                System.out.println("[Native Accelerator] Metal MSL resource layout: pipeline=" + pipeline.name()
+                        + ", stage=" + shader.module().type().getName()
+                        + ", uniforms=" + logicalUniformCount + "->" + physicalUniformCount
+                        + ", activeUniformLogical=" + java.util.Arrays.toString(uniformsLayout.activeLogicalSlots())
+                        + ", samplers=" + java.util.Arrays.toString(samplerLayout.activeLogicalSlots())
+                        + "->" + physicalSamplerCount
+                        + ", storage=" + storageBufferCount
+                        + (uniformsLayout.packingApplied() ? ", overflowPackedBytes=" + packedBytes : ""));
+            }
 
             return new Compiled(
                     source,
                     entryPoint,
                     new StageLayout(
                             uniformSlots,
+                            packedUniformOffsets,
                             samplerSlots,
                             storageBufferSlots,
-                            uniformCount,
+                            physicalUniformCount,
+                            logicalUniformCount,
                             samplerCount,
                             storageBufferCount,
-                            pushSlot));
+                            pushSlot,
+                            pushPackedOffset,
+                            packedBytes));
         } finally {
             if (context != 0L) {
                 spvc_context_destroy(context);

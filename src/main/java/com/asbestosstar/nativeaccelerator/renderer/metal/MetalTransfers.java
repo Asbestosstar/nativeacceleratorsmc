@@ -3,7 +3,6 @@ package com.asbestosstar.nativeaccelerator.renderer.metal;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.sdl.SDLGPU;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 
@@ -43,9 +42,7 @@ final class MetalTransfers {
             transfer = MetalInterop.sdlLong("SDL_CreateGPUTransferBuffer", device, create);
             require(transfer, "create batched upload transfer buffer");
 
-            long mapped = ((Number)MetalInterop.sdlCall("SDL_MapGPUTransferBuffer", device, transfer, false)).longValue();
-            require(mapped, "map batched upload transfer buffer");
-            ByteBuffer mappedBytes = MemoryUtil.memByteBuffer(mapped, total);
+            ByteBuffer mappedBytes = MetalInterop.mapGpuTransferBuffer(device, transfer, false, total);
             for (int i = 0; i < uploads.size(); i++) {
                 ByteBuffer source = uploads.get(i).bytes().duplicate();
                 ByteBuffer destination = mappedBytes.duplicate();
@@ -102,9 +99,7 @@ final class MetalTransfers {
             transfer = MetalInterop.sdlLong("SDL_CreateGPUTransferBuffer", device, create);
             require(transfer, "create upload transfer buffer");
 
-            long mapped = ((Number)MetalInterop.sdlCall("SDL_MapGPUTransferBuffer", device, transfer, false)).longValue();
-            require(mapped, "map upload transfer buffer");
-            MemoryUtil.memByteBuffer(mapped, size).put(bytes);
+            MetalInterop.mapGpuTransferBuffer(device, transfer, false, size).put(bytes);
             MetalInterop.sdlCall("SDL_UnmapGPUTransferBuffer", device, transfer);
 
             command = MetalInterop.sdlLong("SDL_AcquireGPUCommandBuffer", device);
@@ -153,9 +148,7 @@ final class MetalTransfers {
             transfer = MetalInterop.sdlLong("SDL_CreateGPUTransferBuffer", device, create);
             require(transfer, "create texture upload transfer buffer");
 
-            long mapped = ((Number)MetalInterop.sdlCall("SDL_MapGPUTransferBuffer", device, transfer, false)).longValue();
-            require(mapped, "map texture upload transfer buffer");
-            MemoryUtil.memByteBuffer(mapped, size).put(bytes);
+            MetalInterop.mapGpuTransferBuffer(device, transfer, false, size).put(bytes);
             MetalInterop.sdlCall("SDL_UnmapGPUTransferBuffer", device, transfer);
 
             command = MetalInterop.sdlLong("SDL_AcquireGPUCommandBuffer", device);
@@ -227,8 +220,8 @@ final class MetalTransfers {
                 MetalPerfCounters.fenceWait(waitStart);
                 SDLGPU.SDL_ReleaseGPUFence(device,fence);
             }
-            long mapped=((Number)MetalInterop.sdlCall("SDL_MapGPUTransferBuffer",device,transfer,false)).longValue(); require(mapped,"map download transfer buffer");
-            ByteBuffer out=ByteBuffer.allocateDirect(size); out.put(MemoryUtil.memByteBuffer(mapped,size).duplicate()).flip();
+            ByteBuffer mapped = MetalInterop.mapGpuTransferBuffer(device, transfer, false, size);
+            ByteBuffer out=ByteBuffer.allocateDirect(size); out.put(mapped.duplicate()).flip();
             MetalInterop.sdlCall("SDL_UnmapGPUTransferBuffer",device,transfer);
             return out;
         } finally {
@@ -269,9 +262,7 @@ final class MetalTransfers {
             transfer = MetalInterop.sdlLong("SDL_CreateGPUTransferBuffer", device, create);
             require(transfer, "create upload transfer buffer");
 
-            long mapped = ((Number)MetalInterop.sdlCall("SDL_MapGPUTransferBuffer", device, transfer, false)).longValue();
-            require(mapped, "map upload transfer buffer");
-            MemoryUtil.memByteBuffer(mapped, size).put(bytes);
+            MetalInterop.mapGpuTransferBuffer(device, transfer, false, size).put(bytes);
             MetalInterop.sdlCall("SDL_UnmapGPUTransferBuffer", device, transfer);
 
             src = MetalInterop.calloc("SDL_GPUTransferBufferLocation");
@@ -306,9 +297,7 @@ final class MetalTransfers {
             transfer = MetalInterop.sdlLong("SDL_CreateGPUTransferBuffer", device, create);
             require(transfer, "create texture upload transfer buffer");
 
-            long mapped = ((Number)MetalInterop.sdlCall("SDL_MapGPUTransferBuffer", device, transfer, false)).longValue();
-            require(mapped, "map texture upload transfer buffer");
-            MemoryUtil.memByteBuffer(mapped, size).put(bytes);
+            MetalInterop.mapGpuTransferBuffer(device, transfer, false, size).put(bytes);
             MetalInterop.sdlCall("SDL_UnmapGPUTransferBuffer", device, transfer);
 
             copy = MetalInterop.sdlLong("SDL_BeginGPUCopyPass", command);
