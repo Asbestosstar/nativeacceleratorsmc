@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Set;
+import java.util.zip.CRC32;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -24,6 +25,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class PersistentTextureCache {
     private static final int MAGIC = 0x4E415449; // NATI
+    private static final int VERSION = 2;
+    private static final int HEADER_BYTES = 20;
     private static final boolean ENABLED = NativeAcceleratorConfig.booleanValue("cache.decodedTextures", true);
     private static final Object LOCK = new Object();
     private static final Set<String> PENDING_KEYS = ConcurrentHashMap.newKeySet();
@@ -38,7 +41,7 @@ public final class PersistentTextureCache {
         String key = key(id, resource);
         long started = ModelPipelineProfiler.start();
         ByteBuffer data = cache.view(key);
-        if (data == null || data.remaining() < 12) {
+        if (data == null || data.remaining() < HEADER_BYTES) {
             ModelPipelineProfiler.addCount("texture.decoded-cache.miss", 1);
             return null;
         }
@@ -46,12 +49,21 @@ public final class PersistentTextureCache {
             // Blob files are written with ByteBuffer's default BIG_ENDIAN header encoding.
             data.order(ByteOrder.BIG_ENDIAN);
             int magic = data.getInt();
+            int version = data.getInt();
             int width = data.getInt();
             int height = data.getInt();
+            int expectedCrc = data.getInt();
             long pixelBytes = (long) width * height * 4L;
-            if (magic != MAGIC || width <= 0 || height <= 0 || pixelBytes > Integer.MAX_VALUE
+            if (magic != MAGIC || version != VERSION || width <= 0 || height <= 0 || pixelBytes > Integer.MAX_VALUE
                     || data.remaining() != (int) pixelBytes) {
                 ModelPipelineProfiler.addCount("texture.decoded-cache.invalid", 1);
+                return null;
+            }
+            CRC32 crc = new CRC32();
+            ByteBuffer check = data.duplicate();
+            while (check.hasRemaining()) crc.update(check.get() & 0xff);
+            if ((int) crc.getValue() != expectedCrc) {
+                ModelPipelineProfiler.addCount("texture.decoded-cache.crc-failure", 1);
                 return null;
             }
             NativeImage image = new NativeImage(width, height, false);
@@ -78,7 +90,7 @@ public final class PersistentTextureCache {
                 || image == null || image.isClosed() || image.format() != NativeImage.Format.RGBA) return;
 
         long pixelBytesLong = (long) image.getWidth() * image.getHeight() * 4L;
-        if (pixelBytesLong <= 0L || pixelBytesLong > Integer.MAX_VALUE - 12L) return;
+        if (pixelBytesLong <= 0L || pixelBytesLong > Integer.MAX_VALUE - HEADER_BYTES) return;
         int pixelBytes = (int) pixelBytesLong;
         String key = key(id, resource);
         if (cache.contains(key) || !PENDING_KEYS.add(key)) return;
@@ -87,16 +99,19 @@ public final class PersistentTextureCache {
         long stageStarted = ModelPipelineProfiler.start();
         byte[] payload;
         try {
-            payload = new byte[12 + pixelBytes];
-            ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
-                    .putInt(MAGIC).putInt(image.getWidth()).putInt(image.getHeight());
+            payload = new byte[HEADER_BYTES + pixelBytes];
+            ByteBuffer header = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
+            header.putInt(MAGIC).putInt(VERSION).putInt(image.getWidth()).putInt(image.getHeight()).putInt(0);
             long sourceAddress = ((NativeImagePixelsAccessor) (Object) image).nativeaccelerator$pixels();
             if (sourceAddress == 0L) {
                 PENDING_KEYS.remove(key);
                 return;
             }
             ByteBuffer source = MemoryUtil.memByteBuffer(sourceAddress, pixelBytes);
-            source.get(payload, 12, pixelBytes);
+            source.get(payload, HEADER_BYTES, pixelBytes);
+            CRC32 crc = new CRC32();
+            crc.update(payload, HEADER_BYTES, pixelBytes);
+            ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN).putInt(16, (int) crc.getValue());
             ModelPipelineProfiler.end("texture.decoded-cache.stage-copy", stageStarted);
             ModelPipelineProfiler.addCount("texture.decoded-cache.stage-bytes", pixelBytes);
         } catch (Throwable failure) {
@@ -151,6 +166,7 @@ public final class PersistentTextureCache {
     }
 
     private static String key(Identifier id, Resource resource) {
-        return "rgba\u0000" + id + '\u0000' + resource.sourcePackId();
+        // New namespace prevents old unchecksummed entries from blocking replacement writes.
+        return "rgba-v2\u0000" + id + '\u0000' + resource.sourcePackId();
     }
 }

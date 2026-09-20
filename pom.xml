@@ -267,6 +267,12 @@
     <artifactId>lwjgl-sdl</artifactId>
     <version>3.4.3</version>
 </dependency>
+<dependency>
+    <groupId>org.lwjgl</groupId>
+    <artifactId>lwjgl-opengl</artifactId>
+    <version>3.4.3</version>
+    <scope>provided</scope>
+</dependency>
 
 
 

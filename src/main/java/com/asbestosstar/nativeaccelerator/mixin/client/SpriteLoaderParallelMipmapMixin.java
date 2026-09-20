@@ -67,6 +67,8 @@ public abstract class SpriteLoaderParallelMipmapMixin {
             NativeAcceleratorConfig.booleanValue("atlas.parallelMipmaps", true);
     private static final boolean NATIVEACCELERATOR_VERIFY_FAST_STITCHER =
             NativeAcceleratorConfig.booleanValue("atlas.verifyFastStitcher", false);
+    private static final boolean NATIVEACCELERATOR_LAYOUT_REPLAY =
+            NativeAcceleratorConfig.booleanValue("cache.atlasLayout.replay", false);
 
     @Shadow @Final private Identifier location;
     @Shadow @Final private int maxSupportedTextureSize;
@@ -116,10 +118,14 @@ public abstract class SpriteLoaderParallelMipmapMixin {
             boolean guiAtlas = NATIVEACCELERATOR_GUI_ATLAS.equals(this.location);
             int padding = 1 << mipLevel << Mth.clamp(anisotropyBit - 1, 0, 4);
 
-            // GUI still avoids placement replay because widget metadata is correctness-sensitive. All
-            // non-GUI cached layouts are v2 records that were validated before persistence.
-            PersistentAtlasLayoutCache.Layout cachedLayout = guiAtlas ? null : PersistentAtlasLayoutCache.load(
-                    this.location, sprites, maxTextureSize, mipLevel, anisotropyBit);
+            // Placement replay is deliberately off by default. The expensive PNG decode cache and
+            // parallel mip path remain active, while placement is recomputed from the current live sprite set.
+            // Also, fastStitcher=false must be a real vanilla diagnostic: never replay a cached layout then.
+            boolean allowLayoutReplay = NATIVEACCELERATOR_LAYOUT_REPLAY
+                    && NATIVEACCELERATOR_FAST_STITCHER && !guiAtlas;
+            PersistentAtlasLayoutCache.Layout cachedLayout = allowLayoutReplay
+                    ? PersistentAtlasLayoutCache.load(this.location, sprites, maxTextureSize, mipLevel, anisotropyBit)
+                    : null;
             int width;
             int height;
             Map<Identifier, TextureAtlasSprite> result;
@@ -142,6 +148,7 @@ public abstract class SpriteLoaderParallelMipmapMixin {
                     result = cachedSprites;
                     ModelPipelineProfiler.addCount("atlas.stitch.layout-skipped", 1);
                     ModelPipelineProfiler.addCount("atlas.stitch.verified-layout-replay", 1);
+                    NATIVEACCELERATOR_LOGGER.debug("Replaying verified atlas layout for {}", this.location);
                 } else {
                     result = null;
                 }
@@ -208,6 +215,8 @@ public abstract class SpriteLoaderParallelMipmapMixin {
                 height = stitcher.getHeight();
                 result = this.nativeaccelerator$invokeGetStitchedSprites(stitcher, width, height);
                 if (!guiAtlas) {
+                    // Keep recording verified layouts as a cheap persistent diagnostic/hint even when
+                    // replay is disabled. This preserves cache observability without trusting old placement.
                     PersistentAtlasLayoutCache.store(this.location, sprites, maxTextureSize, mipLevel, anisotropyBit,
                             width, height, padding, placementVerified, result);
                 }

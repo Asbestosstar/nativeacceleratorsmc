@@ -5,6 +5,7 @@ import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.GpuQueryPool;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.IndexType;
+import com.mojang.renderpearl.api.pipeline.UniformType;
 import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
 import com.mojang.renderpearl.backend.api.RenderPassBackend;
 import com.mojang.renderpearl.util.TextureViewAndSampler;
@@ -32,6 +33,7 @@ final class MetalRenderPass implements RenderPassBackend {
     private final int outputWidth;
     private final int outputHeight;
     private final boolean hasDepthAttachment;
+    private final MetalCoordinatePolicy.TargetMode targetMode;
     private MetalRenderPipeline pipeline;
     private Object[] uniforms = new Object[0];
     private boolean[] dirtyUniforms = new boolean[0];
@@ -47,25 +49,17 @@ final class MetalRenderPass implements RenderPassBackend {
     private IndexType boundIndexType;
     private final ArrayDeque<String> debugGroups = new ArrayDeque<>();
 
-    MetalRenderPass(MetalCommandEncoder encoder, long handle, RenderPass.RenderArea renderArea, int outputWidth, int outputHeight, boolean hasDepthAttachment) {
+    MetalRenderPass(MetalCommandEncoder encoder, long handle, RenderPass.RenderArea renderArea, int outputWidth, int outputHeight, boolean hasDepthAttachment, MetalCoordinatePolicy.TargetMode targetMode) {
         this.encoder = encoder; this.handle = handle; this.renderArea = renderArea;
         this.outputWidth = outputWidth; this.outputHeight = outputHeight;
         this.hasDepthAttachment = hasDepthAttachment;
-        MetalTrace.log("PASS_BEGIN", "pass=" + tracePassId + " handle=" + MetalTrace.hex(handle) + " target=" + outputWidth + "x" + outputHeight + " area=" + renderArea.x() + "," + renderArea.y() + "," + renderArea.width() + "x" + renderArea.height() + " depth=" + hasDepthAttachment + " cmd=" + MetalTrace.hex(encoder.commandHandle()));
-        // Vulkan explicitly resets the viewport at the start of every pass. SDL GPU normally
-        // supplies an implicit viewport, but on legacy Metal it can inherit stale pass dimensions.
-        if (encoder.device().explicitViewportPerPass()) {
-            setViewport(0, 0, outputWidth, outputHeight);
-        }
-        // RenderPearl/Vulkan begins every pass with the descriptor render-area scissor. SDL GPU
-        // defaults to the complete target, which can leak world-sized draws into GUI subregions on
-        // legacy Metal drivers. This is intentionally configurable for A/B diagnosis.
-        if (encoder.device().forceRenderAreaScissor()
-                && !(encoder.device().mac1Compat() && encoder.device().mac1RelaxImplicitPassScissor())) {
-            setScissor(renderArea.x(), renderArea.y(), renderArea.width(), renderArea.height());
-        } else if (encoder.device().mac1Compat() && encoder.device().mac1RelaxImplicitPassScissor()) {
-            MetalTrace.log("SCISSOR_PASS_RELAXED", "pass=" + tracePassId + " target=full " + outputWidth + "x" + outputHeight);
-        }
+        this.targetMode = targetMode == null ? MetalCoordinatePolicy.TargetMode.DEFAULT : targetMode;
+        MetalTrace.log("PASS_BEGIN", "pass=" + tracePassId + " handle=" + MetalTrace.hex(handle) + " target=" + outputWidth + "x" + outputHeight + " area=" + renderArea.x() + "," + renderArea.y() + "," + renderArea.width() + "x" + renderArea.height() + " depth=" + hasDepthAttachment + " targetMode=" + this.targetMode + " cmd=" + MetalTrace.hex(encoder.commandHandle()));
+        // Match both vanilla Vulkan and OpenGL: every render pass starts with an explicit full-target
+        // viewport and the descriptor render-area scissor. Relying on SDL/Metal implicit state can
+        // inherit stale world/pass dimensions and makes GUI atlas/button rendering order-dependent.
+        setViewport(0, 0, outputWidth, outputHeight);
+        setScissor(renderArea.x(), renderArea.y(), renderArea.width(), renderArea.height());
     }
 
     long handle() { return handle; }
@@ -88,9 +82,11 @@ final class MetalRenderPass implements RenderPassBackend {
 
     @Override public void setPipeline(BackendRenderPipeline value) {
         if (!(value instanceof MetalRenderPipeline p)) throw new IllegalArgumentException("Foreign pipeline bound to Metal pass");
-        if (pipeline == p) { MetalPerfCounters.pipelineBindSkip(); MetalTrace.log("PIPELINE_BIND_SKIP", "pass=" + tracePassId + " name=\"" + MetalTrace.safe(p.name()) + "\""); return; }
+        // Vulkan rebinds and resets the logical descriptor namespace even when the same pipeline
+        // object is selected again. FrontendRenderPass then replays that pipeline's current values.
+        // Treating this as a complete no-op can retain stale GUI samplers/uniforms across draws.
         pipeline = p;
-        MetalTrace.log("PIPELINE_BIND", "pass=" + tracePassId + " name=\"" + MetalTrace.safe(p.name()) + "\" handle=" + MetalTrace.hex(p.handle(hasDepthAttachment)) + " depthAttachment=" + hasDepthAttachment);
+        MetalTrace.log("PIPELINE_BIND", "pass=" + tracePassId + " name=\"" + MetalTrace.safe(p.name()) + "\" handle=" + MetalTrace.hex(p.handle(hasDepthAttachment, targetMode)) + " depthAttachment=" + hasDepthAttachment + " targetMode=" + targetMode);
 
         // Match RenderPearl's Vulkan and OpenGL backends: a pipeline switch starts with a completely
         // fresh logical uniform namespace.  Keeping values from the previous pipeline is incorrect
@@ -116,14 +112,16 @@ final class MetalRenderPass implements RenderPassBackend {
         vertexPackedDirty = p.vertexLayout().hasPackedUniforms();
         fragmentPackedDirty = p.fragmentLayout().hasPackedUniforms();
         long perfStart=MetalPerfCounters.tic();
-        SDLGPU.SDL_BindGPUGraphicsPipeline(handle, p.handle(hasDepthAttachment));
+        SDLGPU.SDL_BindGPUGraphicsPipeline(handle, p.handle(hasDepthAttachment, targetMode));
         MetalPerfCounters.pipelineBind(perfStart);
     }
 
     @Override public void setUniform(int index, Object value) {
-        if (index < 0) return;
-        if (index >= uniforms.length) uniforms = Arrays.copyOf(uniforms, index + 1);
-        if (index >= dirtyUniforms.length) dirtyUniforms = Arrays.copyOf(dirtyUniforms, index + 1);
+        if (pipeline == null) throw new IllegalStateException("Pipeline must be bound before uniforms");
+        if (index < 0 || index >= uniforms.length) {
+            throw new IndexOutOfBoundsException("Metal uniform index " + index + " outside pipeline "
+                    + pipeline.name() + " uniform count " + uniforms.length);
+        }
         uniforms[index] = value;
         dirtyUniforms[index] = true;
         if (value instanceof GpuBufferSlice slice) {
@@ -149,13 +147,9 @@ final class MetalRenderPass implements RenderPassBackend {
 
     @Override public void enableScissor(int x,int y,int width,int height) { MetalTrace.log("SCISSOR_ENABLE", "pass=" + tracePassId + " rect=" + x + "," + y + "," + width + "x" + height); setScissor(x,y,width,height); }
     @Override public void disableScissor() {
-        if (encoder.device().mac1Compat() && encoder.device().mac1RelaxImplicitPassScissor()) {
-            MetalTrace.log("SCISSOR_DISABLE", "pass=" + tracePassId + " restore=full 0,0," + outputWidth + "x" + outputHeight);
-            setScissor(0,0,outputWidth,outputHeight);
-        } else {
-            MetalTrace.log("SCISSOR_DISABLE", "pass=" + tracePassId + " restore=" + renderArea.x() + "," + renderArea.y() + "," + renderArea.width() + "x" + renderArea.height());
-            setScissor(renderArea.x(),renderArea.y(),renderArea.width(),renderArea.height());
-        }
+        // RenderPearl disableScissor means "restore this pass' render area", not "disable clipping".
+        MetalTrace.log("SCISSOR_DISABLE", "pass=" + tracePassId + " restore=" + renderArea.x() + "," + renderArea.y() + "," + renderArea.width() + "x" + renderArea.height());
+        setScissor(renderArea.x(),renderArea.y(),renderArea.width(),renderArea.height());
     }
     private void setViewport(int x,int y,int w,int h) {
         if (w <= 0 || h <= 0) return;
@@ -172,8 +166,16 @@ final class MetalRenderPass implements RenderPassBackend {
         } finally { MetalInterop.free(viewport); }
     }
     private void setScissor(int x,int y,int w,int h) {
+        MetalCoordinatePolicy.Rect converted = MetalCoordinatePolicy.scissorRect(
+                targetMode, outputHeight, x, y, w, h);
+        MetalTrace.log("SCISSOR", "pass=" + tracePassId
+                + " requested=" + x + "," + y + "," + w + "x" + h
+                + " metal=" + converted.x() + "," + converted.y() + ","
+                + converted.width() + "x" + converted.height()
+                + " targetMode=" + targetMode);
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            SDL_Rect rect = SDL_Rect.calloc(stack).x(x).y(y).w(w).h(h);
+            SDL_Rect rect = SDL_Rect.calloc(stack)
+                    .x(converted.x()).y(converted.y()).w(converted.width()).h(converted.height());
             SDLGPU.SDL_SetGPUScissor(handle, rect);
         }
     }
@@ -305,6 +307,11 @@ final class MetalRenderPass implements RenderPassBackend {
 
         boolean packedVertexChanged = false;
         boolean packedFragmentChanged = false;
+
+        // Vulkan's push-descriptor path requires every pipeline binding to be present on a draw.
+        // Validate here before touching SDL state so a broken Sampler0/Projection/etc. fails with a
+        // useful message instead of becoming a transparent/blank GUI draw.
+        validateUniformBindings();
 
         for (int i = 0; i < uniforms.length; i++) {
             if (i >= dirtyUniforms.length || !dirtyUniforms[i]) continue;
@@ -509,6 +516,34 @@ final class MetalRenderPass implements RenderPassBackend {
         }
     }
 
+    private void validateUniformBindings() {
+        var descriptions = pipeline.uniforms();
+        if (descriptions.size() != uniforms.length) {
+            throw new IllegalStateException("Metal uniform state size mismatch for pipeline " + pipeline.name()
+                    + ": state=" + uniforms.length + ", layout=" + descriptions.size());
+        }
+        for (int i = 0; i < descriptions.size(); i++) {
+            var description = descriptions.get(i);
+            Object value = uniforms[i];
+            if (value == null) {
+                String kind = description.type() == UniformType.COMBINED_IMAGE_SAMPLER ? "sampler " : "uniform ";
+                throw new IllegalStateException("Missing " + kind + description.name()
+                        + " (should be " + description.type() + ") in pipeline " + pipeline.name());
+            }
+            if ((description.type() == UniformType.UNIFORM_BUFFER || description.type() == UniformType.TEXEL_BUFFER)
+                    && !(value instanceof GpuBufferSlice)) {
+                throw new IllegalArgumentException("Metal binding " + description.name() + " in pipeline "
+                        + pipeline.name() + " must be GpuBufferSlice for " + description.type()
+                        + ", got " + value.getClass().getName());
+            }
+            if (description.type() == UniformType.COMBINED_IMAGE_SAMPLER
+                    && !(value instanceof TextureViewAndSampler)) {
+                throw new IllegalArgumentException("Metal binding " + description.name() + " in pipeline "
+                        + pipeline.name() + " must be TextureViewAndSampler, got " + value.getClass().getName());
+            }
+        }
+    }
+
     private void bindSampler(int index,Object value) {
         if(!(value instanceof TextureViewAndSampler pair)||pipeline==null)return;
         if(!(pair.view() instanceof MetalTextureView view)||!(pair.sampler() instanceof MetalSampler sampler))throw new IllegalArgumentException("Foreign texture/sampler bound to Metal pipeline");
@@ -519,14 +554,15 @@ final class MetalRenderPass implements RenderPassBackend {
     private void bindSamplerStage(String method,int slot,MetalTextureView view,MetalSampler sampler) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             SDL_GPUTextureSamplerBinding.Buffer binding = SDL_GPUTextureSamplerBinding.calloc(1, stack);
-            binding.texture(view.metalTexture().handle()).sampler(sampler.handle());
+            long samplerHandle = sampler.handleForView(view);
+            binding.texture(view.metalTexture().handle()).sampler(samplerHandle);
             if ("SDL_BindGPUVertexSamplers".equals(method)) {
                 SDLGPU.SDL_BindGPUVertexSamplers(handle, slot, binding);
             } else {
                 SDLGPU.SDL_BindGPUFragmentSamplers(handle, slot, binding);
             }
             MetalPerfCounters.samplerBind();
-            MetalTrace.log("SAMPLER_BIND", "pass=" + tracePassId + " method=" + method + " slot=" + slot + " texture=" + MetalTrace.hex(view.metalTexture().handle()) + " sampler=" + MetalTrace.hex(sampler.handle()));
+            MetalTrace.log("SAMPLER_BIND", "pass=" + tracePassId + " method=" + method + " slot=" + slot + " texture=" + MetalTrace.hex(view.metalTexture().handle()) + " sampler=" + MetalTrace.hex(samplerHandle) + " baseMip=" + view.baseMipLevel() + " mipLevels=" + view.mipLevels());
         }
     }
     private boolean inTerrainGroup(){

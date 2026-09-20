@@ -37,6 +37,7 @@ mkdir -p "$(dirname -- "$OUTPUT")"
     find "$ROOT/src" "$ROOT/docs" \
         -type f \
         ! -path '*/.DS_Store' \
+        ! -iname '*.png' \
         2>/dev/null | LC_ALL=C sort | while IFS= read -r file; do
         [ "$file" = "$OUTPUT" ] && continue
         rel=${file#"$ROOT/"}

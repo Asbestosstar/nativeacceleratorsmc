@@ -71,7 +71,9 @@
     "client.OptionsMetalRestartMixin",
     "client.VideoSettingsUnixThemeMixin",
     "client.VideoSettingsUnixButtonMixin",
-    "client.VideoSettingsUnixListMixin"
+    "client.VideoSettingsUnixListMixin",
+    "client.GuiItemAtlasRasterParityMixin",
+    "client.GlSamplerVulkanParityMixin"
   ],
   "server": [
     "server.DedicatedServerAffinityMixin",

@@ -27,15 +27,15 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Persists deterministic Stitcher placements for an unchanged sprite set.
  *
- * <p>Version 2 deliberately refuses the older unverified layout records.  A layout is reusable only
+ * <p>Version 3 deliberately refuses older layout records and is used as a verified placement hint by default.  A layout is reusable only
  * after the live padded rectangles have passed structural validation and (by default) the producer
  * marked the placement as verified against Minecraft's Stitcher.  This keeps the warm-start speedup
  * without allowing a stale/bad atlas placement to survive indefinitely.</p>
  */
 public final class PersistentAtlasLayoutCache {
     private static final int MAGIC = 0x4E414C59; // NALY
-    private static final int VERSION = 2;
-    private static final int POLICY_VERSION = 2;
+    private static final int VERSION = 3;
+    private static final int POLICY_VERSION = 3;
     private static final boolean ENABLED = NativeAcceleratorConfig.booleanValue("cache.atlasLayout", true);
     private static final boolean REQUIRE_VERIFIED =
             NativeAcceleratorConfig.booleanValue("cache.atlasLayout.requireVerified", true);

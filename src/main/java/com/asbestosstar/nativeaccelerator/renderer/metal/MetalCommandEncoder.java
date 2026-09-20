@@ -116,6 +116,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         MetalTrace.log("PASS_CREATE_REQUEST", "cmd=" + MetalTrace.hex(commandHandle()) + " colors=" + d.colorAttachments().size() + " depth=" + (d.depthAttachment()!=null) + " area=" + d.renderArea().x() + "," + d.renderArea().y() + "," + d.renderArea().width() + "x" + d.renderArea().height());
         long perfStart=MetalPerfCounters.tic();
         if(activePass!=null)throw new IllegalStateException("Nested Metal render pass");
+        MetalCoordinatePolicy.TargetMode targetMode = MetalCoordinatePolicy.TargetMode.DEFAULT;
         // Upload all mapped vertex/index/storage/indirect buffers once, immediately before the frame's
         // render work. This replaces the old one-submit-per-map behavior.
         device.flushDirtyBuffers(commandHandle());
@@ -130,6 +131,12 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                     if(a==null)throw new UnsupportedOperationException("SDL GPU Metal backend does not support sparse/unused color attachment slots");
                     if(!(a.textureView() instanceof MetalTextureView view))throw new IllegalArgumentException("Foreign color attachment");
                     long targetHandle=view.metalTexture().handle();
+                    MetalCoordinatePolicy.TargetMode classified =
+                            MetalCoordinatePolicy.classifyTarget(view.metalTexture().getLabel());
+                    if (i == 0 || classified == MetalCoordinatePolicy.TargetMode.GUI_ITEM_ATLAS
+                            || classified == MetalCoordinatePolicy.TargetMode.MAIN_TARGET) {
+                        targetMode = classified;
+                    }
                     Object out=MetalInterop.get(colors,i); MetalInterop.set(out,"texture",targetHandle); MetalInterop.set(out,"mip_level",view.baseMipLevel());MetalInterop.set(out,"layer_or_depth_plane",0);
                     boolean firstUse=colorTargetsSeenThisSubmission.add(targetHandle);
                     boolean forceFreshPresentTarget=firstUse
@@ -183,7 +190,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 outputWidth = d.depthAttachment().textureView().getWidth(0);
                 outputHeight = d.depthAttachment().textureView().getHeight(0);
             }
-            activePass=new MetalRenderPass(this,pass,d.renderArea(),outputWidth,outputHeight,d.depthAttachment()!=null); return activePass;
+            activePass=new MetalRenderPass(this,pass,d.renderArea(),outputWidth,outputHeight,d.depthAttachment()!=null,targetMode); return activePass;
         } finally { MetalInterop.free(depth);MetalInterop.free(colors); MetalPerfCounters.renderPass(perfStart); }
     }
     @Override public void submitRenderPass(){if(activePass==null)throw new IllegalStateException("No Metal render pass");MetalRenderPass ending=activePass; ending.traceEnd(); SDLGPU.SDL_EndGPURenderPass(ending.handle());activePass=null;MetalTrace.log("PASS_NATIVE_END", "pass=" + ending.tracePassId());}

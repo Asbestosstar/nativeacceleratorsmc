@@ -22,6 +22,15 @@ public final class MetalCoordinatePolicyTest {
         require("SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE".equals(
                 MetalCoordinatePolicy.frontFace("minecraft:pipeline/lightmap")));
 
+        require(MetalCoordinatePolicy.classifyTarget("Main / Color") == MetalCoordinatePolicy.TargetMode.MAIN_TARGET);
+        require(MetalCoordinatePolicy.classifyTarget("UI items atlas") == MetalCoordinatePolicy.TargetMode.GUI_ITEM_ATLAS);
+        require(MetalCoordinatePolicy.scissorRect(MetalCoordinatePolicy.TargetMode.MAIN_TARGET, 480, 10, 20, 30, 40)
+                .equals(new MetalCoordinatePolicy.Rect(10, 420, 30, 40)));
+        require(MetalCoordinatePolicy.scissorRect(MetalCoordinatePolicy.TargetMode.GUI_ITEM_ATLAS, 512, 0, 448, 64, 64)
+                .equals(new MetalCoordinatePolicy.Rect(0, 448, 64, 64)));
+        require(MetalCoordinatePolicy.scissorRect(MetalCoordinatePolicy.TargetMode.DEFAULT, 480, 10, 20, 30, 40)
+                .equals(new MetalCoordinatePolicy.Rect(10, 20, 30, 40)));
+
         System.out.println("MetalCoordinatePolicyTest: PASS");
     }
 

@@ -52,6 +52,13 @@ final class MetalSpirvCompiler {
     static Compiled compile(
             BackendRenderPipeline.CreateInfo pipeline,
             BackendRenderPipeline.CreateInfo.Shader shader) throws ShaderCompileException {
+        return compile(pipeline, shader, false);
+    }
+
+    static Compiled compile(
+            BackendRenderPipeline.CreateInfo pipeline,
+            BackendRenderPipeline.CreateInfo.Shader shader,
+            boolean targetVertexYFlip) throws ShaderCompileException {
         if (GENERATOR_MARKER_REPORTED.compareAndSet(false, true)) {
             System.out.println("[Native Accelerator] Metal generator marker: active-msl-layout-fix31");
         }
@@ -68,8 +75,7 @@ final class MetalSpirvCompiler {
         int storageBufferCount = 0;
 
         for (SpvModule.Reflection.Descriptor descriptor : reflection.descriptors()) {
-            int global = uniformIndex(uniforms, descriptor.name());
-            if (global < 0) continue;
+            int global = requireUniformIndex(pipeline, uniforms, descriptor);
             UniformType type = uniforms.get(global).type();
             if (type == UniformType.UNIFORM_BUFFER) {
                 uniformSlots[global] = uniformCount++;
@@ -119,7 +125,7 @@ final class MetalSpirvCompiler {
             int stage = module.type() == ShaderType.VERTEX ? 0 : 4; // SpvExecutionModelVertex/Fragment
 
             boolean flipGeneratedTextureY = module.type() == ShaderType.VERTEX
-                    && MetalCoordinatePolicy.flipGeneratedTextureVertexY(pipeline.name());
+                    && (MetalCoordinatePolicy.flipGeneratedTextureVertexY(pipeline.name()) || targetVertexYFlip);
             if (storageBufferCount > 0 || flipGeneratedTextureY) {
                 PointerBuffer pOptions = stack.mallocPointer(1);
                 check(context,
@@ -147,7 +153,13 @@ final class MetalSpirvCompiler {
                                     SPVC_COMPILER_OPTION_FLIP_VERTEX_Y,
                                     true),
                             "flip generated-texture vertex Y for Metal");
-                    MetalCoordinatePolicy.report(pipeline.name());
+                    if (MetalCoordinatePolicy.flipGeneratedTextureVertexY(pipeline.name())) {
+                        MetalCoordinatePolicy.report(pipeline.name());
+                    }
+                    if (targetVertexYFlip) {
+                        System.out.println("[Native Accelerator] Metal target coordinate marker: pipeline="
+                                + pipeline.name() + "; target=gui-item-atlas; vertexYFlip=true");
+                    }
                 }
                 check(context,
                         spvc_compiler_install_compiler_options(compiler, options),
@@ -156,8 +168,7 @@ final class MetalSpirvCompiler {
 
             List<MetalTexelBufferLowering.Binding> texelBindings = new ArrayList<>();
             for (SpvModule.Reflection.Descriptor descriptor : reflection.descriptors()) {
-                int global = uniformIndex(uniforms, descriptor.name());
-                if (global < 0) continue;
+                int global = requireUniformIndex(pipeline, uniforms, descriptor);
                 UniformType type = uniforms.get(global).type();
 
                 SpvcMslResourceBinding binding = SpvcMslResourceBinding.calloc(stack);
@@ -291,6 +302,35 @@ final class MetalSpirvCompiler {
         ByteBuffer out = ByteBuffer.allocateDirect(bytes.length + 1);
         out.put(bytes).put((byte) 0).flip();
         return out;
+    }
+
+
+    private static int requireUniformIndex(BackendRenderPipeline.CreateInfo pipeline,
+                                           List<BindGroupLayout.UniformDescription> uniforms,
+                                           SpvModule.Reflection.Descriptor descriptor) {
+        // RenderPearl's Vulkan backend binds pipeline.uniforms()[i] directly to descriptor binding i
+        // in set 0. Use that ABI as the canonical mapping on Metal as well. Resource names are debug
+        // information and SPIRV-Cross is free to cleanse/rename them, so name-only matching is not
+        // robust enough for GUI samplers such as Sampler0.
+        int binding = descriptor.binding();
+        if (descriptor.descriptorSetIndex() == 0 && binding >= 0 && binding < uniforms.size()) {
+            String expectedName = uniforms.get(binding).name();
+            if (!expectedName.equals(descriptor.name())) {
+                MetalTrace.log("SPIRV_BINDING_NAME_MISMATCH", "pipeline=\"" + MetalTrace.safe(String.valueOf(pipeline.name()))
+                        + "\" binding=" + binding + " reflected=\"" + MetalTrace.safe(descriptor.name())
+                        + "\" layout=\"" + MetalTrace.safe(expectedName) + "\"");
+            }
+            return binding;
+        }
+
+        // Keep a strict fallback for unusual/non-zero-set inputs so the failure is diagnostic rather
+        // than a silently unbound Metal resource.
+        int byName = uniformIndex(uniforms, descriptor.name());
+        if (byName >= 0) return byName;
+        throw new IllegalStateException("Active SPIR-V resource '" + descriptor.name()
+                + "' (set=" + descriptor.descriptorSetIndex() + ", binding=" + descriptor.binding()
+                + ") in pipeline " + pipeline.name()
+                + " has no matching RenderPearl uniform description");
     }
 
     private static int uniformIndex(List<BindGroupLayout.UniformDescription> uniforms, String name) {
