@@ -33,6 +33,7 @@ public abstract class GuiItemAtlasRasterParityMixin {
     private static final boolean NATIVEACCELERATOR_EDGE_GUARD = Boolean.parseBoolean(
             System.getProperty("nativeaccelerator.renderer.itemAtlas.edgeGuard", "true"));
     private static final AtomicBoolean NATIVEACCELERATOR_REPORTED = new AtomicBoolean();
+    private static volatile int NATIVEACCELERATOR_BACKEND_MATCH = -1;
 
     @ModifyArgs(
             method = "drawToSlot",
@@ -68,9 +69,14 @@ public abstract class GuiItemAtlasRasterParityMixin {
     }
 
     private static boolean nativeaccelerator$isOpenGlOrVulkan() {
+        int cached = NATIVEACCELERATOR_BACKEND_MATCH;
+        if (cached >= 0) return cached != 0;
         String backend = RenderSystem.getDevice().getDeviceInfo().backendName();
-        if (backend == null) return false;
+        if (backend == null) { NATIVEACCELERATOR_BACKEND_MATCH = 0; return false; }
         String normalized = backend.toLowerCase(Locale.ROOT);
-        return normalized.contains("opengl") || normalized.contains("vulkan");
+        boolean match = normalized.contains("opengl") || normalized.contains("vulkan");
+        NATIVEACCELERATOR_BACKEND_MATCH = match ? 1 : 0;
+        return match;
     }
 }
+

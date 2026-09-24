@@ -84,3 +84,4 @@ public abstract class MinecraftServerTimingMixin {
     }
 
 }
+

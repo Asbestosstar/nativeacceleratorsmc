@@ -41,3 +41,4 @@ public abstract class MaterialRuleContextDeepProfilingMixin {
         SurfaceDeepProfiler.endSecondary(NATIVEACCELERATOR_SAMPLES.get()[2]);
     }
 }
+

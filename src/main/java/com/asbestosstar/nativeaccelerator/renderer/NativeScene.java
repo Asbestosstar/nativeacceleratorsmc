@@ -68,3 +68,4 @@ public final class NativeScene implements AutoCloseable {
         if (closed.compareAndSet(false, true)) api.destroyScene(handle);
     }
 }
+

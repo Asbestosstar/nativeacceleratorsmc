@@ -25,3 +25,4 @@ public abstract class ModelManagerBatchLoadingMixin {
         if (ModelLoadBatcher.enabled()) cir.setReturnValue(ModelLoadBatcher.loadBlockModels(manager, executor));
     }
 }
+

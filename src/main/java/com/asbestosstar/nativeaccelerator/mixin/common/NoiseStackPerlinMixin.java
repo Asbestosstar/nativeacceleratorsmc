@@ -69,3 +69,4 @@ public abstract class NoiseStackPerlinMixin {
         NoiseStackAcceleration.finish();
     }
 }
+

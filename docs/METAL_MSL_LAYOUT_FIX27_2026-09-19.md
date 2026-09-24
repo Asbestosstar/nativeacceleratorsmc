@@ -19,3 +19,4 @@ Fix27 treats the generated MSL entry signature as authoritative:
 This follows SDL_CreateGPUShader's MSL rule that each argument table starts at zero and contains no gaps, with uniform buffers first in `[[buffer]]` and storage buffers immediately after them.
 
 Startup marker: `[Native Accelerator] Build marker: metal-msl-layout-fix27`.
+

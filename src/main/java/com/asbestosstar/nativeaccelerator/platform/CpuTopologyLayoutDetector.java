@@ -139,3 +139,4 @@ public final class CpuTopologyLayoutDetector {
         } finally { if (p != null && p.isAlive()) p.destroyForcibly(); }
     }
 }
+

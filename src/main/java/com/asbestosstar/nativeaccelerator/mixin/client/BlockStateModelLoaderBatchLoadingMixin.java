@@ -22,3 +22,4 @@ public abstract class BlockStateModelLoaderBatchLoadingMixin {
         if (ModelLoadBatcher.enabled()) cir.setReturnValue(ModelLoadBatcher.loadBlockStates(manager, executor));
     }
 }
+

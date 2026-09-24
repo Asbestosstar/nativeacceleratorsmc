@@ -26,3 +26,4 @@ public final class IdentifierInterner {
         IDENTIFIERS.clear();
     }
 }
+

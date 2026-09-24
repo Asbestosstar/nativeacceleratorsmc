@@ -10,3 +10,4 @@ public record CpuCacheInfo(long l1DataBytes, long l2Bytes, long l3Bytes, int lin
         source = source == null || source.isBlank() ? "unknown" : source;
     }
 }
+

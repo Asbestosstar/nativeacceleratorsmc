@@ -19,3 +19,4 @@ public interface GradientNoiseAccessor {
     @Accessor("offsetZ")
     double nativeaccelerator$offsetZ();
 }
+

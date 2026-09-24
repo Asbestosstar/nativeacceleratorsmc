@@ -142,3 +142,4 @@ public final class Minecraft263AccelerationTargets {
 
     public record Target(String className, String methods, String nativeKernel) {}
 }
+

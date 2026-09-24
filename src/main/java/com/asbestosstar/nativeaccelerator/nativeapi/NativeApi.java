@@ -72,3 +72,4 @@ public interface NativeApi {
                           double offsetX, double offsetY, double offsetZ,
                           boolean wrapCoordinates);
 }
+

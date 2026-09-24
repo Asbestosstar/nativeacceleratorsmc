@@ -73,7 +73,10 @@
     "client.VideoSettingsUnixButtonMixin",
     "client.VideoSettingsUnixListMixin",
     "client.GuiItemAtlasRasterParityMixin",
-    "client.GlSamplerVulkanParityMixin"
+    "client.GlSamplerVulkanParityMixin",
+    "client.GlCommandEncoderThroughputMixin",
+    "client.SectionCompileBackpressureMixin",
+    "client.SectionResortBackpressureMixin"
   ],
   "server": [
     "server.DedicatedServerAffinityMixin",
@@ -84,3 +87,4 @@
     "defaultRequire": 1
   }
 }
+

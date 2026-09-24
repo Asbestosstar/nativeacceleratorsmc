@@ -183,3 +183,4 @@ public abstract class VideoSettingsMetalOptionMixin extends OptionsSubScreen {
     }
 
 }
+

@@ -113,3 +113,4 @@ public final class ModelPipelineProfiler {
 
     private record Row(String name, long nanos, long calls, long operations) {}
 }
+

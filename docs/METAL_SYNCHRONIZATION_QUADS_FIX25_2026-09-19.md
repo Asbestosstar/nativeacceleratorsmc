@@ -38,3 +38,4 @@ triangulated by RenderPearl/Minecraft.
 
 Startup marker:
 `[Native Accelerator] Build marker: metal-sync-quad-fix25`
+

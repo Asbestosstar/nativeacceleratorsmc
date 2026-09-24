@@ -95,3 +95,4 @@ na_enable_solaris_dax(nativeaccelerator)
 
 The helper checks for both `dax.h` and `libdax`, adds the Solaris source only when both exist, and links
 `-ldax`. No stub symbol is emitted on unsupported systems so Java optional-symbol detection remains exact.
+

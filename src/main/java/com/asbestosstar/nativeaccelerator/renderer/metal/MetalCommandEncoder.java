@@ -17,6 +17,7 @@ import org.lwjgl.sdl.SDL_GPUDepthStencilTargetInfo;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.HashSet;
@@ -38,52 +39,45 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     private long logicalCurrentSubmitIndex = 1L;
     private long logicalCompletedSubmitIndex = 0L;
     private final List<Long> retainedTextureTransfers = new ArrayList<>();
+    private final List<MetalTransfers.BufferUpload> pendingBufferUploads = new ArrayList<>();
+    private final List<ByteBuffer> pendingUploadBlocks = new ArrayList<>();
+    private ByteBuffer pendingUploadBlock;
+    private static final int UPLOAD_BLOCK_BYTES = Math.max(256 * 1024,
+            Integer.getInteger("nativeaccelerator.renderer.metal.uploadBlockBytes", 4 * 1024 * 1024));
 
-    MetalCommandEncoder(MetalDevice device) { this.device=device; this.transientMemory=new MetalTransientMemory(device); MetalTrace.log("ENCODER_CREATE", "encoder=" + traceEncoderId); }
+    MetalCommandEncoder(MetalDevice device) { this.device=device; this.transientMemory=new MetalTransientMemory(device); if (MetalTrace.enabled()) MetalTrace.log("ENCODER_CREATE", "encoder=" + traceEncoderId); }
     long traceEncoderId(){ return traceEncoderId; }
     MetalDevice device() { return device; }
     long commandHandle() {
-        if(command==0L){ command=SDLGPU.SDL_AcquireGPUCommandBuffer(device.handle()); if(command!=0L){ traceCommandSequence++; MetalTrace.log("CMD_ACQUIRE", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command)); } if(command==0L)throw new IllegalStateException("SDL_AcquireGPUCommandBuffer failed: "+MetalInterop.lastSdlError()); }
+        if(command==0L){ command=SDLGPU.SDL_AcquireGPUCommandBuffer(device.handle()); if(command!=0L){ traceCommandSequence++; if (MetalTrace.enabled()) MetalTrace.log("CMD_ACQUIRE", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command)); } if(command==0L)throw new IllegalStateException("SDL_AcquireGPUCommandBuffer failed: "+MetalInterop.lastSdlError()); }
         return command;
     }
 
     @Override public void submit() {
-        MetalTrace.log("CMD_SUBMIT_REQUEST", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command) + " dirtyBuffers=" + device.hasDirtyBuffers() + " activePass=" + (activePass!=null));
+        if (MetalTrace.enabled()) MetalTrace.log("CMD_SUBMIT_REQUEST", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command) + " dirtyBuffers=" + device.hasDirtyBuffers() + " activePass=" + (activePass!=null));
         if(activePass!=null) throw new IllegalStateException("Cannot submit Metal command buffer inside a render pass");
+        flushPendingBufferUploads();
         if(device.hasDirtyBuffers()) device.flushDirtyBuffers(commandHandle());
         if(command!=0L){
             long start=MetalPerfCounters.tic();
             if (device.mac1Compat()) {
-                // Match RenderPearl/Vulkan fence semantics on the legacy Mac1 path: do not let
-                // createFence() split a logical frame into many SDL submissions.  With one frame
-                // in flight we conservatively wait for this real submit to complete, then all
-                // logical fences associated with this submit index become complete together.
-                long submittedIndex = logicalCurrentSubmitIndex;
+                // Do not immediately wait for legacy Mac1 submissions. The old correctness path
+                // serialized every frame and erased the benefit of frames-in-flight. Retire
+                // transient buffers/texture-transfer buffers behind the native fence instead.
+                long submittedIndex = logicalCurrentSubmitIndex++;
                 long nativeFence = SDLGPU.SDL_SubmitGPUCommandBufferAndAcquireFence(command);
                 if (nativeFence == 0L) {
                     throw new IllegalStateException("SDL_SubmitGPUCommandBufferAndAcquireFence failed: " + MetalInterop.lastSdlError());
                 }
-                MetalTrace.log("MAC1_REAL_SUBMIT", "encoder=" + traceEncoderId + " logicalSubmit=" + submittedIndex
+                if (MetalTrace.enabled()) MetalTrace.log("MAC1_REAL_SUBMIT", "encoder=" + traceEncoderId + " logicalSubmit=" + submittedIndex
                         + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command)
                         + " nativeFence=" + MetalTrace.hex(nativeFence));
-                try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
-                    org.lwjgl.PointerBuffer fences = stack.mallocPointer(1).put(0, nativeFence);
-                    long waitStart = System.nanoTime();
-                    boolean ok = SDLGPU.SDL_WaitForGPUFences(device.handle(), true, fences);
-                    MetalTrace.log("MAC1_REAL_SUBMIT_WAIT", "encoder=" + traceEncoderId + " logicalSubmit=" + submittedIndex
-                            + " ok=" + ok + " ns=" + (System.nanoTime() - waitStart));
-                    if (!ok) throw new IllegalStateException("SDL_WaitForGPUFences failed: " + MetalInterop.lastSdlError());
-                } finally {
-                    SDLGPU.SDL_ReleaseGPUFence(device.handle(), nativeFence);
-                }
-                if (!retainedTextureTransfers.isEmpty()) {
-                    MetalTrace.log("TEXTURE_TRANSFER_RELEASE_BATCH", "encoder=" + traceEncoderId + " count=" + retainedTextureTransfers.size());
-                    for (long transfer : retainedTextureTransfers) MetalTransfers.releaseTransferBuffer(device.handle(), transfer);
-                    retainedTextureTransfers.clear();
-                }
-                transientMemory.release();
-                logicalCompletedSubmitIndex = submittedIndex;
-                logicalCurrentSubmitIndex = submittedIndex + 1L;
+                List<Long> transfers = retainedTextureTransfers.isEmpty()
+                        ? List.of() : List.copyOf(retainedTextureTransfers);
+                retainedTextureTransfers.clear();
+                MetalTransientMemory retiringMemory = transientMemory;
+                device.retireSubmission(retiringMemory, nativeFence, transfers,
+                        () -> markLogicalSubmitCompleted(submittedIndex));
             } else if (transientMemory.isEmpty()) {
                 MetalTransfers.submit(command);
                 transientMemory.release();
@@ -95,7 +89,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                 device.retireTransientMemory(transientMemory, fence);
             }
             MetalPerfCounters.submit(start);
-            MetalTrace.log("CMD_SUBMITTED", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command) + " transientEmpty=" + transientMemory.isEmpty());
+            if (MetalTrace.enabled()) MetalTrace.log("CMD_SUBMITTED", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command) + " transientEmpty=" + transientMemory.isEmpty());
             command=0L;
             transientMemory=new MetalTransientMemory(device);
             colorTargetsSeenThisSubmission.clear();
@@ -113,12 +107,12 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     @Override public TransientMemory transientMemory(){return transientMemory;}
 
     @Override public RenderPassBackend createRenderPass(RenderPassDescriptor d) {
-        MetalTrace.log("PASS_CREATE_REQUEST", "cmd=" + MetalTrace.hex(commandHandle()) + " colors=" + d.colorAttachments().size() + " depth=" + (d.depthAttachment()!=null) + " area=" + d.renderArea().x() + "," + d.renderArea().y() + "," + d.renderArea().width() + "x" + d.renderArea().height());
+        if (MetalTrace.enabled()) MetalTrace.log("PASS_CREATE_REQUEST", "cmd=" + MetalTrace.hex(commandHandle()) + " colors=" + d.colorAttachments().size() + " depth=" + (d.depthAttachment()!=null) + " area=" + d.renderArea().x() + "," + d.renderArea().y() + "," + d.renderArea().width() + "x" + d.renderArea().height());
         long perfStart=MetalPerfCounters.tic();
         if(activePass!=null)throw new IllegalStateException("Nested Metal render pass");
         MetalCoordinatePolicy.TargetMode targetMode = MetalCoordinatePolicy.TargetMode.DEFAULT;
-        // Upload all mapped vertex/index/storage/indirect buffers once, immediately before the frame's
-        // render work. This replaces the old one-submit-per-map behavior.
+        // Upload staged terrain writes and mapped CPU-shadow updates immediately before render work.
+        flushPendingBufferUploads();
         device.flushDirtyBuffers(commandHandle());
         SDL_GPUColorTargetInfo.Buffer colors=null;
         SDL_GPUDepthStencilTargetInfo depth=null;
@@ -144,7 +138,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                             && targetHandle==device.lastPresentedSourceHandle()
                             && a.clearValue().isEmpty();
                     boolean clear=a.clearValue().isPresent() || forceFreshPresentTarget;
-                    MetalTrace.log("COLOR_ATTACHMENT", "slot=" + i + " texture=" + MetalTrace.hex(targetHandle)
+                    if (MetalTrace.enabled()) MetalTrace.log("COLOR_ATTACHMENT", "slot=" + i + " texture=" + MetalTrace.hex(targetHandle)
                             + " mip=" + view.baseMipLevel() + " size=" + view.getWidth(0) + "x" + view.getHeight(0)
                             + " requestedLoad=" + (a.clearValue().isPresent()?"CLEAR":"LOAD")
                             + " actualLoad=" + (clear?"CLEAR":"LOAD")
@@ -159,14 +153,14 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                         setColor(MetalInterop.get(out,"clear_color"),a.clearValue().get());
                     } else if(forceFreshPresentTarget) {
                         setColor(MetalInterop.get(out,"clear_color"),new org.joml.Vector4f(0f,0f,0f,1f));
-                        MetalTrace.log("STALE_SOURCE_CLEAR", "texture=" + MetalTrace.hex(targetHandle));
+                        if (MetalTrace.enabled()) MetalTrace.log("STALE_SOURCE_CLEAR", "texture=" + MetalTrace.hex(targetHandle));
                     }
                 }
             }
             if(d.depthAttachment()!=null){
                 var a=d.depthAttachment(); if(!(a.textureView() instanceof MetalTextureView view))throw new IllegalArgumentException("Foreign depth attachment");
                 depth=(SDL_GPUDepthStencilTargetInfo)MetalInterop.calloc("SDL_GPUDepthStencilTargetInfo"); MetalInterop.set(depth,"texture",view.metalTexture().handle());
-                MetalTrace.log("DEPTH_ATTACHMENT", "texture=" + MetalTrace.hex(view.metalTexture().handle()) + " mip=" + view.baseMipLevel() + " size=" + view.getWidth(0) + "x" + view.getHeight(0) + " load=" + (a.clearValue().isPresent()?"CLEAR":"LOAD") + " cycle=false");
+                if (MetalTrace.enabled()) MetalTrace.log("DEPTH_ATTACHMENT", "texture=" + MetalTrace.hex(view.metalTexture().handle()) + " mip=" + view.baseMipLevel() + " size=" + view.getWidth(0) + "x" + view.getHeight(0) + " load=" + (a.clearValue().isPresent()?"CLEAR":"LOAD") + " cycle=false");
                 MetalInterop.set(depth,"clear_depth",(float)a.clearValue().orElse(1.0));
                 MetalInterop.set(depth,"load_op",MetalInterop.sdl(a.clearValue().isPresent()?"SDL_GPU_LOADOP_CLEAR":"SDL_GPU_LOADOP_LOAD"));MetalInterop.set(depth,"store_op",MetalInterop.sdl("SDL_GPU_STOREOP_STORE"));
                 MetalInterop.set(depth,"stencil_load_op",MetalInterop.sdl("SDL_GPU_LOADOP_DONT_CARE"));MetalInterop.set(depth,"stencil_store_op",MetalInterop.sdl("SDL_GPU_STOREOP_DONT_CARE"));
@@ -193,7 +187,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             activePass=new MetalRenderPass(this,pass,d.renderArea(),outputWidth,outputHeight,d.depthAttachment()!=null,targetMode); return activePass;
         } finally { MetalInterop.free(depth);MetalInterop.free(colors); MetalPerfCounters.renderPass(perfStart); }
     }
-    @Override public void submitRenderPass(){if(activePass==null)throw new IllegalStateException("No Metal render pass");MetalRenderPass ending=activePass; ending.traceEnd(); SDLGPU.SDL_EndGPURenderPass(ending.handle());activePass=null;MetalTrace.log("PASS_NATIVE_END", "pass=" + ending.tracePassId());}
+    @Override public void submitRenderPass(){if(activePass==null)throw new IllegalStateException("No Metal render pass");MetalRenderPass ending=activePass; ending.traceEnd(); SDLGPU.SDL_EndGPURenderPass(ending.handle());activePass=null;if (MetalTrace.enabled()) MetalTrace.log("PASS_NATIVE_END", "pass=" + ending.tracePassId());}
 
     @Override public void clearColorTexture(GpuTexture texture,Vector4fc value){ clear(texture,value,null,1.0,0,0,texture.getWidth(0),texture.getHeight(0),0); }
     @Override public void clearColorAndDepthTextures(GpuTexture color,Vector4fc value,GpuTexture depth,double depthValue){ clear(color,value,depth,depthValue,0,0,color.getWidth(0),color.getHeight(0),0); }
@@ -258,7 +252,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
             // slots' depth values are not sampled after their color result has been produced.
             // Clearing the complete depth attachment is therefore conservative and avoids the
             // unreliable D32 transfer path without erasing neighboring color slots.
-            MetalTrace.log("GUI_ATLAS_DEPTH_SAFE_CLEAR", "depth=" + MetalTrace.hex(metal(depth).handle())
+            if (MetalTrace.enabled()) MetalTrace.log("GUI_ATLAS_DEPTH_SAFE_CLEAR", "depth=" + MetalTrace.hex(metal(depth).handle())
                     + " requestedRect=" + x + "," + y + "," + width + "x" + height + " value=" + depthValue);
             clearDepthTexture(depth, depthValue);
         } else {
@@ -273,21 +267,35 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
     @Override public void writeToBuffer(GpuBufferSlice dst,ByteBuffer data){
         if(activePass!=null)throw new IllegalStateException("Cannot write buffer inside a Metal render pass");
-        MetalTrace.log("WRITE_BUFFER", "buffer=" + MetalTrace.hex(metal(dst.buffer()).handle()) + " offset=" + dst.offset() + " bytes=" + data.remaining());
-        MetalGpuBuffer b=metal(dst.buffer()); b.overwriteShadow(dst.offset(),data); b.markDirty(dst.offset(),data.remaining());
+        MetalGpuBuffer b=metal(dst.buffer());
+        if (MetalTrace.enabled()) MetalTrace.log("WRITE_BUFFER", "buffer=" + MetalTrace.hex(b.handle()) + " offset=" + dst.offset() + " bytes=" + data.remaining());
+        if (b.hasCpuShadow()) {
+            b.overwriteShadow(dst.offset(),data);
+            b.markDirty(dst.offset(),data.remaining());
+        } else {
+            // Terrain uber-buffers are GPU-only. Snapshot only this write into a bounded per-encoder
+            // staging arena instead of retaining a 128/32 MiB CPU mirror for the whole heap.
+            ByteBuffer staged = stageBufferUpload(data);
+            pendingBufferUploads.add(new MetalTransfers.BufferUpload(b.handle(), dst.offset(), staged));
+        }
     }
     @Override public void copyToBuffer(GpuBufferSlice src,GpuBufferSlice dst){
         if(activePass!=null)throw new IllegalStateException("Cannot copy buffer inside a Metal render pass");
         if(src.length()>dst.length())throw new IllegalArgumentException("Destination slice too small");
+        flushPendingBufferUploads();
         device.flushDirtyBuffers(commandHandle());
         MetalGpuBuffer source=metal(src.buffer()), destination=metal(dst.buffer());
-        // Keep the CPU shadow coherent for later maps/uniform pushes while the actual copy stays GPU-side.
-        ByteBuffer bytes=source.shadowSlice(src.offset(),src.length()); destination.overwriteShadow(dst.offset(),bytes);
+        // Preserve CPU coherence only when both resources intentionally have CPU shadows. Pure
+        // GPU terrain arenas stay GPU-side and avoid a redundant host copy.
+        if (source.hasCpuShadow() && destination.hasCpuShadow()) {
+            ByteBuffer bytes=source.shadowSlice(src.offset(),src.length());
+            destination.overwriteShadow(dst.offset(),bytes);
+        }
         MetalTransfers.encodeCopyBuffer(commandHandle(),source,src.offset(),destination,dst.offset(),src.length());
     }
     @Override public void writeToTexture(GpuTexture texture,ByteBuffer data,int mip,int depthOrLayer,int destX,int destY,int width,int height){
         if(activePass!=null)throw new IllegalStateException("Cannot upload texture inside a Metal render pass");
-        MetalTrace.log("WRITE_TEXTURE", "texture=" + MetalTrace.hex(metal(texture).handle()) + " mip=" + mip + " layer=" + depthOrLayer + " rect=" + destX + "," + destY + "," + width + "x" + height + " bytes=" + data.remaining());
+        if (MetalTrace.enabled()) MetalTrace.log("WRITE_TEXTURE", "texture=" + MetalTrace.hex(metal(texture).handle()) + " mip=" + mip + " layer=" + depthOrLayer + " rect=" + destX + "," + destY + "," + width + "x" + height + " bytes=" + data.remaining());
         MetalGpuTexture destination=metal(texture);
         if(depthOrLayer<0 || depthOrLayer>=destination.getDepthOrLayers())
             throw new IllegalArgumentException("Texture layer out of range: "+depthOrLayer+" / "+destination.getDepthOrLayers());
@@ -318,17 +326,18 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     }
     @Override public void copyTextureToTexture(GpuTexture src,GpuTexture dst,int mip,int destX,int destY,int sourceX,int sourceY,int width,int height){
         if(activePass!=null)throw new IllegalStateException("Cannot copy texture inside a Metal render pass");
-        MetalTrace.log("COPY_TEXTURE", "src=" + MetalTrace.hex(metal(src).handle()) + " dst=" + MetalTrace.hex(metal(dst).handle()) + " mip=" + mip + " srcXY=" + sourceX + "," + sourceY + " dstXY=" + destX + "," + destY + " size=" + width + "x" + height);
+        if (MetalTrace.enabled()) MetalTrace.log("COPY_TEXTURE", "src=" + MetalTrace.hex(metal(src).handle()) + " dst=" + MetalTrace.hex(metal(dst).handle()) + " mip=" + mip + " srcXY=" + sourceX + "," + sourceY + " dstXY=" + destX + "," + destY + " size=" + width + "x" + height);
         MetalTransfers.encodeCopyTexture(commandHandle(),metal(src),metal(dst),mip,destX,destY,sourceX,sourceY,width,height);
     }
     @Override public GpuFence createFence(){
         if(activePass!=null) throw new IllegalStateException("Cannot create Metal fence inside a render pass");
+        flushPendingBufferUploads();
         if (device.mac1Compat()) {
             // Vulkan createFence() only captures the current submit index; it does NOT submit.
             // The old Metal implementation submitted here, splitting one Minecraft frame into
             // many tiny command buffers (the fix49 trace showed dozens per frame).
             long submitIndex = logicalCurrentSubmitIndex;
-            MetalTrace.log("LOGICAL_FENCE_CREATE", "encoder=" + traceEncoderId + " submitIndex=" + submitIndex
+            if (MetalTrace.enabled()) MetalTrace.log("LOGICAL_FENCE_CREATE", "encoder=" + traceEncoderId + " submitIndex=" + submitIndex
                     + " cmd=" + MetalTrace.hex(command));
             return new MetalFence(this, submitIndex);
         }
@@ -336,48 +345,101 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         // Keep the existing native-fence behavior for non-Mac1 devices for now; the parity change
         // is deliberately isolated to the legacy NVIDIA/OCLP path under investigation.
         long cmd=commandHandle();
-        MetalTrace.log("FENCE_SUBMIT_BEGIN", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(cmd) + " dirtyBuffers=" + device.hasDirtyBuffers() + " transientEmpty=" + transientMemory.isEmpty());
+        if (MetalTrace.enabled()) MetalTrace.log("FENCE_SUBMIT_BEGIN", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(cmd) + " dirtyBuffers=" + device.hasDirtyBuffers() + " transientEmpty=" + transientMemory.isEmpty());
         if(device.hasDirtyBuffers()) device.flushDirtyBuffers(cmd);
         long start=MetalPerfCounters.tic();
         long fence=SDLGPU.SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
         long submitNs=MetalPerfCounters.tic()-start;
         MetalPerfCounters.submit(start);
         if(fence==0L) {
-            MetalTrace.log("FENCE_SUBMIT_FAIL", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(cmd) + " error=\"" + MetalTrace.safe(MetalInterop.lastSdlError()) + "\"");
+            if (MetalTrace.enabled()) MetalTrace.log("FENCE_SUBMIT_FAIL", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(cmd) + " error=\"" + MetalTrace.safe(MetalInterop.lastSdlError()) + "\"");
             throw new IllegalStateException("SDL_SubmitGPUCommandBufferAndAcquireFence failed: "+MetalInterop.lastSdlError());
         }
-        MetalTrace.log("FENCE_SUBMITTED", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(cmd) + " fence=" + MetalTrace.hex(fence) + " submitNs=" + submitNs);
+        if (MetalTrace.enabled()) MetalTrace.log("FENCE_SUBMITTED", "encoder=" + traceEncoderId + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(cmd) + " fence=" + MetalTrace.hex(fence) + " submitNs=" + submitNs);
         command=0L;
         if (!transientMemory.isEmpty()) {
             try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
                 org.lwjgl.PointerBuffer fences = stack.mallocPointer(1).put(0, fence);
                 long waitStart = System.nanoTime();
-                MetalTrace.log("FENCE_WAIT_BEGIN", "encoder=" + traceEncoderId + " fence=" + MetalTrace.hex(fence) + " reason=transient-retire");
+                if (MetalTrace.enabled()) MetalTrace.log("FENCE_WAIT_BEGIN", "encoder=" + traceEncoderId + " fence=" + MetalTrace.hex(fence) + " reason=transient-retire");
                 boolean waitOk = SDLGPU.SDL_WaitForGPUFences(device.handle(), true, fences);
                 long waitNs = System.nanoTime() - waitStart;
-                MetalTrace.log("FENCE_WAIT_END", "encoder=" + traceEncoderId + " fence=" + MetalTrace.hex(fence) + " ok=" + waitOk + " ns=" + waitNs + " reason=transient-retire");
+                if (MetalTrace.enabled()) MetalTrace.log("FENCE_WAIT_END", "encoder=" + traceEncoderId + " fence=" + MetalTrace.hex(fence) + " ok=" + waitOk + " ns=" + waitNs + " reason=transient-retire");
                 if (!waitOk) throw new IllegalStateException("SDL_WaitForGPUFences failed while retiring transient memory: " + MetalInterop.lastSdlError());
             }
         }
         transientMemory.release();
         transientMemory=new MetalTransientMemory(device);
-        MetalTrace.log("FENCE_RETURN", "encoder=" + traceEncoderId + " fence=" + MetalTrace.hex(fence));
+        if (MetalTrace.enabled()) MetalTrace.log("FENCE_RETURN", "encoder=" + traceEncoderId + " fence=" + MetalTrace.hex(fence));
         return new MetalFence(device,fence);
     }
 
     synchronized boolean awaitLogicalFence(long submitIndex, long timeoutNs) {
-        if (logicalCompletedSubmitIndex >= submitIndex) {
-            MetalTrace.log("LOGICAL_FENCE_COMPLETE", "encoder=" + traceEncoderId + " submitIndex=" + submitIndex
-                    + " completedSubmit=" + logicalCompletedSubmitIndex);
-            return true;
-        }
+        device.reapCompletedTransientMemory();
+        if (logicalCompletedSubmitIndex >= submitIndex) return true;
         if (submitIndex >= logicalCurrentSubmitIndex) {
-            MetalTrace.log("LOGICAL_FENCE_PENDING_CURRENT", "encoder=" + traceEncoderId + " submitIndex=" + submitIndex
-                    + " currentSubmit=" + logicalCurrentSubmitIndex + " timeoutNs=" + timeoutNs);
             if (timeoutNs == 0L) return false;
             throw new IllegalStateException("Cannot wait on a fence for the current unsubmitted Metal submit");
         }
-        return logicalCompletedSubmitIndex >= submitIndex;
+        if (timeoutNs == 0L) return false;
+
+        if (timeoutNs < 0L) {
+            while (logicalCompletedSubmitIndex < submitIndex) {
+                device.waitForOldestRetiredSubmission();
+            }
+            return true;
+        }
+
+        long deadline = System.nanoTime() + timeoutNs;
+        while (logicalCompletedSubmitIndex < submitIndex) {
+            device.reapCompletedTransientMemory();
+            if (logicalCompletedSubmitIndex >= submitIndex) return true;
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0L) return false;
+            LockSupport.parkNanos(Math.min(remaining, 100_000L));
+        }
+        return true;
+    }
+
+    private synchronized void markLogicalSubmitCompleted(long submitIndex) {
+        if (submitIndex > logicalCompletedSubmitIndex) logicalCompletedSubmitIndex = submitIndex;
+    }
+
+    private ByteBuffer stageBufferUpload(ByteBuffer data) {
+        ByteBuffer src = data.duplicate();
+        int size = src.remaining();
+        if (size == 0) return ByteBuffer.allocate(0);
+        ByteBuffer block = pendingUploadBlock;
+        if (block == null || block.remaining() < size) {
+            int capacity = Math.max(UPLOAD_BLOCK_BYTES, alignUp(size, 64 * 1024));
+            block = ByteBuffer.allocateDirect(capacity).order(ByteOrder.nativeOrder());
+            pendingUploadBlocks.add(block);
+            pendingUploadBlock = block;
+        }
+        int start = block.position();
+        block.put(src);
+        ByteBuffer slice = block.duplicate().order(ByteOrder.nativeOrder());
+        slice.position(start).limit(start + size);
+        return slice.slice().order(ByteOrder.nativeOrder());
+    }
+
+    private void flushPendingBufferUploads() {
+        if (pendingBufferUploads.isEmpty()) return;
+        long copyPass = SDLGPU.SDL_BeginGPUCopyPass(commandHandle());
+        if (copyPass == 0L) throw new IllegalStateException("SDL_BeginGPUCopyPass failed: " + MetalInterop.lastSdlError());
+        try {
+            MetalTransfers.encodeUploadBuffersInPass(device.handle(), copyPass, pendingBufferUploads);
+        } finally {
+            SDLGPU.SDL_EndGPUCopyPass(copyPass);
+            pendingBufferUploads.clear();
+            pendingUploadBlocks.clear();
+            pendingUploadBlock = null;
+        }
+    }
+
+    private static int alignUp(int value, int alignment) {
+        int mask = alignment - 1;
+        return Math.addExact(value, mask) & ~mask;
     }
 
     @Override public void writeTimestamp(GpuQueryPool pool,int index){if(pool instanceof MetalQueryPool p)p.write(index);}
@@ -389,19 +451,19 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
      */
     void presentToSwapchain(MetalTextureView source,long swapchain,int width,int height,long frameSequence){
         device.notePresentedSourceHandle(source.metalTexture().handle());
-        MetalTrace.log("PRESENT_ENCODE", "frame=" + frameSequence + " source=" + MetalTrace.hex(source.metalTexture().handle()) + " sourceSize=" + source.getWidth(0) + "x" + source.getHeight(0) + " swap=" + MetalTrace.hex(swapchain) + " swapSize=" + width + "x" + height);
+        if (MetalTrace.enabled()) MetalTrace.log("PRESENT_ENCODE", "frame=" + frameSequence + " source=" + MetalTrace.hex(source.metalTexture().handle()) + " sourceSize=" + source.getWidth(0) + "x" + source.getHeight(0) + " swap=" + MetalTrace.hex(swapchain) + " swapSize=" + width + "x" + height);
         int sourceWidth=source.getWidth(0),sourceHeight=source.getHeight(0);
         boolean strict=device.strictSwapchainPresent() && sourceWidth==width && sourceHeight==height;
         if(strict){
             MetalTransfers.encodeCopyTextureToRawHandle(commandHandle(),source.metalTexture(),source.baseMipLevel(),swapchain,width,height);
         } else {
             if(device.strictSwapchainPresent() && (sourceWidth!=width || sourceHeight!=height) && (frameSequence<=8 || frameSequence%120==0)){
-                MetalTrace.log("PRESENT_STRICT_FALLBACK", "frame=" + frameSequence + " source=" + sourceWidth + "x" + sourceHeight + " swapchain=" + width + "x" + height);
+                if (MetalTrace.enabled()) MetalTrace.log("PRESENT_STRICT_FALLBACK", "frame=" + frameSequence + " source=" + sourceWidth + "x" + sourceHeight + " swapchain=" + width + "x" + height);
             }
             blitToSwapchain(source,swapchain,width,height);
         }
         if(frameSequence<=16 || frameSequence%120==0){
-            MetalTrace.log("PRESENT_PERIODIC", "frame=" + frameSequence + " mode=" + (strict?"strict-copy":"blit")
+            if (MetalTrace.enabled()) MetalTrace.log("PRESENT_PERIODIC", "frame=" + frameSequence + " mode=" + (strict?"strict-copy":"blit")
                     + " source=" + MetalTrace.hex(source.metalTexture().handle()) + " swapchain=" + MetalTrace.hex(swapchain)
                     + " size=" + width + "x" + height);
         }
@@ -416,3 +478,4 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     private static MetalGpuTexture metal(GpuTexture t){if(!(t instanceof MetalGpuTexture m))throw new IllegalArgumentException("Foreign texture in Metal backend");return m;}
     private static MetalGpuBuffer metal(GpuBuffer b){if(!(b instanceof MetalGpuBuffer m))throw new IllegalArgumentException("Foreign buffer in Metal backend");return m;}
 }
+

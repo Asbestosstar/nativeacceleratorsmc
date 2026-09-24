@@ -23,3 +23,4 @@ final class MetalIndirectCommandDecoder {
                 bytes.getInt(base + 12), bytes.getInt(base + 16));
     }
 }
+

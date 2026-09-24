@@ -33,7 +33,7 @@ final class MetalDevice implements GpuDeviceBackend {
     private final Set<MetalGpuBuffer> dirtyBuffers = ConcurrentHashMap.newKeySet();
     private final MetalRuntimeCapabilities runtime;
     private final MetalFanIndexBuffer fanIndexBuffer;
-    private final Deque<RetiredTransientMemory> retiredTransientMemory = new ArrayDeque<>();
+    private final Deque<RetiredSubmission> retiredSubmissions = new ArrayDeque<>();
     private final int framesInFlight;
     private final boolean mac1Compat;
     private volatile long lastPresentedSourceHandle;
@@ -97,7 +97,7 @@ final class MetalDevice implements GpuDeviceBackend {
                 Set.copyOf(capabilities),hints,deviceType);
         int requestedFrames = Integer.getInteger("nativeaccelerator.renderer.metal.framesInFlight", 3);
         if (this.mac1Compat) {
-            requestedFrames = Integer.getInteger("nativeaccelerator.renderer.metal.mac1FramesInFlight", 1);
+            requestedFrames = Integer.getInteger("nativeaccelerator.renderer.metal.mac1FramesInFlight", 2);
         }
         this.framesInFlight = Math.max(1, Math.min(3, requestedFrames));
         try { SDLGPU.SDL_SetGPUAllowedFramesInFlight(handle,this.framesInFlight); } catch(Throwable ignored){}
@@ -115,7 +115,7 @@ final class MetalDevice implements GpuDeviceBackend {
                 + "; strictSwapchainPresent=" + strictSwapchainPresent()
                 + "; forcePresentedSourceFirstClear=" + forcePresentedSourceFirstClear()
                 + "; fix25Cycling=false");
-        MetalTrace.log("DEVICE_READY", "handle=" + MetalTrace.hex(handle) + " name=\"" + MetalTrace.safe(deviceName) + "\" vendor=" + vendor + " mac1=" + mac1Compat + " framesInFlight=" + framesInFlight + " traceFile=\"" + MetalTrace.safe(MetalTrace.path()) + "\"");
+        if (MetalTrace.enabled()) MetalTrace.log("DEVICE_READY", "handle=" + MetalTrace.hex(handle) + " name=\"" + MetalTrace.safe(deviceName) + "\" vendor=" + vendor + " mac1=" + mac1Compat + " framesInFlight=" + framesInFlight + " traceFile=\"" + MetalTrace.safe(MetalTrace.path()) + "\"");
     }
 
     private static String vendorName(String deviceName) {
@@ -140,22 +140,29 @@ final class MetalDevice implements GpuDeviceBackend {
 
 
     /**
-     * Keep transient GPU buffers alive until the command buffer that references them has completed.
-     * SDL GPU submission is asynchronous; releasing these buffers at submit time can let later frames
-     * reuse/destroy resources that the Metal driver is still reading.
+     * Retire command-buffer-owned resources behind the submission fence instead of blocking the
+     * render thread. This is the central frame-pacing path for legacy Mac1 GPUs: normal frames poll
+     * completed fences and only wait if the driver falls farther behind than the configured
+     * frames-in-flight window.
      */
     synchronized void retireTransientMemory(MetalTransientMemory memory, long fence) {
-        if (memory == null || memory.isEmpty()) {
-            if (fence != 0L) SDLGPU.SDL_ReleaseGPUFence(handle(), fence);
+        retireSubmission(memory, fence, List.of(), null);
+    }
+
+    synchronized void retireSubmission(MetalTransientMemory memory, long fence, List<Long> textureTransfers, Runnable completion) {
+        if (fence == 0L) throw new IllegalArgumentException("retirement fence");
+        List<Long> transfers = textureTransfers == null || textureTransfers.isEmpty()
+                ? List.of() : List.copyOf(textureTransfers);
+        boolean emptyMemory = memory == null || memory.isEmpty();
+        if (emptyMemory && transfers.isEmpty() && completion == null) {
+            SDLGPU.SDL_ReleaseGPUFence(handle(), fence);
             return;
         }
-        if (fence == 0L) throw new IllegalArgumentException("retirement fence");
-        retiredTransientMemory.addLast(new RetiredTransientMemory(fence, memory));
+        retiredSubmissions.addLast(new RetiredSubmission(fence, memory, transfers, completion));
         reapCompletedTransientMemory(false);
 
-        // Bound retained memory even if the driver is several submissions behind. Waiting only happens
-        // when the queue grows beyond the configured frame window; normal completed fences are polled.
-        while (retiredTransientMemory.size() > Math.max(2, framesInFlight + 1)) {
+        // Bound outstanding driver work without serializing every frame.
+        while (retiredSubmissions.size() > Math.max(2, framesInFlight + 1)) {
             reapCompletedTransientMemory(true);
         }
     }
@@ -164,14 +171,17 @@ final class MetalDevice implements GpuDeviceBackend {
         reapCompletedTransientMemory(false);
     }
 
+    synchronized void waitForOldestRetiredSubmission() {
+        reapCompletedTransientMemory(true);
+    }
+
     private void reapCompletedTransientMemory(boolean waitForOldest) {
-        while (!retiredTransientMemory.isEmpty()) {
-            RetiredTransientMemory oldest = retiredTransientMemory.peekFirst();
+        while (!retiredSubmissions.isEmpty()) {
+            RetiredSubmission oldest = retiredSubmissions.peekFirst();
             boolean complete = SDLGPU.SDL_QueryGPUFence(handle(), oldest.fence());
             if (!complete && waitForOldest) {
-                org.lwjgl.PointerBuffer fences;
                 try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
-                    fences = stack.mallocPointer(1).put(0, oldest.fence());
+                    org.lwjgl.PointerBuffer fences = stack.mallocPointer(1).put(0, oldest.fence());
                     if (!SDLGPU.SDL_WaitForGPUFences(handle(), true, fences)) {
                         throw new IllegalStateException("SDL_WaitForGPUFences failed: " + MetalInterop.lastSdlError());
                     }
@@ -179,23 +189,34 @@ final class MetalDevice implements GpuDeviceBackend {
                 complete = true;
             }
             if (!complete) break;
-            retiredTransientMemory.removeFirst();
-            try { oldest.memory().release(); } finally {
-                SDLGPU.SDL_ReleaseGPUFence(handle(), oldest.fence());
-            }
+            retiredSubmissions.removeFirst();
+            releaseRetiredSubmission(oldest);
             if (waitForOldest) break;
         }
     }
 
-    private synchronized void releaseAllRetiredTransientMemory() {
-        while (!retiredTransientMemory.isEmpty()) {
-            RetiredTransientMemory retired = retiredTransientMemory.removeFirst();
-            try { retired.memory().release(); } catch (Throwable ignored) {}
-            try { SDLGPU.SDL_ReleaseGPUFence(handle, retired.fence()); } catch (Throwable ignored) {}
+    private void releaseRetiredSubmission(RetiredSubmission retired) {
+        try {
+            if (retired.memory() != null) retired.memory().release();
+            for (long transfer : retired.textureTransfers()) {
+                MetalTransfers.releaseTransferBuffer(handle, transfer);
+            }
+            if (retired.completion() != null) retired.completion().run();
+        } finally {
+            SDLGPU.SDL_ReleaseGPUFence(handle, retired.fence());
         }
     }
 
-    private record RetiredTransientMemory(long fence, MetalTransientMemory memory) {}
+    private synchronized void releaseAllRetiredTransientMemory() {
+        while (!retiredSubmissions.isEmpty()) {
+            RetiredSubmission retired = retiredSubmissions.removeFirst();
+            // close() waits for GPU idle first, so all resources are safe to release here.
+            releaseRetiredSubmission(retired);
+        }
+    }
+
+    private record RetiredSubmission(long fence, MetalTransientMemory memory,
+                                     List<Long> textureTransfers, Runnable completion) {}
 
 
     boolean mac1Compat() { return mac1Compat; }
@@ -249,7 +270,7 @@ final class MetalDevice implements GpuDeviceBackend {
      */
     boolean mac1SerializeBufferUploads() {
         return mac1Compat && Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1SerializeBufferUploads", "true"));
+                "nativeaccelerator.renderer.metal.mac1SerializeBufferUploads", "false"));
     }
 
     boolean strictSwapchainPresent() {
@@ -259,7 +280,7 @@ final class MetalDevice implements GpuDeviceBackend {
 
     boolean waitForSwapchainBeforeAcquire() {
         return mac1Compat && Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1WaitForSwapchain", "true"));
+                "nativeaccelerator.renderer.metal.mac1WaitForSwapchain", "false"));
     }
 
     boolean forcePresentedSourceFirstClear() {
@@ -293,10 +314,10 @@ final class MetalDevice implements GpuDeviceBackend {
      */
     void flushDirtyBuffers(long commandBuffer) {
         if (dirtyBuffers.isEmpty()) return;
-        MetalTrace.log("BUFFER_FLUSH_BEGIN", "cmd=" + MetalTrace.hex(commandBuffer) + " dirtyCount=" + dirtyBuffers.size() + " serialize=" + mac1SerializeBufferUploads());
+        if (MetalTrace.enabled()) MetalTrace.log("BUFFER_FLUSH_BEGIN", "cmd=" + MetalTrace.hex(commandBuffer) + " dirtyCount=" + dirtyBuffers.size() + " serialize=" + mac1SerializeBufferUploads());
         if (mac1SerializeBufferUploads()) {
-            // Conservative Mac1 diagnostic: do not overwrite a GPU buffer allocation until all
-            // previously submitted work is finished reading it. This is intentionally expensive.
+            // Explicit compatibility/debug switch only. Production defaults avoid this global
+            // drain because it destroys CPU/GPU overlap and turns chunk uploads into frame spikes.
             SDLGPU.SDL_WaitForGPUIdle(handle());
         }
         long perfStart=MetalPerfCounters.tic();
@@ -313,7 +334,7 @@ final class MetalDevice implements GpuDeviceBackend {
                     continue;
                 }
                 uploads.add(new MetalTransfers.BufferUpload(buffer.handle(), range.offset(), range.bytes()));
-                MetalTrace.log("BUFFER_UPLOAD", "buffer=" + MetalTrace.hex(buffer.handle()) + " offset=" + range.offset() + " bytes=" + range.bytes().remaining());
+                if (MetalTrace.enabled()) MetalTrace.log("BUFFER_UPLOAD", "buffer=" + MetalTrace.hex(buffer.handle()) + " offset=" + range.offset() + " bytes=" + range.bytes().remaining());
                 perfBuffers++;
                 perfBytes += range.bytes().remaining();
                 if (!buffer.hasDirtyRange()) dirtyBuffers.remove(buffer);
@@ -322,7 +343,7 @@ final class MetalDevice implements GpuDeviceBackend {
         } finally {
             SDLGPU.SDL_EndGPUCopyPass(copyPass);
             MetalPerfCounters.dirtyFlush(perfBuffers,perfBytes,perfStart);
-            MetalTrace.log("BUFFER_FLUSH_END", "cmd=" + MetalTrace.hex(commandBuffer) + " buffers=" + perfBuffers + " bytes=" + perfBytes);
+            if (MetalTrace.enabled()) MetalTrace.log("BUFFER_FLUSH_END", "cmd=" + MetalTrace.hex(commandBuffer) + " buffers=" + perfBuffers + " bytes=" + perfBytes);
         }
     }
     long handle(){if(closed.get())throw new IllegalStateException("Metal device is closed");return handle;}
@@ -337,10 +358,10 @@ final class MetalDevice implements GpuDeviceBackend {
             return new MetalSampler(this,u,v,min,mag,1,maxLod);
         }
     }
-    @Override public GpuTexture createTexture(@Nullable String label,int usage,GpuFormat format,int width,int height,int depthOrLayers,int mipLevels){MetalGpuTexture t=new MetalGpuTexture(this,label,usage,format,width,height,depthOrLayers,mipLevels);MetalTrace.log("TEXTURE_CREATE", "label=\"" + MetalTrace.safe(label) + "\" handle=" + MetalTrace.hex(t.handle()) + " usage=" + usage + " format=" + format + " size=" + width + "x" + height + " layers=" + depthOrLayers + " mips=" + mipLevels);return t;}
+    @Override public GpuTexture createTexture(@Nullable String label,int usage,GpuFormat format,int width,int height,int depthOrLayers,int mipLevels){MetalGpuTexture t=new MetalGpuTexture(this,label,usage,format,width,height,depthOrLayers,mipLevels);if (MetalTrace.enabled()) MetalTrace.log("TEXTURE_CREATE", "label=\"" + MetalTrace.safe(label) + "\" handle=" + MetalTrace.hex(t.handle()) + " usage=" + usage + " format=" + format + " size=" + width + "x" + height + " layers=" + depthOrLayers + " mips=" + mipLevels);return t;}
     @Override public GpuTextureView createTextureView(GpuTexture texture,int baseMip,int mipLevels){return new MetalTextureView(texture,baseMip,mipLevels);}
-    @Override public GpuBuffer createBuffer(@Nullable Supplier<String> label,int usage,long size){MetalGpuBuffer b=new MetalGpuBuffer(this,usage,size);nameBuffer(label,b);MetalTrace.log("BUFFER_CREATE", "handle=" + MetalTrace.hex(b.handle()) + " usage=" + usage + " size=" + size);return b;}
-    @Override public GpuBuffer createBuffer(@Nullable Supplier<String> label,int usage,ByteBuffer data){MetalGpuBuffer b=new MetalGpuBuffer(this,usage,data);nameBuffer(label,b);MetalTrace.log("BUFFER_CREATE_DATA", "handle=" + MetalTrace.hex(b.handle()) + " usage=" + usage + " bytes=" + data.remaining());return b;}
+    @Override public GpuBuffer createBuffer(@Nullable Supplier<String> label,int usage,long size){MetalGpuBuffer b=new MetalGpuBuffer(this,usage,size);nameBuffer(label,b);if (MetalTrace.enabled()) MetalTrace.log("BUFFER_CREATE", "handle=" + MetalTrace.hex(b.handle()) + " usage=" + usage + " size=" + size);return b;}
+    @Override public GpuBuffer createBuffer(@Nullable Supplier<String> label,int usage,ByteBuffer data){MetalGpuBuffer b=new MetalGpuBuffer(this,usage,data);nameBuffer(label,b);if (MetalTrace.enabled()) MetalTrace.log("BUFFER_CREATE_DATA", "handle=" + MetalTrace.hex(b.handle()) + " usage=" + usage + " bytes=" + data.remaining());return b;}
     private void nameBuffer(@Nullable Supplier<String> label,MetalGpuBuffer b){if(label==null)return;try{String name=label.get();if(name!=null&&!name.isBlank())MetalInterop.sdlCall("SDL_SetGPUBufferName",handle(),b.handle(),name);}catch(Throwable ignored){}}
     @Override public List<String> getLastDebugMessages(){synchronized(messages){return List.copyOf(messages);}}
     @Override public boolean isDebuggingEnabled(){return debug.logLevel()>0||debug.useLabels()||debug.useValidationLayers();}
@@ -352,3 +373,4 @@ final class MetalDevice implements GpuDeviceBackend {
     @Override public DeviceInfo getDeviceInfo(){return info;}
     @Override public void close(){if(closed.compareAndSet(false,true)){try{SDLGPU.SDL_WaitForGPUIdle(handle);}catch(Throwable ignored){}releaseAllRetiredTransientMemory();try{fanIndexBuffer.close();}catch(Throwable ignored){}SDLGPU.SDL_DestroyGPUDevice(handle);MetalBackend.deviceClosed();}}
 }
+

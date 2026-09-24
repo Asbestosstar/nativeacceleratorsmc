@@ -20,3 +20,4 @@ public abstract class ModelDiscoveryFastHitMixin {
         return existing != null ? existing : map.computeIfAbsent(key, loader);
     }
 }
+

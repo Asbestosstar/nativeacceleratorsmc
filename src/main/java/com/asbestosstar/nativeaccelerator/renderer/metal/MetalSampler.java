@@ -114,3 +114,4 @@ final class MetalSampler implements GpuSampler {
         MetalInterop.sdlCall("SDL_ReleaseGPUSampler", device.handle(), handle);
     }
 }
+

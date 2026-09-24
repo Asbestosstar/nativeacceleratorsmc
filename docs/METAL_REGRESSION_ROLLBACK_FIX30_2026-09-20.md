@@ -16,3 +16,4 @@ The only retained fix29 idea is the isolated regional color+depth clear correcti
 cannot be represented by attachment LOADOP_CLEAR because that clears an attachment rather than one GUI
 slot. For the RGBA8_UNORM + D32_FLOAT GUI item target, fix30 uploads just the requested subregion.
 It reports `Metal regional clear marker: subresource-upload-fix30` the first time this path is used.
+

@@ -68,3 +68,4 @@ public abstract class VideoSettingsUnixThemeMixin {
         graphics.fill(x0 + 4, y1 - 6, x1 - 4, y1 - 4, 0xFF514E59);
     }
 }
+

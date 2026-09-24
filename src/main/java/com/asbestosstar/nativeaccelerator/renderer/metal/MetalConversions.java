@@ -211,3 +211,4 @@ final class MetalConversions {
         return new IllegalArgumentException("GpuFormat " + format + " has no portable SDL GPU Metal texture equivalent");
     }
 }
+

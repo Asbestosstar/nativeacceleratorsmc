@@ -41,3 +41,4 @@ public abstract class PreferredGraphicsApiMetalMixin {
         cir.setReturnValue(withMetal);
     }
 }
+

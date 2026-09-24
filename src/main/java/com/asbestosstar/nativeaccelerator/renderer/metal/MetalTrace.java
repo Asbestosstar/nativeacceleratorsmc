@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 final class MetalTrace {
     private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty(
-            "nativeaccelerator.renderer.metal.trace", "true"));
+            "nativeaccelerator.renderer.metal.trace", "false"));
     private static final boolean CONSOLE = Boolean.parseBoolean(System.getProperty(
             "nativeaccelerator.renderer.metal.traceConsole", "false"));
     private static final int QUEUE_SIZE = Integer.getInteger(
@@ -115,3 +115,4 @@ final class MetalTrace {
         }
     }
 }
+

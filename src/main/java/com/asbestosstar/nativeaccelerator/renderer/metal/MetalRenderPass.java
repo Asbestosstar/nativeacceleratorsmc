@@ -54,7 +54,7 @@ final class MetalRenderPass implements RenderPassBackend {
         this.outputWidth = outputWidth; this.outputHeight = outputHeight;
         this.hasDepthAttachment = hasDepthAttachment;
         this.targetMode = targetMode == null ? MetalCoordinatePolicy.TargetMode.DEFAULT : targetMode;
-        MetalTrace.log("PASS_BEGIN", "pass=" + tracePassId + " handle=" + MetalTrace.hex(handle) + " target=" + outputWidth + "x" + outputHeight + " area=" + renderArea.x() + "," + renderArea.y() + "," + renderArea.width() + "x" + renderArea.height() + " depth=" + hasDepthAttachment + " targetMode=" + this.targetMode + " cmd=" + MetalTrace.hex(encoder.commandHandle()));
+        if (MetalTrace.enabled()) MetalTrace.log("PASS_BEGIN", "pass=" + tracePassId + " handle=" + MetalTrace.hex(handle) + " target=" + outputWidth + "x" + outputHeight + " area=" + renderArea.x() + "," + renderArea.y() + "," + renderArea.width() + "x" + renderArea.height() + " depth=" + hasDepthAttachment + " targetMode=" + this.targetMode + " cmd=" + MetalTrace.hex(encoder.commandHandle()));
         // Match both vanilla Vulkan and OpenGL: every render pass starts with an explicit full-target
         // viewport and the descriptor render-area scissor. Relying on SDL/Metal implicit state can
         // inherit stale world/pass dimensions and makes GUI atlas/button rendering order-dependent.
@@ -65,18 +65,18 @@ final class MetalRenderPass implements RenderPassBackend {
     long handle() { return handle; }
     long tracePassId() { return tracePassId; }
     String tracePipelineName() { return pipeline == null ? "<none>" : pipeline.name(); }
-    void traceEnd() { MetalTrace.log("PASS_END", "pass=" + tracePassId + " draws=" + traceDrawId + " pipeline=\"" + MetalTrace.safe(tracePipelineName()) + "\""); }
+    void traceEnd() { if (MetalTrace.enabled()) MetalTrace.log("PASS_END", "pass=" + tracePassId + " draws=" + traceDrawId + " pipeline=\"" + MetalTrace.safe(tracePipelineName()) + "\""); }
 
     @Override public void pushDebugGroup(Supplier<String> label) {
         String text;
         try { text=label.get(); } catch(Throwable ignored){ text=""; }
         debugGroups.push(text == null ? "" : text);
-        MetalTrace.log("DEBUG_GROUP_PUSH", "pass=" + tracePassId + " label=\"" + MetalTrace.safe(text) + "\" depth=" + debugGroups.size());
+        if (MetalTrace.enabled()) MetalTrace.log("DEBUG_GROUP_PUSH", "pass=" + tracePassId + " label=\"" + MetalTrace.safe(text) + "\" depth=" + debugGroups.size());
         try { SDLGPU.SDL_PushGPUDebugGroup(encoder.commandHandle(), text); } catch(Throwable ignored){}
     }
     @Override public void popDebugGroup() {
         String popped = debugGroups.isEmpty() ? "" : debugGroups.pop();
-        MetalTrace.log("DEBUG_GROUP_POP", "pass=" + tracePassId + " label=\"" + MetalTrace.safe(popped) + "\" depth=" + debugGroups.size());
+        if (MetalTrace.enabled()) MetalTrace.log("DEBUG_GROUP_POP", "pass=" + tracePassId + " label=\"" + MetalTrace.safe(popped) + "\" depth=" + debugGroups.size());
         try { SDLGPU.SDL_PopGPUDebugGroup(encoder.commandHandle()); } catch(Throwable ignored){}
     }
 
@@ -86,7 +86,7 @@ final class MetalRenderPass implements RenderPassBackend {
         // object is selected again. FrontendRenderPass then replays that pipeline's current values.
         // Treating this as a complete no-op can retain stale GUI samplers/uniforms across draws.
         pipeline = p;
-        MetalTrace.log("PIPELINE_BIND", "pass=" + tracePassId + " name=\"" + MetalTrace.safe(p.name()) + "\" handle=" + MetalTrace.hex(p.handle(hasDepthAttachment, targetMode)) + " depthAttachment=" + hasDepthAttachment + " targetMode=" + targetMode);
+        if (MetalTrace.enabled()) MetalTrace.log("PIPELINE_BIND", "pass=" + tracePassId + " name=\"" + MetalTrace.safe(p.name()) + "\" handle=" + MetalTrace.hex(p.handle(hasDepthAttachment, targetMode)) + " depthAttachment=" + hasDepthAttachment + " targetMode=" + targetMode);
 
         // Match RenderPearl's Vulkan and OpenGL backends: a pipeline switch starts with a completely
         // fresh logical uniform namespace.  Keeping values from the previous pipeline is incorrect
@@ -125,13 +125,13 @@ final class MetalRenderPass implements RenderPassBackend {
         uniforms[index] = value;
         dirtyUniforms[index] = true;
         if (value instanceof GpuBufferSlice slice) {
-            MetalTrace.log("UNIFORM_SET", "pass=" + tracePassId + " pipeline=\"" + (pipeline==null?"<none>":MetalTrace.safe(pipeline.name())) + "\" index=" + index + " kind=buffer handle=" + MetalTrace.hex(metal(slice.buffer()).handle()) + " offset=" + slice.offset() + " length=" + slice.length());
+            if (MetalTrace.enabled()) MetalTrace.log("UNIFORM_SET", "pass=" + tracePassId + " pipeline=\"" + (pipeline==null?"<none>":MetalTrace.safe(pipeline.name())) + "\" index=" + index + " kind=buffer handle=" + MetalTrace.hex(metal(slice.buffer()).handle()) + " offset=" + slice.offset() + " length=" + slice.length());
         } else if (value instanceof TextureViewAndSampler pair) {
             long tex = pair.view() instanceof MetalTextureView v ? v.metalTexture().handle() : 0L;
             long sampler = pair.sampler() instanceof MetalSampler m ? m.handle() : 0L;
-            MetalTrace.log("UNIFORM_SET", "pass=" + tracePassId + " pipeline=\"" + (pipeline==null?"<none>":MetalTrace.safe(pipeline.name())) + "\" index=" + index + " kind=texture texture=" + MetalTrace.hex(tex) + " sampler=" + MetalTrace.hex(sampler));
+            if (MetalTrace.enabled()) MetalTrace.log("UNIFORM_SET", "pass=" + tracePassId + " pipeline=\"" + (pipeline==null?"<none>":MetalTrace.safe(pipeline.name())) + "\" index=" + index + " kind=texture texture=" + MetalTrace.hex(tex) + " sampler=" + MetalTrace.hex(sampler));
         } else {
-            MetalTrace.log("UNIFORM_SET", "pass=" + tracePassId + " pipeline=\"" + (pipeline==null?"<none>":MetalTrace.safe(pipeline.name())) + "\" index=" + index + " kind=" + (value==null?"null":value.getClass().getSimpleName()));
+            if (MetalTrace.enabled()) MetalTrace.log("UNIFORM_SET", "pass=" + tracePassId + " pipeline=\"" + (pipeline==null?"<none>":MetalTrace.safe(pipeline.name())) + "\" index=" + index + " kind=" + (value==null?"null":value.getClass().getSimpleName()));
         }
     }
 
@@ -142,18 +142,18 @@ final class MetalRenderPass implements RenderPassBackend {
         src.limit(src.position() + size);
         ByteBuffer copy = ByteBuffer.allocateDirect(size); copy.put(src).flip(); pushConstants = copy;
         pushConstantsDirty = true;
-        MetalTrace.log("PUSH_CONSTANTS", "pass=" + tracePassId + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" bytes=" + size);
+        if (MetalTrace.enabled()) MetalTrace.log("PUSH_CONSTANTS", "pass=" + tracePassId + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" bytes=" + size);
     }
 
-    @Override public void enableScissor(int x,int y,int width,int height) { MetalTrace.log("SCISSOR_ENABLE", "pass=" + tracePassId + " rect=" + x + "," + y + "," + width + "x" + height); setScissor(x,y,width,height); }
+    @Override public void enableScissor(int x,int y,int width,int height) { if (MetalTrace.enabled()) MetalTrace.log("SCISSOR_ENABLE", "pass=" + tracePassId + " rect=" + x + "," + y + "," + width + "x" + height); setScissor(x,y,width,height); }
     @Override public void disableScissor() {
         // RenderPearl disableScissor means "restore this pass' render area", not "disable clipping".
-        MetalTrace.log("SCISSOR_DISABLE", "pass=" + tracePassId + " restore=" + renderArea.x() + "," + renderArea.y() + "," + renderArea.width() + "x" + renderArea.height());
+        if (MetalTrace.enabled()) MetalTrace.log("SCISSOR_DISABLE", "pass=" + tracePassId + " restore=" + renderArea.x() + "," + renderArea.y() + "," + renderArea.width() + "x" + renderArea.height());
         setScissor(renderArea.x(),renderArea.y(),renderArea.width(),renderArea.height());
     }
     private void setViewport(int x,int y,int w,int h) {
         if (w <= 0 || h <= 0) return;
-        MetalTrace.log("VIEWPORT", "pass=" + tracePassId + " rect=" + x + "," + y + "," + w + "x" + h);
+        if (MetalTrace.enabled()) MetalTrace.log("VIEWPORT", "pass=" + tracePassId + " rect=" + x + "," + y + "," + w + "x" + h);
         Object viewport = MetalInterop.calloc("SDL_GPUViewport");
         try {
             MetalInterop.set(viewport,"x",(float)x);
@@ -168,7 +168,7 @@ final class MetalRenderPass implements RenderPassBackend {
     private void setScissor(int x,int y,int w,int h) {
         MetalCoordinatePolicy.Rect converted = MetalCoordinatePolicy.scissorRect(
                 targetMode, outputHeight, x, y, w, h);
-        MetalTrace.log("SCISSOR", "pass=" + tracePassId
+        if (MetalTrace.enabled()) MetalTrace.log("SCISSOR", "pass=" + tracePassId
                 + " requested=" + x + "," + y + "," + w + "x" + h
                 + " metal=" + converted.x() + "," + converted.y() + ","
                 + converted.width() + "x" + converted.height()
@@ -194,7 +194,7 @@ final class MetalRenderPass implements RenderPassBackend {
             SDLGPU.SDL_BindGPUVertexBuffers(handle, slot, binding);
         }
         if (slot >= 0 && slot < boundVertexBuffers.length) { boundVertexBuffers[slot] = b; boundVertexOffsets[slot] = offset; }
-        MetalTrace.log("VERTEX_BUFFER", "pass=" + tracePassId + " slot=" + slot + " handle=" + MetalTrace.hex(b.handle()) + " offset=" + offset + " length=" + slice.length());
+        if (MetalTrace.enabled()) MetalTrace.log("VERTEX_BUFFER", "pass=" + tracePassId + " slot=" + slot + " handle=" + MetalTrace.hex(b.handle()) + " offset=" + offset + " length=" + slice.length());
         MetalPerfCounters.vertexBind();
     }
     @Override public void setIndexBuffer(GpuBuffer buffer, IndexType type) {
@@ -205,7 +205,7 @@ final class MetalRenderPass implements RenderPassBackend {
             SDLGPU.SDL_BindGPUIndexBuffer(handle, binding, MetalConversions.indexType(type));
         }
         boundIndexBuffer=b; boundIndexType=type; MetalPerfCounters.indexBind();
-        MetalTrace.log("INDEX_BUFFER", "pass=" + tracePassId + " handle=" + MetalTrace.hex(b.handle()) + " type=" + type);
+        if (MetalTrace.enabled()) MetalTrace.log("INDEX_BUFFER", "pass=" + tracePassId + " handle=" + MetalTrace.hex(b.handle()) + " type=" + type);
     }
 
     @Override public void drawIndexed(int indexCount,int instanceCount,int firstIndex,int vertexOffset,int firstInstance) {
@@ -214,7 +214,7 @@ final class MetalRenderPass implements RenderPassBackend {
                     "Indexed triangle-fan expansion is not yet needed by vanilla Minecraft 26.3; "
                             + "the Metal compatibility path currently handles non-indexed fans");
         }
-        beforeDraw(); long draw=++traceDrawId; MetalTrace.log("DRAW_INDEXED", "pass=" + tracePassId + " draw=" + draw + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" indexCount=" + indexCount + " instances=" + instanceCount + " firstIndex=" + firstIndex + " vertexOffset=" + vertexOffset + " firstInstance=" + firstInstance); long perfStart=MetalPerfCounters.tic(); SDLGPU.SDL_DrawGPUIndexedPrimitives(handle,indexCount,instanceCount,firstIndex,vertexOffset,firstInstance); MetalPerfCounters.draw(true,inTerrainGroup(),perfStart);
+        beforeDraw(); long draw=MetalTrace.enabled()?++traceDrawId:0L; if (MetalTrace.enabled()) MetalTrace.log("DRAW_INDEXED", "pass=" + tracePassId + " draw=" + draw + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" indexCount=" + indexCount + " instances=" + instanceCount + " firstIndex=" + firstIndex + " vertexOffset=" + vertexOffset + " firstInstance=" + firstInstance); long perfStart=MetalPerfCounters.tic(); SDLGPU.SDL_DrawGPUIndexedPrimitives(handle,indexCount,instanceCount,firstIndex,vertexOffset,firstInstance); MetalPerfCounters.draw(true,inTerrainGroup(),perfStart);
     }
     @Override public void multiDrawIndexed(IntBuffer p,int instanceCount,int firstInstance,int drawCount) { throw new UnsupportedOperationException("Direct multi-draw is intentionally disabled on the Metal backend"); }
     @Override public void multiDrawIndexed(PointerBuffer a,IntBuffer b,IntBuffer c,int drawCount) { throw new UnsupportedOperationException("Direct multi-draw is intentionally disabled on the Metal backend"); }
@@ -224,7 +224,7 @@ final class MetalRenderPass implements RenderPassBackend {
         }
         beforeDraw();
         MetalGpuBuffer b=metal(commands.buffer());
-        MetalTrace.log("DRAW_INDEXED_INDIRECT", "pass=" + tracePassId + " draw=" + (++traceDrawId) + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" buffer=" + MetalTrace.hex(b.handle()) + " offset=" + commands.offset() + " count=" + drawCount + " native=" + encoder.device().nativeIndirectDrawSupported());
+        if (MetalTrace.enabled()) MetalTrace.log("DRAW_INDEXED_INDIRECT", "pass=" + tracePassId + " draw=" + (++traceDrawId) + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" buffer=" + MetalTrace.hex(b.handle()) + " offset=" + commands.offset() + " count=" + drawCount + " native=" + encoder.device().nativeIndirectDrawSupported());
         if (encoder.device().nativeIndirectDrawSupported()) {
             try {
                 SDLGPU.SDL_DrawGPUIndexedPrimitivesIndirect(handle,b.handle(),Math.toIntExact(commands.offset()),drawCount);
@@ -238,7 +238,7 @@ final class MetalRenderPass implements RenderPassBackend {
     }
     @Override public void draw(int vertexCount,int instanceCount,int firstVertex,int firstInstance) {
         beforeDraw();
-        MetalTrace.log("DRAW", "pass=" + tracePassId + " draw=" + (++traceDrawId) + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" vertices=" + vertexCount + " instances=" + instanceCount + " firstVertex=" + firstVertex + " firstInstance=" + firstInstance);
+        if (MetalTrace.enabled()) MetalTrace.log("DRAW", "pass=" + tracePassId + " draw=" + (++traceDrawId) + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" vertices=" + vertexCount + " instances=" + instanceCount + " firstVertex=" + firstVertex + " firstInstance=" + firstInstance);
         if (pipeline != null && pipeline.triangleFan()) {
             drawTriangleFan(vertexCount, instanceCount, firstVertex, firstInstance);
             return;
@@ -255,7 +255,7 @@ final class MetalRenderPass implements RenderPassBackend {
         }
         beforeDraw();
         MetalGpuBuffer b=metal(commands.buffer());
-        MetalTrace.log("DRAW_INDIRECT", "pass=" + tracePassId + " draw=" + (++traceDrawId) + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" buffer=" + MetalTrace.hex(b.handle()) + " offset=" + commands.offset() + " count=" + drawCount + " native=" + encoder.device().nativeIndirectDrawSupported());
+        if (MetalTrace.enabled()) MetalTrace.log("DRAW_INDIRECT", "pass=" + tracePassId + " draw=" + (++traceDrawId) + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" buffer=" + MetalTrace.hex(b.handle()) + " offset=" + commands.offset() + " count=" + drawCount + " native=" + encoder.device().nativeIndirectDrawSupported());
         if (encoder.device().nativeIndirectDrawSupported()) {
             try {
                 SDLGPU.SDL_DrawGPUPrimitivesIndirect(handle,b.handle(),Math.toIntExact(commands.offset()),drawCount);
@@ -303,7 +303,7 @@ final class MetalRenderPass implements RenderPassBackend {
     private void beforeDraw() {
         if(pipeline==null)throw new IllegalStateException("No Metal pipeline bound");
         int dirtyCount=0; for (boolean d : dirtyUniforms) if (d) dirtyCount++;
-        MetalTrace.log("BEFORE_DRAW_BEGIN", "pass=" + tracePassId + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" dirtyUniforms=" + dirtyCount + " pushDirty=" + pushConstantsDirty + " groups=\"" + MetalTrace.safe(debugGroups) + "\"");
+        if (MetalTrace.enabled()) MetalTrace.log("BEFORE_DRAW_BEGIN", "pass=" + tracePassId + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" dirtyUniforms=" + dirtyCount + " pushDirty=" + pushConstantsDirty + " groups=\"" + MetalTrace.safe(debugGroups) + "\"");
 
         boolean packedVertexChanged = false;
         boolean packedFragmentChanged = false;
@@ -326,14 +326,14 @@ final class MetalRenderPass implements RenderPassBackend {
                 if (vsUniform >= 0) {
                     ByteBuffer copy = bytes.duplicate();
                     long t=MetalPerfCounters.tic();
-                    MetalTrace.log("UNIFORM_PUSH_VS", "pass=" + tracePassId + " logical=" + i + " slot=" + vsUniform + " bytes=" + copy.remaining());
+                    if (MetalTrace.enabled()) MetalTrace.log("UNIFORM_PUSH_VS", "pass=" + tracePassId + " logical=" + i + " slot=" + vsUniform + " bytes=" + copy.remaining());
                     SDLGPU.SDL_PushGPUVertexUniformData(encoder.commandHandle(), vsUniform, copy);
                     MetalPerfCounters.uniformPush(copy.remaining(),inTerrainGroup(),t);
                 }
                 if (fsUniform >= 0) {
                     ByteBuffer copy = bytes.duplicate();
                     long t=MetalPerfCounters.tic();
-                    MetalTrace.log("UNIFORM_PUSH_FS", "pass=" + tracePassId + " logical=" + i + " slot=" + fsUniform + " bytes=" + copy.remaining());
+                    if (MetalTrace.enabled()) MetalTrace.log("UNIFORM_PUSH_FS", "pass=" + tracePassId + " logical=" + i + " slot=" + fsUniform + " bytes=" + copy.remaining());
                     SDLGPU.SDL_PushGPUFragmentUniformData(encoder.commandHandle(), fsUniform, copy);
                     MetalPerfCounters.uniformPush(copy.remaining(),inTerrainGroup(),t);
                 }
@@ -392,14 +392,14 @@ final class MetalRenderPass implements RenderPassBackend {
         vertexPackedDirty |= packedVertexChanged;
         fragmentPackedDirty |= packedFragmentChanged;
         pushPackedUniforms();
-        MetalTrace.log("BEFORE_DRAW_END", "pass=" + tracePassId + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\"");
+        if (MetalTrace.enabled()) MetalTrace.log("BEFORE_DRAW_END", "pass=" + tracePassId + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\"");
     }
 
     private void pushPackedUniforms() {
         if (pipeline.vertexLayout().hasPackedUniforms() && vertexPackedDirty) {
             ByteBuffer b = fullPacked(vertexPackedUniforms, pipeline.vertexLayout().packedUniformBytes());
             long t=MetalPerfCounters.tic();
-            MetalTrace.log("PACKED_UNIFORM_VS", "pass=" + tracePassId + " slot=" + MetalUniformPacking.PACKED_SLOT + " bytes=" + b.remaining());
+            if (MetalTrace.enabled()) MetalTrace.log("PACKED_UNIFORM_VS", "pass=" + tracePassId + " slot=" + MetalUniformPacking.PACKED_SLOT + " bytes=" + b.remaining());
             SDLGPU.SDL_PushGPUVertexUniformData(
                     encoder.commandHandle(), MetalUniformPacking.PACKED_SLOT, b);
             MetalPerfCounters.uniformPush(b.remaining(),inTerrainGroup(),t);
@@ -408,7 +408,7 @@ final class MetalRenderPass implements RenderPassBackend {
         if (pipeline.fragmentLayout().hasPackedUniforms() && fragmentPackedDirty) {
             ByteBuffer b = fullPacked(fragmentPackedUniforms, pipeline.fragmentLayout().packedUniformBytes());
             long t=MetalPerfCounters.tic();
-            MetalTrace.log("PACKED_UNIFORM_FS", "pass=" + tracePassId + " slot=" + MetalUniformPacking.PACKED_SLOT + " bytes=" + b.remaining());
+            if (MetalTrace.enabled()) MetalTrace.log("PACKED_UNIFORM_FS", "pass=" + tracePassId + " slot=" + MetalUniformPacking.PACKED_SLOT + " bytes=" + b.remaining());
             SDLGPU.SDL_PushGPUFragmentUniformData(
                     encoder.commandHandle(), MetalUniformPacking.PACKED_SLOT, b);
             MetalPerfCounters.uniformPush(b.remaining(),inTerrainGroup(),t);
@@ -512,7 +512,7 @@ final class MetalRenderPass implements RenderPassBackend {
                 SDLGPU.SDL_BindGPUFragmentStorageBuffers(handle, slot, buffers);
             }
             MetalPerfCounters.storageBind();
-            MetalTrace.log("STORAGE_BIND", "pass=" + tracePassId + " method=" + method + " slot=" + slot + " buffer=" + MetalTrace.hex(buffer.handle()));
+            if (MetalTrace.enabled()) MetalTrace.log("STORAGE_BIND", "pass=" + tracePassId + " method=" + method + " slot=" + slot + " buffer=" + MetalTrace.hex(buffer.handle()));
         }
     }
 
@@ -562,7 +562,7 @@ final class MetalRenderPass implements RenderPassBackend {
                 SDLGPU.SDL_BindGPUFragmentSamplers(handle, slot, binding);
             }
             MetalPerfCounters.samplerBind();
-            MetalTrace.log("SAMPLER_BIND", "pass=" + tracePassId + " method=" + method + " slot=" + slot + " texture=" + MetalTrace.hex(view.metalTexture().handle()) + " sampler=" + MetalTrace.hex(samplerHandle) + " baseMip=" + view.baseMipLevel() + " mipLevels=" + view.mipLevels());
+            if (MetalTrace.enabled()) MetalTrace.log("SAMPLER_BIND", "pass=" + tracePassId + " method=" + method + " slot=" + slot + " texture=" + MetalTrace.hex(view.metalTexture().handle()) + " sampler=" + MetalTrace.hex(samplerHandle) + " baseMip=" + view.baseMipLevel() + " mipLevels=" + view.mipLevels());
         }
     }
     private boolean inTerrainGroup(){
@@ -572,3 +572,4 @@ final class MetalRenderPass implements RenderPassBackend {
     private static int slot(int[] slots,int i){return i<slots.length?slots[i]:-1;}
     private static MetalGpuBuffer metal(GpuBuffer b){if(!(b instanceof MetalGpuBuffer m))throw new IllegalArgumentException("Foreign buffer bound to Metal backend");return m;}
 }
+

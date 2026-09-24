@@ -209,3 +209,4 @@ final class MetalRuntimeCapabilities {
         return failure.getClass().getSimpleName() + (message == null || message.isBlank() ? "" : ": " + message);
     }
 }
+

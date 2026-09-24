@@ -47,3 +47,4 @@ public abstract class DedicatedServerReadyMixin {
         StartupTimer.finish("dedicated server ready");
     }
 }
+

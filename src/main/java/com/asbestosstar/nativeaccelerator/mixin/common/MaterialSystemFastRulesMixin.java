@@ -23,3 +23,4 @@ public abstract class MaterialSystemFastRulesMixin {
         return result;
     }
 }
+

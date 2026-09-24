@@ -208,3 +208,4 @@ public final class PreferredGraphicsApiEnumHook implements ClassNodeHook {
         targetClass.fields.removeIf(field -> name.equals(field.name) && desc.equals(field.desc));
     }
 }
+

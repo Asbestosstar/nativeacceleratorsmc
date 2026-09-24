@@ -67,3 +67,4 @@ public final class WorldgenWorkScheduler {
 
     private record State(Executor executor, int workers, String description) {}
 }
+

@@ -22,3 +22,4 @@ whenever SDL's native four slots are sufficient.
 
 Startup marker:
 `[Native Accelerator] Build marker: metal-uniform-native4-fix24`
+

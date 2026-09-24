@@ -29,3 +29,4 @@ public abstract class FireBlockBootstrapTimingMixin {
         StartupTimer.end(StartupStages.BOOTSTRAP_FIRE_RULES);
     }
 }
+

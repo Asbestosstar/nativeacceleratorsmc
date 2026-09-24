@@ -248,3 +248,4 @@ public abstract class SpriteLoaderParallelMipmapMixin {
         return vanilla;
     }
 }
+

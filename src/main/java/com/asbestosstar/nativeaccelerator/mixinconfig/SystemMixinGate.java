@@ -88,6 +88,7 @@ public final class SystemMixinGate {
         if (!INSTALLED.compareAndSet(false, true)) return;
         NativeAcceleratorMixinConfigPlugin.registerRule(SystemMixinGate::environmentRule);
         NativeAcceleratorMixinConfigPlugin.registerRule(SystemMixinGate::worldgenRule);
+        NativeAcceleratorMixinConfigPlugin.registerRule(SystemMixinGate::profilingRule);
         NativeAcceleratorMixinConfigPlugin.registerRule(SystemMixinGate::rendererRule);
         NativeAcceleratorMixinConfigPlugin.registerRule(SystemMixinGate::loaderRule);
     }
@@ -144,6 +145,26 @@ public final class SystemMixinGate {
                 || mixinClassName.endsWith("ChunkStatusTasksLightingProfilingMixin"))
                 && !booleanProperty("nativeaccelerator.worldgen.deepProfile", false)) {
             return MixinDecision.SKIP;
+        }
+        return MixinDecision.DEFAULT;
+    }
+
+    /** Remove profiling injections entirely unless a matching profiler is explicitly enabled. */
+    static MixinDecision profilingRule(String targetClassName, String mixinClassName) {
+        if (mixinClassName == null || !mixinClassName.endsWith("ProfilingMixin")) return MixinDecision.DEFAULT;
+
+        if (mixinClassName.startsWith("com.asbestosstar.nativeaccelerator.mixin.common.")) {
+            boolean enabled = booleanProperty("nativeaccelerator.worldgen.profile", false)
+                    || booleanProperty("nativeaccelerator.worldgen.deepProfile", false);
+            return enabled ? MixinDecision.DEFAULT : MixinDecision.SKIP;
+        }
+        if (mixinClassName.startsWith(CLIENT_MIXIN_PACKAGE)) {
+            boolean enabled = booleanProperty("nativeaccelerator.model.profiler", false)
+                    || booleanProperty("nativeaccelerator.model.dagProfiler", false)
+                    || booleanProperty("nativeaccelerator.model.ioProfiler", false)
+                    || booleanProperty("nativeaccelerator.model.resourceOpenProfiler", false)
+                    || booleanProperty("nativeaccelerator.reload.profile", false);
+            return enabled ? MixinDecision.DEFAULT : MixinDecision.SKIP;
         }
         return MixinDecision.DEFAULT;
     }
@@ -275,3 +296,4 @@ public final class SystemMixinGate {
         return value != null && value.startsWith(prefix);
     }
 }
+

@@ -433,3 +433,4 @@ final class MacMetalCapabilities {
         }
     }
 }
+

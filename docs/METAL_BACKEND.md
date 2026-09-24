@@ -109,3 +109,4 @@ standard 16-byte draw / 20-byte indexed-draw argument structures from the buffer
 semantically equivalent direct SDL draws. This deliberately keeps Minecraft on its instanced
 `prepareChunkRendersIndirect` terrain preparation path without creating a graphics ICB on legacy hardware.
 Use `-Dnativeaccelerator.renderer.metal.forceCpuIndirect=true` to force this compatibility path for testing.
+

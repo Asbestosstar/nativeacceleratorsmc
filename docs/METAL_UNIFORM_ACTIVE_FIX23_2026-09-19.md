@@ -17,3 +17,4 @@ region to actual `[3]` / 512 bytes, while retaining physical SDL uniform slots 0
 Startup marker:
 
 `[Native Accelerator] Build marker: metal-uniform-active-fix23`
+

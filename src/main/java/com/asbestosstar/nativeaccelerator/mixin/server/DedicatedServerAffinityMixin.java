@@ -15,3 +15,4 @@ public abstract class DedicatedServerAffinityMixin {
         WorldgenWorkScheduler.bindServerThread();
     }
 }
+

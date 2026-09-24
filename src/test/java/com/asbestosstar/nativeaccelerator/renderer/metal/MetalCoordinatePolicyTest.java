@@ -38,3 +38,4 @@ public final class MetalCoordinatePolicyTest {
         if (!value) throw new AssertionError();
     }
 }
+

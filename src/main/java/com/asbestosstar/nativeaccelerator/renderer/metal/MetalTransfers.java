@@ -23,7 +23,7 @@ final class MetalTransfers {
      */
     static void encodeUploadBuffersInPass(long device, long copyPass, java.util.List<BufferUpload> uploads) {
         if (uploads.isEmpty()) return;
-        MetalTrace.log("TRANSFER_BUFFER_BATCH_BEGIN", "device=" + MetalTrace.hex(device) + " copyPass=" + MetalTrace.hex(copyPass) + " uploads=" + uploads.size());
+        if (MetalTrace.enabled()) MetalTrace.log("TRANSFER_BUFFER_BATCH_BEGIN", "device=" + MetalTrace.hex(device) + " copyPass=" + MetalTrace.hex(copyPass) + " uploads=" + uploads.size());
         final int alignment = 16;
         int total = 0;
         int[] offsets = new int[uploads.size()];
@@ -65,7 +65,7 @@ final class MetalTransfers {
                     MetalInterop.set(dst, "buffer", upload.destination());
                     MetalInterop.set(dst, "offset", upload.destinationOffset());
                     MetalInterop.set(dst, "size", size);
-                    MetalTrace.log("TRANSFER_BUFFER_UPLOAD", "copyPass=" + MetalTrace.hex(copyPass) + " transfer=" + MetalTrace.hex(transfer) + " dst=" + MetalTrace.hex(upload.destination()) + " dstOffset=" + upload.destinationOffset() + " bytes=" + size + " cycle=false");
+                    if (MetalTrace.enabled()) MetalTrace.log("TRANSFER_BUFFER_UPLOAD", "copyPass=" + MetalTrace.hex(copyPass) + " transfer=" + MetalTrace.hex(transfer) + " dst=" + MetalTrace.hex(upload.destination()) + " dstOffset=" + upload.destinationOffset() + " bytes=" + size + " cycle=false");
                     MetalInterop.sdlCall("SDL_UploadToGPUBuffer", copyPass, src, dst, false);
                 } finally {
                     MetalInterop.free(dst);
@@ -325,7 +325,7 @@ final class MetalTransfers {
             if (retainTransfer) {
                 long retained = transfer;
                 transfer = 0L;
-                MetalTrace.log("TEXTURE_TRANSFER_RETAIN", "transfer=" + MetalTrace.hex(retained)
+                if (MetalTrace.enabled()) MetalTrace.log("TEXTURE_TRANSFER_RETAIN", "transfer=" + MetalTrace.hex(retained)
                         + " texture=" + MetalTrace.hex(texture.handle()) + " rect=" + x + "," + y + "," + width + "x" + height);
                 return retained;
             }
@@ -413,10 +413,10 @@ final class MetalTransfers {
 
     static void submit(long command) {
         long start = System.nanoTime();
-        MetalTrace.log("RAW_SUBMIT_BEGIN", "cmd=" + MetalTrace.hex(command));
+        if (MetalTrace.enabled()) MetalTrace.log("RAW_SUBMIT_BEGIN", "cmd=" + MetalTrace.hex(command));
         boolean ok = SDLGPU.SDL_SubmitGPUCommandBuffer(command);
         long ns = System.nanoTime() - start;
-        MetalTrace.log("RAW_SUBMIT_END", "cmd=" + MetalTrace.hex(command) + " ok=" + ok + " ns=" + ns + (ok ? "" : " error=\"" + MetalTrace.safe(MetalInterop.lastSdlError()) + "\""));
+        if (MetalTrace.enabled()) MetalTrace.log("RAW_SUBMIT_END", "cmd=" + MetalTrace.hex(command) + " ok=" + ok + " ns=" + ns + (ok ? "" : " error=\"" + MetalTrace.safe(MetalInterop.lastSdlError()) + "\""));
         if (!ok) {
             throw new IllegalStateException("SDL_SubmitGPUCommandBuffer failed: " + MetalInterop.lastSdlError());
         }
@@ -433,3 +433,4 @@ final class MetalTransfers {
         }
     }
 }
+

@@ -10,3 +10,4 @@ public final class NativeAcceleratorForge {
         NativeAccelerator.initialize();
     }
 }
+

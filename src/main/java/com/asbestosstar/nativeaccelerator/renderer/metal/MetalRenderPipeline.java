@@ -33,7 +33,7 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
         long perfCompileStart = MetalPerfCounters.tic();
         this.device = device;
         this.name = String.valueOf(info.name());
-        MetalTrace.log("PIPELINE_COMPILE_BEGIN", "name=\"" + MetalTrace.safe(this.name) + "\" topology=" + info.primitiveTopology() + " depthState=" + (info.depthStencilState()!=null) + " colors=" + info.colorTargetStates().size() + " uniforms=" + info.uniforms().size() + " pushBytes=" + info.pushConstantsSize());
+        if (MetalTrace.enabled()) MetalTrace.log("PIPELINE_COMPILE_BEGIN", "name=\"" + MetalTrace.safe(this.name) + "\" topology=" + info.primitiveTopology() + " depthState=" + (info.depthStencilState()!=null) + " colors=" + info.colorTargetStates().size() + " uniforms=" + info.uniforms().size() + " pushBytes=" + info.pushConstantsSize());
         this.uniforms = List.copyOf(info.uniforms());
         this.uniformCount = this.uniforms.size();
         this.pushConstantSize = info.pushConstantsSize();
@@ -126,7 +126,7 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
                 }
                 MetalInterop.set(out, "format", MetalConversions.textureFormat(target.format()));
                 Object blend = MetalInterop.get(out, "blend_state");
-                MetalTrace.log("PIPELINE_COLOR_TARGET", "name=\"" + MetalTrace.safe(name) + "\" slot=" + i + " format=" + target.format() + " writeMask=" + target.writeMask() + " blend=" + (target.blendFunction().isPresent() ? MetalTrace.safe(target.blendFunction().get()) : "disabled"));
+                if (MetalTrace.enabled()) MetalTrace.log("PIPELINE_COLOR_TARGET", "name=\"" + MetalTrace.safe(name) + "\" slot=" + i + " format=" + target.format() + " writeMask=" + target.writeMask() + " blend=" + (target.blendFunction().isPresent() ? MetalTrace.safe(target.blendFunction().get()) : "disabled"));
                 MetalInterop.set(blend, "color_write_mask", target.writeMask());
                 MetalInterop.set(blend, "enable_color_write_mask", target.writeMask() != 15);
                 if (target.blendFunction().isPresent()) applyBlend(blend, target.blendFunction().get());
@@ -193,7 +193,7 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
             MetalInterop.free(colorTargets); MetalInterop.free(attrs); MetalInterop.free(vbs); MetalInterop.free(pipelineInfo);
         }
         MetalPerfCounters.pipelineCompile(perfCompileStart);
-        MetalTrace.log("PIPELINE_COMPILE_END", "name=\"" + MetalTrace.safe(name) + "\" withDepth=" + MetalTrace.hex(withDepthHandle) + " withoutDepth=" + MetalTrace.hex(withoutDepthHandle) + " atlasWithDepth=" + MetalTrace.hex(guiItemAtlasWithDepthHandle) + " atlasWithoutDepth=" + MetalTrace.hex(guiItemAtlasWithoutDepthHandle) + " vsSamplers=" + vertexLayout.samplerCount() + " fsSamplers=" + fragmentLayout.samplerCount());
+        if (MetalTrace.enabled()) MetalTrace.log("PIPELINE_COMPILE_END", "name=\"" + MetalTrace.safe(name) + "\" withDepth=" + MetalTrace.hex(withDepthHandle) + " withoutDepth=" + MetalTrace.hex(withoutDepthHandle) + " atlasWithDepth=" + MetalTrace.hex(guiItemAtlasWithDepthHandle) + " atlasWithoutDepth=" + MetalTrace.hex(guiItemAtlasWithoutDepthHandle) + " vsSamplers=" + vertexLayout.samplerCount() + " fsSamplers=" + fragmentLayout.samplerCount());
     }
 
     private long createShader(MetalSpirvCompiler.Compiled shader, boolean vertex) {
@@ -281,7 +281,7 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
     boolean triangleFan(){return triangleFan;}
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;
-        MetalTrace.log("PIPELINE_CLOSE", "name=\"" + MetalTrace.safe(name) + "\" withDepth=" + MetalTrace.hex(withDepthHandle) + " withoutDepth=" + MetalTrace.hex(withoutDepthHandle) + " atlasWithDepth=" + MetalTrace.hex(guiItemAtlasWithDepthHandle) + " atlasWithoutDepth=" + MetalTrace.hex(guiItemAtlasWithoutDepthHandle));
+        if (MetalTrace.enabled()) MetalTrace.log("PIPELINE_CLOSE", "name=\"" + MetalTrace.safe(name) + "\" withDepth=" + MetalTrace.hex(withDepthHandle) + " withoutDepth=" + MetalTrace.hex(withoutDepthHandle) + " atlasWithDepth=" + MetalTrace.hex(guiItemAtlasWithDepthHandle) + " atlasWithoutDepth=" + MetalTrace.hex(guiItemAtlasWithoutDepthHandle));
         if (withDepthHandle != 0L) MetalInterop.sdlCall("SDL_ReleaseGPUGraphicsPipeline", device.handle(), withDepthHandle);
         if (withoutDepthHandle != 0L && withoutDepthHandle != withDepthHandle)
             MetalInterop.sdlCall("SDL_ReleaseGPUGraphicsPipeline", device.handle(), withoutDepthHandle);
@@ -293,3 +293,4 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
             MetalInterop.sdlCall("SDL_ReleaseGPUGraphicsPipeline", device.handle(), guiItemAtlasWithoutDepthHandle);
     }
 }
+

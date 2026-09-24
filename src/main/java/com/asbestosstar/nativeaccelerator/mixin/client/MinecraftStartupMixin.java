@@ -121,3 +121,4 @@ public abstract class MinecraftStartupMixin {
     }
 
 }
+

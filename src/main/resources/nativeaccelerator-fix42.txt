@@ -6,3 +6,4 @@ Native Accelerator fix42: legacy Mac1 strict swapchain presentation diagnostic.
 Properties:
   renderer.metal.mac1StrictSwapchainPresent=true
   renderer.metal.mac1WaitForSwapchain=true
+

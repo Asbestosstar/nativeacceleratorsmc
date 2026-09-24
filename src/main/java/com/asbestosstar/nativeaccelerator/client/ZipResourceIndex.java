@@ -106,3 +106,4 @@ public final class ZipResourceIndex {
 
     private record EntryRef(String name, ZipEntry entry) {}
 }
+

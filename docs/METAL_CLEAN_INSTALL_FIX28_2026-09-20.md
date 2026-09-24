@@ -13,3 +13,4 @@ next build. `VERIFY_FIX28.sh` inspects the compiled class bytes, not merely the 
 
 The active MSL layout generator remains enabled. Runtime must report all four identities:
 main build, clean Metal core, active MSL generator, and optimized atlas.
+

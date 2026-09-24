@@ -9,3 +9,4 @@ public final class NativeAcceleratorFabric implements ModInitializer {
         NativeAccelerator.initialize();
     }
 }
+

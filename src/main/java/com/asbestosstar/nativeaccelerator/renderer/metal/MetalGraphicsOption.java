@@ -51,3 +51,4 @@ public final class MetalGraphicsOption {
         return result;
     }
 }
+

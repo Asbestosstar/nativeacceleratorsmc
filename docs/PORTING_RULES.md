@@ -11,3 +11,4 @@
 9. **Keep rare architectures explicit.** IA-64 and PPC32 have their own backends even while their first kernels are scalar.
 10. **Keep the C ABI loader-neutral.** Panama and future JNI adapters must call the same native core.
 11. **Prefer runtime dispatch over whole-library ISA flags.** A native library should start safely on the oldest supported CPU and select AVX/VIS/AltiVec/etc. only after detection.
+

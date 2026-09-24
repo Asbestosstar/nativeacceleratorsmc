@@ -39,3 +39,4 @@ public record CpuTopologyLayout(List<CpuCoreLayout> cores, String source, boolea
         return max;
     }
 }
+

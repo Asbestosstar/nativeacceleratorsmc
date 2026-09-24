@@ -33,3 +33,4 @@ public abstract class PreferredGraphicsApiMetalCodecMixin {
         System.out.println("[Native Accelerator] Minecraft preferredGraphicsBackend codec extended with metal");
     }
 }
+

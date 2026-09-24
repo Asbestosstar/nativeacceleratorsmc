@@ -19,6 +19,7 @@ import java.util.Optional;
  */
 public final class DaxIntOps {
     private static final int DEFAULT_NATIVE_MIN_ELEMENTS = 65_536;
+    private static final int DEFAULT_NATIVE_ZERO_COPY_MIN_ELEMENTS = 8_192;
     private static final int DEFAULT_JAR_MIN_ELEMENTS = 0;
     private static final ThreadLocal<Scratch> SCRATCH = ThreadLocal.withInitial(Scratch::new);
 
@@ -227,7 +228,7 @@ public final class DaxIntOps {
     /** Zero-copy entrypoint for callers that already own native int32 storage. JAR streams cannot use this. */
     public static long tryCountBetweenNative(MemorySegment srcI32, long count,
                                              int lowerInclusive, int upperInclusive) {
-        if (srcI32 == null || !srcI32.isNative() || count < nativeMinimumElements() ||
+        if (srcI32 == null || !srcI32.isNative() || count < nativeZeroCopyMinimumElements() ||
                 lowerInclusive > upperInclusive || !hardwareEligible()) return -1L;
         if (!DaxConcurrencyLimiter.tryEnter()) return -1L;
         try {
@@ -245,7 +246,7 @@ public final class DaxIntOps {
                                               MemorySegment srcI32, long count,
                                               int lowerInclusive, int upperInclusive) {
         if (dstI32 == null || srcI32 == null || !dstI32.isNative() || !srcI32.isNative() ||
-                count < nativeMinimumElements() || dstCapacity < 0 || lowerInclusive > upperInclusive ||
+                count < nativeZeroCopyMinimumElements() || dstCapacity < 0 || lowerInclusive > upperInclusive ||
                 !hardwareEligible()) return -1L;
         if (!DaxConcurrencyLimiter.tryEnter()) return -1L;
         try {
@@ -274,8 +275,13 @@ public final class DaxIntOps {
     }
 
     private static int nativeMinimumElements() {
-        // Native fallback must pay Java heap -> direct staging, so keep the conservative crossover.
+        // Heap arrays pay Java heap -> direct staging, so retain a conservative crossover.
         return NativeAcceleratorConfig.intValue("dax.minElements", DEFAULT_NATIVE_MIN_ELEMENTS, 0);
+    }
+
+    private static int nativeZeroCopyMinimumElements() {
+        // Native MemorySegments avoid heap staging and can profitably use DAX much sooner.
+        return NativeAcceleratorConfig.intValue("dax.native.minElements", DEFAULT_NATIVE_ZERO_COPY_MIN_ELEMENTS, 0);
     }
 
     private static Mode mode() {
@@ -308,3 +314,4 @@ public final class DaxIntOps {
         }
     }
 }
+

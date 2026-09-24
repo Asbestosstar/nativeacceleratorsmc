@@ -20,3 +20,4 @@ public abstract class ChunkStatusTasksLightingProfilingMixin {
         WorldgenProfiler.recordPhaseCpu("lighting.initializeLightSources", wall, cpu);
     }
 }
+

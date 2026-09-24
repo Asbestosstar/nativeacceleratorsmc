@@ -241,3 +241,4 @@ final class MetalUniformPacking {
     record Entry(int openParen, int closeParen, int bodyOpen, String parameterText) {}
     private record PackedParam(String type, String variable, int logicalSlot) {}
 }
+

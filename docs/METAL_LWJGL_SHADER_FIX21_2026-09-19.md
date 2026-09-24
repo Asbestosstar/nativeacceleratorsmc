@@ -21,3 +21,4 @@ Fix21 therefore makes shader creation fully typed:
 
 `MetalInterop.set` also has a conservative fallback to a generated static `n<field>` setter when
 an instance setter is absent, which protects similar LWJGL count-field shapes elsewhere.
+

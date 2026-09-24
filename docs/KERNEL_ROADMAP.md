@@ -111,3 +111,4 @@ Registration API for code that must decide before mixins are selected:
 `src/test/java/.../SystemMixinGateTest.java` is a plain-main harness (no JUnit dependency) that
 exercises every switch and the precedence order; run it with `./run-mixin-gate-test.sh`. There is
 still no remapping strategy, so per the policy above no concrete mixin is registered yet.
+

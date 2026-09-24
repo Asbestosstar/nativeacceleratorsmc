@@ -20,3 +20,4 @@ public abstract class ClientItemInfoLoaderBatchLoadingMixin {
         if (ClientItemLoadBatcher.enabled()) cir.setReturnValue(ClientItemLoadBatcher.scheduleLoad(manager, executor));
     }
 }
+

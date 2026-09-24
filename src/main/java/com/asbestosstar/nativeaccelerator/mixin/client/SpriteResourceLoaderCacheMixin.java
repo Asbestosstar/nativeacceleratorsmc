@@ -38,3 +38,4 @@ public abstract class SpriteResourceLoaderCacheMixin {
         return CachedSpriteResourceLoader.create(metadataTypes);
     }
 }
+

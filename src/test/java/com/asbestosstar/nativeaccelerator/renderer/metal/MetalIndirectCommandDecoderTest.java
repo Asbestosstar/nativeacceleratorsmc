@@ -28,3 +28,4 @@ public final class MetalIndirectCommandDecoderTest {
         if (expected != actual) throw new AssertionError(what + ": expected " + expected + ", got " + actual);
     }
 }
+

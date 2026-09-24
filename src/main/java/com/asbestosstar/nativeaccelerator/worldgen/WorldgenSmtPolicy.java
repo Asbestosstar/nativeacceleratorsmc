@@ -16,7 +16,10 @@ public final class WorldgenSmtPolicy {
     public static int strandsPerCore() {
         int configured = NativeAcceleratorConfig.intValue("worldgen.smt.strandsPerCore", 0, 0);
         if (configured > 0) return Math.min(configured, TOPOLOGY.threadsPerCore());
-        // Safe starting occupancy for SMT4/8; calibration should sweep 1/2/4/6/8 on the real host.
+        // SPARC T-series throughput generally benefits from deeper strand occupancy because each core
+        // is designed around latency hiding. Keep one/two strands free of forced occupancy rather than
+        // jumping straight to all eight, which preserves headroom for server/render/GC work.
+        if (TOPOLOGY.isSparc() && TOPOLOGY.threadsPerCore() >= 8) return 6;
         return TOPOLOGY.threadsPerCore() >= 8 ? 4 : Math.min(2, TOPOLOGY.threadsPerCore());
     }
 
@@ -32,3 +35,4 @@ public final class WorldgenSmtPolicy {
         return NativeAcceleratorConfig.booleanValue("worldgen.smt.pinServerThread", true);
     }
 }
+

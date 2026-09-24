@@ -21,3 +21,4 @@ the raw `nSDL_` entry point with native addresses only when necessary.
 Do not call `SDL_BeginGPURenderPass` reflectively with an explicit count. More generally, when
 an LWJGL generated overload accepts a `Struct.Buffer`, check whether LWJGL has elided the
 corresponding C count parameter before mirroring the C signature in reflection code.
+

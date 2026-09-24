@@ -19,3 +19,4 @@ public final class MetalQuadTriangulationPureTest {
         System.out.println("MetalQuadTriangulationPureTest: PASS");
     }
 }
+

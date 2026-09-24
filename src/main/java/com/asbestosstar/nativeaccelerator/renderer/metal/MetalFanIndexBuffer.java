@@ -48,3 +48,4 @@ final class MetalFanIndexBuffer implements AutoCloseable {
 
     @Override public void close() { buffer.close(); }
 }
+

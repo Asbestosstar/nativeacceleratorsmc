@@ -316,7 +316,7 @@ final class MetalSpirvCompiler {
         if (descriptor.descriptorSetIndex() == 0 && binding >= 0 && binding < uniforms.size()) {
             String expectedName = uniforms.get(binding).name();
             if (!expectedName.equals(descriptor.name())) {
-                MetalTrace.log("SPIRV_BINDING_NAME_MISMATCH", "pipeline=\"" + MetalTrace.safe(String.valueOf(pipeline.name()))
+                if (MetalTrace.enabled()) MetalTrace.log("SPIRV_BINDING_NAME_MISMATCH", "pipeline=\"" + MetalTrace.safe(String.valueOf(pipeline.name()))
                         + "\" binding=" + binding + " reflected=\"" + MetalTrace.safe(descriptor.name())
                         + "\" layout=\"" + MetalTrace.safe(expectedName) + "\"");
             }
@@ -353,3 +353,4 @@ final class MetalSpirvCompiler {
                 + (detail == null ? "" : detail));
     }
 }
+

@@ -45,3 +45,4 @@ public abstract class PerlinNoiseMixin extends GradientNoise {
         }
     }
 }
+

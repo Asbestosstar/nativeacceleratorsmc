@@ -21,3 +21,4 @@ running a patched/OCLP Metal stack.
 
 The startup log should identify `legacyNvidia=true`, select `MAC1_COMPAT`, report `icb=CPU-fallback`, and
 create the SDL Metal device with `allowMacFamily1=true`. No graphics ICB is created by the preflight path.
+

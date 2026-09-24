@@ -41,3 +41,4 @@ public abstract class DensitySamplerBoundProfilingMixin {
         t[1] = -1L;
     }
 }
+

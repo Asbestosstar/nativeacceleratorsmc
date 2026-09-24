@@ -10,3 +10,4 @@ public interface DensityBufferAccessor {
     @Accessor("values")
     float[] nativeaccelerator$values();
 }
+

@@ -51,3 +51,4 @@ public abstract class ChunkStepProfilingMixin {
                 WorldgenProfiler.recordStatus(status, start, error == null));
     }
 }
+

@@ -18,3 +18,4 @@ reflection for this call entirely. It also prints:
 `[Native Accelerator] Build marker: metal-renderpass-fix20`
 
 near the beginning of startup so test logs prove that the rebuilt JAR came from this tree.
+

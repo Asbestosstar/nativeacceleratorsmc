@@ -331,7 +331,8 @@ actual 1/2/4/6/8 performance sweep must run on the target high-SMT machine.
 
 ### DAX concurrency under SMT8
 
-DAX submission is separately bounded with `-Dnativeaccelerator.dax.maxConcurrent` (default 32). Both the
+DAX submission is separately bounded with `-Dnativeaccelerator.dax.maxConcurrent` (default `auto`, capped at 16). Both the
 optional `DaxIntStream` path and direct/native `libdax` integer scan/select paths use the same non-blocking
 permit budget. When the budget is saturated, callers fall through to the next backend/Java instead of letting
 hundreds of SMT workers queue accelerator requests. Tune this independently from CPU strands/core.
+

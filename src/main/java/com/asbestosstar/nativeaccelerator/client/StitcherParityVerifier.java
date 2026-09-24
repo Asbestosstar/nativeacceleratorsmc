@@ -106,3 +106,4 @@ public final class StitcherParityVerifier {
 
     private record Placement(int x, int y, int padding) {}
 }
+

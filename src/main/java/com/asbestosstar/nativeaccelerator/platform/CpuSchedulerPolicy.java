@@ -51,3 +51,4 @@ public final class CpuSchedulerPolicy {
         return (int) Math.max(0L, Math.min(Integer.MAX_VALUE, adjusted));
     }
 }
+

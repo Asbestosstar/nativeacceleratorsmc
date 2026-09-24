@@ -13,3 +13,4 @@ public interface OptionInstanceCaptionAccessor {
     @Mutable
     void nativeaccelerator$setCaption(Component caption);
 }
+

@@ -122,3 +122,4 @@ public final class GraphicsMenuText {
         return (spanish ? ES : EN).getOrDefault(key, EN.getOrDefault(key, key));
     }
 }
+

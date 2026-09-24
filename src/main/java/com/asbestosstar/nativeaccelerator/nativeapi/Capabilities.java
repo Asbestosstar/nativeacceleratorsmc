@@ -71,3 +71,4 @@ public final class Capabilities {
         if ((mask & bit) != 0) out.add(name);
     }
 }
+

@@ -40,3 +40,4 @@ public enum GraphicsApiChoice implements StringRepresentable {
         return DEFAULT;
     }
 }
+

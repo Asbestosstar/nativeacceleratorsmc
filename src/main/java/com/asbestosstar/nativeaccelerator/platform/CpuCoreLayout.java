@@ -18,3 +18,4 @@ public record CpuCoreLayout(int packageId, int coreId, int[] logicalProcessorIds
         return logicalProcessorIds.length;
     }
 }
+

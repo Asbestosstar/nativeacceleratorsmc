@@ -352,3 +352,4 @@ public final class GraphicsBackendPreference {
         return Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize();
     }
 }
+

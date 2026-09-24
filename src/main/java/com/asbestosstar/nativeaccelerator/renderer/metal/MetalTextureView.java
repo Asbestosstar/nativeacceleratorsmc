@@ -22,3 +22,4 @@ final class MetalTextureView extends BaseGpuTextureView {
     @Override public boolean isClosed() { return closed.get(); }
     @Override public void close() { closed.set(true); }
 }
+

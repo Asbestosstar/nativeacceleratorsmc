@@ -55,3 +55,4 @@ final class MetalGpuTexture extends BaseGpuTexture {
         }
     }
 }
+

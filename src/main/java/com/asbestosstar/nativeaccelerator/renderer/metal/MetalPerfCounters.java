@@ -14,13 +14,13 @@ import java.util.Locale;
 /**
  * Lightweight development telemetry for the Metal backend.
  *
- * <p>Enabled by default in the performance-debug build. Disable with
- * {@code -Dnativeaccelerator.renderer.metal.benchmark=false}. The console summary is intentionally
+ * <p>Disabled by default in production builds. Enable explicitly with
+ * {@code -Dnativeaccelerator.renderer.metal.benchmark=true}. The console summary is intentionally
  * compact enough to paste into an issue. A CSV is also written under the game directory.</p>
  */
 final class MetalPerfCounters {
     static final boolean ENABLED = Boolean.parseBoolean(
-            System.getProperty("nativeaccelerator.renderer.metal.benchmark", "true"));
+            System.getProperty("nativeaccelerator.renderer.metal.benchmark", "false"));
     private static final int REPORT_FRAMES = Math.max(30, Integer.getInteger(
             "nativeaccelerator.renderer.metal.benchmarkFrames", 120));
 
@@ -180,3 +180,4 @@ final class MetalPerfCounters {
         interopCalls=interopNs=0L;
     }
 }
+

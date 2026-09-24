@@ -10,3 +10,4 @@ package com.asbestosstar.nativeaccelerator.mixinconfig;
 public interface MixinRule {
     MixinDecision decide(String targetClassName, String mixinClassName);
 }
+

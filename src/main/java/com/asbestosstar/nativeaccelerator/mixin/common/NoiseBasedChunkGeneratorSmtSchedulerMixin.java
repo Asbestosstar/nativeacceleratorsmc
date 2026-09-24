@@ -18,3 +18,4 @@ public abstract class NoiseBasedChunkGeneratorSmtSchedulerMixin {
         return WorldgenWorkScheduler.enabled() ? WorldgenWorkScheduler.executor() : vanilla.forName(name);
     }
 }
+

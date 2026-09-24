@@ -71,3 +71,4 @@ final class MetalTransientMemory implements TransientMemory {
     void release() { for (GpuBuffer b:owned) try { b.close(); } catch(Throwable ignored){} owned.clear(); }
     private static int checkedSize(long n){ if(n<=0||n>Integer.MAX_VALUE)throw new IllegalArgumentException("Transient allocation too large: "+n); return (int)n; }
 }
+

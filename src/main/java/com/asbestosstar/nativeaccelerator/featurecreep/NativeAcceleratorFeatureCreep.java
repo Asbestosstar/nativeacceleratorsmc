@@ -10,3 +10,4 @@ public final class NativeAcceleratorFeatureCreep {
         NativeAccelerator.initialize();
     }
 }
+

@@ -14,3 +14,4 @@ final class MetalQueryPool implements GpuQueryPool {
     @Override public OptionalLong[] getValues(int first, int count) { OptionalLong[] out = new OptionalLong[count]; for (int i=0;i<count;i++) out[i]=getValue(first+i); return out; }
     @Override public void close() { }
 }
+

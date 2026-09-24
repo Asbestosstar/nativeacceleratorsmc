@@ -128,3 +128,4 @@ final class DaxIntStreamAdapter {
                            Method count, Method toArray, Method anyMatch,
                            Method allMatch, Method noneMatch) {}
 }
+

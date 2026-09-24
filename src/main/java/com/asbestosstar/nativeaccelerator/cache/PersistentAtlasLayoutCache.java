@@ -290,3 +290,4 @@ public final class PersistentAtlasLayoutCache {
     public record Layout(int width, int height, int mipLevel, int padding,
                          boolean verified, Map<Identifier, Position> positions) {}
 }
+
