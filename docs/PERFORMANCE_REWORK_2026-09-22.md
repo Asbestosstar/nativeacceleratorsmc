@@ -5,7 +5,7 @@ This source snapshot restores production-throughput defaults after the Metal bri
 ## Cross-backend
 - profiling mixins are transformed out unless explicitly enabled;
 - chunk compiler workers back off instead of busy-spinning when the shared staging arena is full;
-- OpenGL's hard-coded two-submit fence ring is configurable and defaults to three submits in flight;
+- OpenGL keeps RenderPearl's native two-submit fence/transient-memory lifetime model. The earlier experimental 3-submit override was removed because RenderPearl has coupled two-slot transient-memory state and legacy macOS/NVIDIA drivers can serialize badly when only the fence ring is enlarged;
 - GUI item-atlas backend detection is cached.
 
 ## Metal / legacy Mac1 (GT 650M class)
@@ -23,7 +23,6 @@ This source snapshot restores production-throughput defaults after the Metal bri
 - SPARC SMT8 worldgen defaults to six strands/core, with existing reserved-core policy retained.
 
 ## Useful A/B switches
-- `-Dnativeaccelerator.renderer.opengl.framesInFlight=2` restores vanilla OpenGL queue depth.
 - `-Dnativeaccelerator.renderer.chunkBackpressure=false` restores pure busy-spin behavior.
 - `-Dnativeaccelerator.renderer.metal.mac1SerializeBufferUploads=true` restores the global-idle Mac1 diagnostic.
 - `-Dnativeaccelerator.renderer.metal.mac1WaitForSwapchain=true` restores the pre-acquire swapchain wait.

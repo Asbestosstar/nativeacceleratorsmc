@@ -74,7 +74,6 @@
     "client.VideoSettingsUnixListMixin",
     "client.GuiItemAtlasRasterParityMixin",
     "client.GlSamplerVulkanParityMixin",
-    "client.GlCommandEncoderThroughputMixin",
     "client.SectionCompileBackpressureMixin",
     "client.SectionResortBackpressureMixin"
   ],
