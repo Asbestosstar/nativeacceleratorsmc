@@ -1,6 +1,7 @@
 package com.asbestosstar.nativeaccelerator;
 
 import com.asbestosstar.nativeaccelerator.cache.PersistentResourceCache;
+import com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig;
 import com.asbestosstar.nativeaccelerator.nativeapi.Capabilities;
 import com.asbestosstar.nativeaccelerator.nativeapi.NativeApi;
 import com.asbestosstar.nativeaccelerator.nativeapi.PanamaNativeApi;
@@ -32,6 +33,9 @@ public final class NativeAccelerator {
      */
     public static void initialize() {
         if (!INITIALIZED.compareAndSet(false, true)) return;
+        // Bootstrap config before anything else so MetalDevice reads the correct mac1 flags
+        // regardless of class-loading order.
+        NativeAcceleratorConfig.bootstrapSystemProperties();
 
         // Cross-loader guard: a copy of this class loaded by another classloader has its own INITIALIZED
         // flag, but the shared system properties let it see that initialization already ran in this JVM.
@@ -140,4 +144,3 @@ public final class NativeAccelerator {
         }
     }
 }
-

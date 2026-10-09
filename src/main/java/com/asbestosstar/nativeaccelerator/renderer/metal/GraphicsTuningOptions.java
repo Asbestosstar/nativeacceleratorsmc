@@ -52,7 +52,7 @@ public final class GraphicsTuningOptions {
                 booleanOption(options, "nativeaccelerator.options.metalCpuIndirect", "renderer.metal.forceCpuIndirect", false),
                 booleanOption(options, "nativeaccelerator.options.metalYFlip", "renderer.metal.generatedTextureYFlip", true));
         list.addSmall(
-                intOption(options, "nativeaccelerator.options.mac1Frames", "renderer.metal.mac1FramesInFlight", 1, 1, 3),
+                intOption(options, "nativeaccelerator.options.mac1Frames", "renderer.metal.mac1FramesInFlight", 2, 1, 3),
                 booleanOption(options, "nativeaccelerator.options.mac1CycleClearedTargets", "renderer.metal.mac1CycleClearedTargets", false));
         list.addSmall(
                 booleanOption(options, "nativeaccelerator.options.guiRegionalClearUpload", "renderer.metal.guiRegionalClearUpload", true),
@@ -62,10 +62,10 @@ public final class GraphicsTuningOptions {
                 booleanOption(options, "nativeaccelerator.options.explicitViewportPerPass", "renderer.metal.explicitViewportPerPass", true));
         list.addSmall(
                 booleanOption(options, "nativeaccelerator.options.mac1StrictSwapchainPresent", "renderer.metal.mac1StrictSwapchainPresent", false),
-                booleanOption(options, "nativeaccelerator.options.mac1WaitForSwapchain", "renderer.metal.mac1WaitForSwapchain", true));
+                booleanOption(options, "nativeaccelerator.options.mac1WaitForSwapchain", "renderer.metal.mac1WaitForSwapchain", false));
         list.addSmall(
                 booleanOption(options, "nativeaccelerator.options.mac1ForcePresentedSourceFirstClear", "renderer.metal.mac1ForcePresentedSourceFirstClear", true),
-                booleanOption(options, "nativeaccelerator.options.mac1SerializeBufferUploads", "renderer.metal.mac1SerializeBufferUploads", true));
+                booleanOption(options, "nativeaccelerator.options.mac1SerializeBufferUploads", "renderer.metal.mac1SerializeBufferUploads", false));
         list.addSmall(
                 booleanOption(options, "nativeaccelerator.options.mac1RetainTextureTransfers", "renderer.metal.mac1RetainTextureTransfers", true),
                 booleanOption(options, "nativeaccelerator.options.mac1RegionalDepthAttachmentClear", "renderer.metal.mac1RegionalDepthAttachmentClear", true));

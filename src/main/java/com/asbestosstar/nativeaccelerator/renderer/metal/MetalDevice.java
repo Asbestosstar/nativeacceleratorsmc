@@ -37,6 +37,19 @@ final class MetalDevice implements GpuDeviceBackend {
     private final int framesInFlight;
     private final boolean mac1Compat;
     private volatile long lastPresentedSourceHandle;
+    private final boolean cachedCycleClearedTargets;
+    private final boolean cachedGuiRegionalClearUpload;
+    private final boolean cachedResetSamplersPerPipeline;
+    private final boolean cachedValidateBindings;
+    private final boolean cachedForceRenderAreaScissor;
+    private final boolean cachedMac1RetainTextureTransfers;
+    private final boolean cachedMac1RegionalDepthAttachmentClear;
+    private final boolean cachedMac1RelaxImplicitPassScissor;
+    private final boolean cachedExplicitViewportPerPass;
+    private final boolean cachedMac1SerializeBufferUploads;
+    private final boolean cachedStrictSwapchainPresent;
+    private final boolean cachedWaitForSwapchainBeforeAcquire;
+    private final boolean cachedForcePresentedSourceFirstClear;
 
     MetalDevice(long handle, GpuDebugOptions debug, MetalBackend.MetalCapabilityTier capabilityTier,
                 MacMetalCapabilities.Result metal) {
@@ -109,6 +122,8 @@ final class MetalDevice implements GpuDeviceBackend {
                 + "; forceRenderAreaScissor=" + forceRenderAreaScissor()
                 + "; explicitViewportPerPass=" + explicitViewportPerPass()
                 + "; serializeBufferUploads=" + mac1SerializeBufferUploads()
+                + "; waitForSwapchain=" + waitForSwapchainBeforeAcquire()
+                + "; validateBindings=" + validateBindings()
                 + "; retainTextureTransfers=" + mac1RetainTextureTransfers()
                 + "; regionalDepthAttachmentClear=" + mac1RegionalDepthAttachmentClear()
                 + "; relaxImplicitPassScissor=" + mac1RelaxImplicitPassScissor()
@@ -116,6 +131,19 @@ final class MetalDevice implements GpuDeviceBackend {
                 + "; forcePresentedSourceFirstClear=" + forcePresentedSourceFirstClear()
                 + "; fix25Cycling=false");
         if (MetalTrace.enabled()) MetalTrace.log("DEVICE_READY", "handle=" + MetalTrace.hex(handle) + " name=\"" + MetalTrace.safe(deviceName) + "\" vendor=" + vendor + " mac1=" + mac1Compat + " framesInFlight=" + framesInFlight + " traceFile=\"" + MetalTrace.safe(MetalTrace.path()) + "\"");
+        this.cachedCycleClearedTargets = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1CycleClearedTargets", "false"));
+        this.cachedGuiRegionalClearUpload = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.guiRegionalClearUpload", "true"));
+        this.cachedResetSamplersPerPipeline = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.resetSamplersPerPipeline", "true"));
+        this.cachedValidateBindings = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.validateBindings", "false"));
+        this.cachedForceRenderAreaScissor = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.forceRenderAreaScissor", "true"));
+        this.cachedMac1RetainTextureTransfers = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1RetainTextureTransfers", "true"));
+        this.cachedMac1RegionalDepthAttachmentClear = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1RegionalDepthAttachmentClear", "true"));
+        this.cachedMac1RelaxImplicitPassScissor = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1RelaxImplicitPassScissor", "true"));
+        this.cachedExplicitViewportPerPass = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.explicitViewportPerPass", "true"));
+        this.cachedMac1SerializeBufferUploads = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1SerializeBufferUploads", "false"));
+        this.cachedStrictSwapchainPresent = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1StrictSwapchainPresent", "false"));
+        this.cachedWaitForSwapchainBeforeAcquire = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1WaitForSwapchain", "false"));
+        this.cachedForcePresentedSourceFirstClear = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1ForcePresentedSourceFirstClear", "false"));
     }
 
     private static String vendorName(String deviceName) {
@@ -152,7 +180,7 @@ final class MetalDevice implements GpuDeviceBackend {
     synchronized void retireSubmission(MetalTransientMemory memory, long fence, List<Long> textureTransfers, Runnable completion) {
         if (fence == 0L) throw new IllegalArgumentException("retirement fence");
         List<Long> transfers = textureTransfers == null || textureTransfers.isEmpty()
-                ? List.of() : List.copyOf(textureTransfers);
+                ? List.of() : textureTransfers;
         boolean emptyMemory = memory == null || memory.isEmpty();
         if (emptyMemory && transfers.isEmpty() && completion == null) {
             SDLGPU.SDL_ReleaseGPUFence(handle(), fence);
@@ -221,45 +249,23 @@ final class MetalDevice implements GpuDeviceBackend {
 
     boolean mac1Compat() { return mac1Compat; }
 
-    boolean cycleClearedTargets() {
-        return mac1Compat && Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1CycleClearedTargets", "false"));
-    }
+    boolean cycleClearedTargets() { return cachedCycleClearedTargets; }
 
-    boolean guiRegionalClearUpload() {
-        return Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.guiRegionalClearUpload", "true"));
-    }
+    boolean guiRegionalClearUpload() { return cachedGuiRegionalClearUpload; }
 
-    boolean resetSamplersPerPipeline() {
-        return Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.resetSamplersPerPipeline", "true"));
-    }
+    boolean resetSamplersPerPipeline() { return cachedResetSamplersPerPipeline; }
 
-    boolean forceRenderAreaScissor() {
-        return Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.forceRenderAreaScissor", "true"));
-    }
+    boolean validateBindings() { return cachedValidateBindings; }
+
+    boolean forceRenderAreaScissor() { return cachedForceRenderAreaScissor; }
 
 
-    boolean mac1RetainTextureTransfers() {
-        return Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1RetainTextureTransfers", "true"));
-    }
+    boolean mac1RetainTextureTransfers() { return cachedMac1RetainTextureTransfers; }
 
-    boolean mac1RegionalDepthAttachmentClear() {
-        return Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1RegionalDepthAttachmentClear", "true"));
-    }
+    boolean mac1RegionalDepthAttachmentClear() { return cachedMac1RegionalDepthAttachmentClear; }
 
-    boolean mac1RelaxImplicitPassScissor() {
-        return Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1RelaxImplicitPassScissor", "true"));
-    }
-    boolean explicitViewportPerPass() {
-        return Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.explicitViewportPerPass", "true"));
-    }
+    boolean mac1RelaxImplicitPassScissor() { return cachedMac1RelaxImplicitPassScissor; }
+    boolean explicitViewportPerPass() { return cachedExplicitViewportPerPass; }
 
     /**
      * Diagnostic/safety path for legacy MacFamily1 drivers. SDL_UploadToGPUBuffer with cycle=false
@@ -268,25 +274,13 @@ final class MetalDevice implements GpuDeviceBackend {
      * Serializing only before dirty-buffer uploads preserves partial-buffer contents while proving
      * or disproving that hazard without changing the higher-level RenderPearl buffer model.
      */
-    boolean mac1SerializeBufferUploads() {
-        return mac1Compat && Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1SerializeBufferUploads", "false"));
-    }
+    boolean mac1SerializeBufferUploads() { return cachedMac1SerializeBufferUploads; }
 
-    boolean strictSwapchainPresent() {
-        return mac1Compat && Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1StrictSwapchainPresent", "false"));
-    }
+    boolean strictSwapchainPresent() { return cachedStrictSwapchainPresent; }
 
-    boolean waitForSwapchainBeforeAcquire() {
-        return mac1Compat && Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1WaitForSwapchain", "false"));
-    }
+    boolean waitForSwapchainBeforeAcquire() { return cachedWaitForSwapchainBeforeAcquire; }
 
-    boolean forcePresentedSourceFirstClear() {
-        return mac1Compat && Boolean.parseBoolean(System.getProperty(
-                "nativeaccelerator.renderer.metal.mac1ForcePresentedSourceFirstClear", "true"));
-    }
+    boolean forcePresentedSourceFirstClear() { return cachedForcePresentedSourceFirstClear; }
 
     long lastPresentedSourceHandle() { return lastPresentedSourceHandle; }
     void notePresentedSourceHandle(long handle) { lastPresentedSourceHandle = handle; }
@@ -327,7 +321,7 @@ final class MetalDevice implements GpuDeviceBackend {
         if (copyPass == 0L) throw new IllegalStateException("SDL_BeginGPUCopyPass failed: " + MetalInterop.lastSdlError());
         try {
             List<MetalTransfers.BufferUpload> uploads = new ArrayList<>();
-            for (MetalGpuBuffer buffer : List.copyOf(dirtyBuffers)) {
+            for (MetalGpuBuffer buffer : dirtyBuffers) {
                 MetalGpuBuffer.DirtyRange range = buffer.drainDirtyRange();
                 if (range == null) {
                     dirtyBuffers.remove(buffer);

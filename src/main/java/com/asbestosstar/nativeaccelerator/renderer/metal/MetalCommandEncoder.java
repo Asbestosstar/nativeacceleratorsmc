@@ -44,6 +44,9 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
     private ByteBuffer pendingUploadBlock;
     private static final int UPLOAD_BLOCK_BYTES = Math.max(256 * 1024,
             Integer.getInteger("nativeaccelerator.renderer.metal.uploadBlockBytes", 4 * 1024 * 1024));
+    private static final ThreadLocal<ByteBuffer> CLEAR_COLOR_POOL = new ThreadLocal<>();
+    private static final ThreadLocal<ByteBuffer> CLEAR_DEPTH_POOL = new ThreadLocal<>();
+    private static final ThreadLocal<ByteBuffer> COPY_PACK_POOL  = new ThreadLocal<>();
 
     MetalCommandEncoder(MetalDevice device) { this.device=device; this.transientMemory=new MetalTransientMemory(device); if (MetalTrace.enabled()) MetalTrace.log("ENCODER_CREATE", "encoder=" + traceEncoderId); }
     long traceEncoderId(){ return traceEncoderId; }
@@ -73,7 +76,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
                         + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command)
                         + " nativeFence=" + MetalTrace.hex(nativeFence));
                 List<Long> transfers = retainedTextureTransfers.isEmpty()
-                        ? List.of() : List.copyOf(retainedTextureTransfers);
+                        ? List.of() : retainedTextureTransfers;
                 retainedTextureTransfers.clear();
                 MetalTransientMemory retiringMemory = transientMemory;
                 device.retireSubmission(retiringMemory, nativeFence, transfers,
@@ -231,7 +234,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         }
 
         int pixels = Math.multiplyExact(width, height);
-        ByteBuffer colorBytes = ByteBuffer.allocateDirect(Math.multiplyExact(pixels, 4));
+        ByteBuffer colorBytes = acquirePool(CLEAR_COLOR_POOL, Math.multiplyExact(pixels, 4));
         byte r = unorm8(colorValue.x());
         byte g = unorm8(colorValue.y());
         byte b = unorm8(colorValue.z());
@@ -239,8 +242,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         for (int i = 0; i < pixels; i++) colorBytes.put(r).put(g).put(b).put(a);
         colorBytes.flip();
 
-        ByteBuffer depthBytes = ByteBuffer.allocateDirect(Math.multiplyExact(pixels, Float.BYTES))
-                .order(ByteOrder.nativeOrder());
+        ByteBuffer depthBytes = acquirePool(CLEAR_DEPTH_POOL, Math.multiplyExact(pixels, Float.BYTES));
         float z = (float)depthValue;
         for (int i = 0; i < pixels; i++) depthBytes.putFloat(z);
         depthBytes.flip();
@@ -308,7 +310,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         MetalGpuTexture target=metal(destination);
         if(layer<0 || layer>=target.getDepthOrLayers())
             throw new IllegalArgumentException("Texture layer out of range: "+layer+" / "+target.getDepthOrLayers());
-        int bpp=destination.getFormat().blockSize();ByteBuffer src=metal(source.buffer()).shadowSlice(source.offset(),source.length());ByteBuffer packed=ByteBuffer.allocateDirect(Math.multiplyExact(Math.multiplyExact(copyWidth,copyHeight),bpp));
+        int bpp=destination.getFormat().blockSize();ByteBuffer src=metal(source.buffer()).shadowSlice(source.offset(),source.length());ByteBuffer packed=acquirePool(COPY_PACK_POOL,Math.multiplyExact(Math.multiplyExact(copyWidth,copyHeight),bpp));
         for(int row=0;row<copyHeight;row++){int pos=((sourceY+row)*sourceWidth+sourceX)*bpp;ByteBuffer r=src.duplicate();r.position(pos).limit(pos+copyWidth*bpp);packed.put(r);}packed.flip();
         MetalPerfCounters.textureUpload(packed.remaining());
         long retained = MetalTransfers.encodeUploadTexture(device.handle(),commandHandle(),target,packed,mip,layer,destX,destY,copyWidth,copyHeight,
@@ -471,11 +473,22 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
     private void blitToSwapchain(MetalTextureView source,long swapchain,int width,int height){
         Object info=MetalInterop.calloc("SDL_GPUBlitInfo");
-        try{Object s=MetalInterop.get(info,"source"),d=MetalInterop.get(info,"destination");setBlitRegion(s,source.metalTexture().handle(),source.baseMipLevel(),source.getWidth(0),source.getHeight(0));setBlitRegion(d,swapchain,0,width,height);MetalInterop.set(info,"load_op",MetalInterop.sdl("SDL_GPU_LOADOP_DONT_CARE"));MetalInterop.set(info,"flip_mode",0);MetalInterop.set(info,"filter",MetalInterop.sdl("SDL_GPU_FILTER_LINEAR"));MetalInterop.set(info,"cycle",false);MetalInterop.sdlCall("SDL_BlitGPUTexture",commandHandle(),info);}finally{MetalInterop.free(info);}
+        try{Object s=MetalInterop.get(info,"source"),d=MetalInterop.get(info,"destination");setBlitRegion(s,source.metalTexture().handle(),source.baseMipLevel(),source.getWidth(0),source.getHeight(0));setBlitRegion(d,swapchain,0,width,height);MetalInterop.set(info,"load_op",MetalInterop.sdl(device.mac1Compat()?"SDL_GPU_LOADOP_CLEAR":"SDL_GPU_LOADOP_DONT_CARE"));MetalInterop.set(info,"flip_mode",0);MetalInterop.set(info,"filter",MetalInterop.sdl("SDL_GPU_FILTER_LINEAR"));MetalInterop.set(info,"cycle",false);MetalInterop.sdlCall("SDL_BlitGPUTexture",commandHandle(),info);}finally{MetalInterop.free(info);}
     }
     private static void setBlitRegion(Object r,long texture,int mip,int w,int h){MetalInterop.set(r,"texture",texture);MetalInterop.set(r,"mip_level",mip);MetalInterop.set(r,"layer_or_depth_plane",0);MetalInterop.set(r,"x",0);MetalInterop.set(r,"y",0);MetalInterop.set(r,"w",w);MetalInterop.set(r,"h",h);}
     private static void setColor(Object c,Vector4fc v){MetalInterop.set(c,"r",v.x());MetalInterop.set(c,"g",v.y());MetalInterop.set(c,"b",v.z());MetalInterop.set(c,"a",v.w());}
     private static MetalGpuTexture metal(GpuTexture t){if(!(t instanceof MetalGpuTexture m))throw new IllegalArgumentException("Foreign texture in Metal backend");return m;}
     private static MetalGpuBuffer metal(GpuBuffer b){if(!(b instanceof MetalGpuBuffer m))throw new IllegalArgumentException("Foreign buffer in Metal backend");return m;}
+    /** Returns a ThreadLocal ByteBuffer of at least {@code needed} bytes, cleared and limited. */
+    private static ByteBuffer acquirePool(ThreadLocal<ByteBuffer> pool, int needed) {
+        ByteBuffer b = pool.get();
+        if (b == null || b.capacity() < needed) {
+            b = ByteBuffer.allocateDirect(Math.max(needed, 64 * 1024)).order(ByteOrder.nativeOrder());
+            pool.set(b);
+        }
+        b.clear().limit(needed);
+        return b;
+    }
+
 }
 
