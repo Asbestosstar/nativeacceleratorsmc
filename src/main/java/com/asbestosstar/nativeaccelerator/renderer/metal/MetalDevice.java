@@ -190,7 +190,7 @@ final class MetalDevice implements GpuDeviceBackend {
         reapCompletedTransientMemory(false);
 
         // Bound outstanding driver work without serializing every frame.
-        while (retiredSubmissions.size() > Math.max(2, framesInFlight + 1)) {
+        while (retiredSubmissions.size() > (mac1Compat ? Math.max(8, framesInFlight + 6) : Math.max(2, framesInFlight + 1))) {
             reapCompletedTransientMemory(true);
         }
     }
