@@ -50,6 +50,13 @@ final class MetalDevice implements GpuDeviceBackend {
     private final boolean cachedStrictSwapchainPresent;
     private final boolean cachedWaitForSwapchainBeforeAcquire;
     private final boolean cachedForcePresentedSourceFirstClear;
+    private final boolean cachedMac1FencelessRing;
+    private final int mac1RingSize;
+    private final MetalTransientMemory[] mac1Ring;
+    @SuppressWarnings("unchecked")
+    private final List<Long>[] mac1RingTransfers;
+    private final Runnable[] mac1RingCompletions;
+    private int mac1RingHead;
 
     MetalDevice(long handle, GpuDebugOptions debug, MetalBackend.MetalCapabilityTier capabilityTier,
                 MacMetalCapabilities.Result metal) {
@@ -133,17 +140,29 @@ final class MetalDevice implements GpuDeviceBackend {
         if (MetalTrace.enabled()) MetalTrace.log("DEVICE_READY", "handle=" + MetalTrace.hex(handle) + " name=\"" + MetalTrace.safe(deviceName) + "\" vendor=" + vendor + " mac1=" + mac1Compat + " framesInFlight=" + framesInFlight + " traceFile=\"" + MetalTrace.safe(MetalTrace.path()) + "\"");
         this.cachedCycleClearedTargets = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1CycleClearedTargets", "false"));
         this.cachedGuiRegionalClearUpload = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.guiRegionalClearUpload", "true"));
-        this.cachedResetSamplersPerPipeline = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.resetSamplersPerPipeline", "true"));
+        this.cachedResetSamplersPerPipeline = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.resetSamplersPerPipeline", "false"));
         this.cachedValidateBindings = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.validateBindings", "false"));
         this.cachedForceRenderAreaScissor = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.forceRenderAreaScissor", "true"));
-        this.cachedMac1RetainTextureTransfers = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1RetainTextureTransfers", "true"));
-        this.cachedMac1RegionalDepthAttachmentClear = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1RegionalDepthAttachmentClear", "true"));
+        this.cachedMac1RetainTextureTransfers = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1RetainTextureTransfers", "false"));
+        this.cachedMac1RegionalDepthAttachmentClear = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1RegionalDepthAttachmentClear", "false"));
         this.cachedMac1RelaxImplicitPassScissor = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1RelaxImplicitPassScissor", "true"));
         this.cachedExplicitViewportPerPass = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.explicitViewportPerPass", "true"));
         this.cachedMac1SerializeBufferUploads = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1SerializeBufferUploads", "false"));
         this.cachedStrictSwapchainPresent = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1StrictSwapchainPresent", "false"));
         this.cachedWaitForSwapchainBeforeAcquire = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1WaitForSwapchain", "false"));
-        this.cachedForcePresentedSourceFirstClear = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1ForcePresentedSourceFirstClear", "false"));
+        this.cachedForcePresentedSourceFirstClear = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1ForcePresentedSourceFirstClear", "true"));
+        this.cachedMac1FencelessRing = this.mac1Compat && Boolean.parseBoolean(
+            System.getProperty("nativeaccelerator.renderer.metal.mac1FencelessRing", "true"));
+        if (this.cachedMac1FencelessRing) {
+            this.mac1RingSize = Math.max(32, this.framesInFlight + 28);
+            this.mac1Ring = new MetalTransientMemory[this.mac1RingSize];
+            this.mac1RingTransfers = new List[this.mac1RingSize];
+            this.mac1RingCompletions = new Runnable[this.mac1RingSize];
+        } else {
+            this.mac1RingSize = 0; this.mac1Ring = null;
+            this.mac1RingTransfers = null; this.mac1RingCompletions = null;
+        }
+        this.mac1RingHead = 0;
     }
 
     private static String vendorName(String deviceName) {
@@ -190,12 +209,28 @@ final class MetalDevice implements GpuDeviceBackend {
         reapCompletedTransientMemory(false);
 
         // Bound outstanding driver work without serializing every frame.
-        while (retiredSubmissions.size() > (mac1Compat ? Math.max(8, framesInFlight + 6) : Math.max(2, framesInFlight + 1))) {
+        while (retiredSubmissions.size() > (mac1Compat ? Math.max(4, framesInFlight + 2) : Math.max(2, framesInFlight + 1))) {
             reapCompletedTransientMemory(true);
         }
     }
 
-    synchronized void reapCompletedTransientMemory() {
+    synchronized void retireSubmissionFenceless(MetalTransientMemory memory, List<Long> textureTransfers) {
+        int slot = mac1RingHead % mac1RingSize;
+        MetalTransientMemory old = mac1Ring[slot];
+        if (old != null) { old.release(); mac1Ring[slot] = null; }
+        List<Long> oldT = mac1RingTransfers[slot];
+        if (oldT != null) { for (long t : oldT) MetalTransfers.releaseTransferBuffer(handle, t); mac1RingTransfers[slot] = null; }
+        Runnable oldC = mac1RingCompletions[slot];
+        if (oldC != null) { oldC.run(); mac1RingCompletions[slot] = null; }
+        mac1Ring[slot] = memory;
+        mac1RingTransfers[slot] = (textureTransfers == null || textureTransfers.isEmpty()) ? null : textureTransfers;
+        mac1RingCompletions[slot] = null;
+        mac1RingHead++;
+    }
+
+    boolean mac1FencelessRing() { return cachedMac1FencelessRing; }
+
+        synchronized void reapCompletedTransientMemory() {
         reapCompletedTransientMemory(false);
     }
 
@@ -208,13 +243,23 @@ final class MetalDevice implements GpuDeviceBackend {
             RetiredSubmission oldest = retiredSubmissions.peekFirst();
             boolean complete = SDLGPU.SDL_QueryGPUFence(handle(), oldest.fence());
             if (!complete && waitForOldest) {
-                try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
-                    org.lwjgl.PointerBuffer fences = stack.mallocPointer(1).put(0, oldest.fence());
-                    if (!SDLGPU.SDL_WaitForGPUFences(handle(), true, fences)) {
-                        throw new IllegalStateException("SDL_WaitForGPUFences failed: " + MetalInterop.lastSdlError());
+                if (mac1Compat) {
+                    // Yield-poll before blocking: OCLP NVIDIA Metal signals fences very slowly
+                    // and a hard wait stalls the render thread for hundreds of milliseconds.
+                    for (int poll = 0; poll < 8 && !complete; poll++) {
+                        try { Thread.sleep(1); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                        complete = SDLGPU.SDL_QueryGPUFence(handle(), oldest.fence());
                     }
                 }
-                complete = true;
+                if (!complete) {
+                    try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+                        org.lwjgl.PointerBuffer fences = stack.mallocPointer(1).put(0, oldest.fence());
+                        if (!SDLGPU.SDL_WaitForGPUFences(handle(), true, fences)) {
+                            throw new IllegalStateException("SDL_WaitForGPUFences failed: " + MetalInterop.lastSdlError());
+                        }
+                    }
+                    complete = true;
+                }
             }
             if (!complete) break;
             retiredSubmissions.removeFirst();
@@ -240,6 +285,13 @@ final class MetalDevice implements GpuDeviceBackend {
             RetiredSubmission retired = retiredSubmissions.removeFirst();
             // close() waits for GPU idle first, so all resources are safe to release here.
             releaseRetiredSubmission(retired);
+        }
+        if (mac1Ring != null) {
+            for (int i = 0; i < mac1RingSize; i++) {
+                if (mac1Ring[i] != null) { mac1Ring[i].release(); mac1Ring[i] = null; }
+                if (mac1RingTransfers[i] != null) { for (long t : mac1RingTransfers[i]) MetalTransfers.releaseTransferBuffer(handle, t); mac1RingTransfers[i] = null; }
+                if (mac1RingCompletions[i] != null) { mac1RingCompletions[i].run(); mac1RingCompletions[i] = null; }
+            }
         }
     }
 

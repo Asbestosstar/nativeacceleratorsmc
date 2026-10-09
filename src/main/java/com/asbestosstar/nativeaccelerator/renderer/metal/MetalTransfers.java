@@ -411,6 +411,76 @@ final class MetalTransfers {
         }
     }
 
+    /**
+     * Upload two textures in a single copy pass — one ring-slot consumed instead of two.
+     * Used by the mac1 regional-clear path when mac1RegionalDepthAttachmentClear is false.
+     */
+    static void encodeUploadTwoTextures(long device, long command,
+                                         MetalGpuTexture tex0, ByteBuffer src0,
+                                         MetalGpuTexture tex1, ByteBuffer src1,
+                                         int mipLevel, int layer,
+                                         int x, int y, int width, int height) {
+        int size0 = src0.remaining(), size1 = src1.remaining();
+        Object create0 = null, create1 = null;
+        Object srcInfo0 = null, srcInfo1 = null, dstInfo0 = null, dstInfo1 = null;
+        long transfer0 = 0L, transfer1 = 0L, copy = 0L;
+        try {
+            create0 = MetalInterop.calloc("SDL_GPUTransferBufferCreateInfo");
+            MetalInterop.set(create0, "usage", MetalInterop.sdl("SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD"));
+            MetalInterop.set(create0, "size", size0);
+            transfer0 = MetalInterop.sdlLong("SDL_CreateGPUTransferBuffer", device, create0);
+            require(transfer0, "create color upload transfer buffer");
+            MetalInterop.mapGpuTransferBuffer(device, transfer0, false, size0).put(src0.duplicate());
+            MetalInterop.sdlCall("SDL_UnmapGPUTransferBuffer", device, transfer0);
+
+            create1 = MetalInterop.calloc("SDL_GPUTransferBufferCreateInfo");
+            MetalInterop.set(create1, "usage", MetalInterop.sdl("SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD"));
+            MetalInterop.set(create1, "size", size1);
+            transfer1 = MetalInterop.sdlLong("SDL_CreateGPUTransferBuffer", device, create1);
+            require(transfer1, "create depth upload transfer buffer");
+            MetalInterop.mapGpuTransferBuffer(device, transfer1, false, size1).put(src1.duplicate());
+            MetalInterop.sdlCall("SDL_UnmapGPUTransferBuffer", device, transfer1);
+
+            copy = MetalInterop.sdlLong("SDL_BeginGPUCopyPass", command);
+            require(copy, "begin dual texture upload copy pass");
+
+            srcInfo0 = MetalInterop.calloc("SDL_GPUTextureTransferInfo");
+            MetalInterop.set(srcInfo0, "transfer_buffer", transfer0);
+            MetalInterop.set(srcInfo0, "offset", 0);
+            MetalInterop.set(srcInfo0, "pixels_per_row", width);
+            MetalInterop.set(srcInfo0, "rows_per_layer", height);
+            dstInfo0 = MetalInterop.calloc("SDL_GPUTextureRegion");
+            MetalInterop.set(dstInfo0, "texture", tex0.handle());
+            MetalInterop.set(dstInfo0, "mip_level", mipLevel);
+            MetalInterop.set(dstInfo0, "layer", layer);
+            MetalInterop.set(dstInfo0, "x", x); MetalInterop.set(dstInfo0, "y", y); MetalInterop.set(dstInfo0, "z", 0);
+            MetalInterop.set(dstInfo0, "w", width); MetalInterop.set(dstInfo0, "h", height); MetalInterop.set(dstInfo0, "d", 1);
+            MetalInterop.sdlCall("SDL_UploadToGPUTexture", copy, srcInfo0, dstInfo0, false);
+
+            srcInfo1 = MetalInterop.calloc("SDL_GPUTextureTransferInfo");
+            MetalInterop.set(srcInfo1, "transfer_buffer", transfer1);
+            MetalInterop.set(srcInfo1, "offset", 0);
+            MetalInterop.set(srcInfo1, "pixels_per_row", width);
+            MetalInterop.set(srcInfo1, "rows_per_layer", height);
+            dstInfo1 = MetalInterop.calloc("SDL_GPUTextureRegion");
+            MetalInterop.set(dstInfo1, "texture", tex1.handle());
+            MetalInterop.set(dstInfo1, "mip_level", mipLevel);
+            MetalInterop.set(dstInfo1, "layer", layer);
+            MetalInterop.set(dstInfo1, "x", x); MetalInterop.set(dstInfo1, "y", y); MetalInterop.set(dstInfo1, "z", 0);
+            MetalInterop.set(dstInfo1, "w", width); MetalInterop.set(dstInfo1, "h", height); MetalInterop.set(dstInfo1, "d", 1);
+            MetalInterop.sdlCall("SDL_UploadToGPUTexture", copy, srcInfo1, dstInfo1, false);
+
+            MetalInterop.sdlCall("SDL_EndGPUCopyPass", copy); copy = 0L;
+        } finally {
+            if (copy != 0L) safe("SDL_EndGPUCopyPass", copy);
+            if (transfer0 != 0L) safe("SDL_ReleaseGPUTransferBuffer", device, transfer0);
+            if (transfer1 != 0L) safe("SDL_ReleaseGPUTransferBuffer", device, transfer1);
+            MetalInterop.free(dstInfo1); MetalInterop.free(srcInfo1);
+            MetalInterop.free(dstInfo0); MetalInterop.free(srcInfo0);
+            MetalInterop.free(create1); MetalInterop.free(create0);
+        }
+    }
+
     static void submit(long command) {
         long start = System.nanoTime();
         if (MetalTrace.enabled()) MetalTrace.log("RAW_SUBMIT_BEGIN", "cmd=" + MetalTrace.hex(command));

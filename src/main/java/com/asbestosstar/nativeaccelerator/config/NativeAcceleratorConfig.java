@@ -21,7 +21,6 @@ import java.util.Properties;
  */
 public final class NativeAcceleratorConfig {
     public static final String FILE_NAME = "nativeaccelerator.properties";
-    private static final int CURRENT_CONFIG_REVISION = 4;
     private static final String DEFAULTS_RESOURCE = "/nativeaccelerator-defaults.properties";
     private static final Object LOCK = new Object();
     private static final Properties DEFAULTS = loadDefaults();
@@ -128,7 +127,6 @@ public final class NativeAcceleratorConfig {
                 System.err.println("[Native Accelerator] Could not read " + path + ": " + exception.getMessage());
             }
         }
-        migrateLegacyDefaults(disk);
         values.putAll(disk);
 
         // Make config-file settings visible to old early-startup paths which still read -D properties.
@@ -150,50 +148,6 @@ public final class NativeAcceleratorConfig {
         }
         System.out.println("[Native Accelerator] Config: " + path);
         return values;
-    }
-
-
-    /**
-     * Older Metal bring-up builds intentionally shipped very conservative/debug-heavy Mac1
-     * defaults. Because the config merger preserves disk values, those old defaults otherwise
-     * survive forever even after the bundled defaults are corrected. Migrate only exact historic
-     * default values; unusual/custom values remain untouched.
-     */
-    private static void migrateLegacyDefaults(Properties disk) {
-        int revision = parseRevision(disk.getProperty("config.revision"));
-        if (revision >= CURRENT_CONFIG_REVISION) return;
-
-        if (revision < 3) {
-            // Performance telemetry was originally on by default during Metal bring-up. It invokes
-            // nanoTime/counter code in every draw/uniform/interop hot path and writes CSV reports.
-            migrateExact(disk, "renderer.metal.benchmark", "true", "false");
-        }
-
-        if (revision < 4) {
-            // Revisions < 3 contained rules that incorrectly set OCLP safety flags to false/2.
-            // Configs that passed through that migration path have wrong values on disk; correct
-            // them back to the safe defaults. Custom values (not matching the bad defaults) are
-            // intentional and are left untouched by migrateExact.
-            migrateExact(disk, "renderer.metal.mac1WaitForSwapchain", "false", "true");
-            migrateExact(disk, "renderer.metal.mac1SerializeBufferUploads", "false", "true");
-            migrateExact(disk, "renderer.metal.mac1FramesInFlight", "2", "1");
-        }
-
-        disk.setProperty("config.revision", Integer.toString(CURRENT_CONFIG_REVISION));
-    }
-
-    private static void migrateExact(Properties disk, String key, String oldValue, String newValue) {
-        String current = disk.getProperty(key);
-        if (current != null && current.trim().equalsIgnoreCase(oldValue)) {
-            disk.setProperty(key, newValue);
-            System.out.println("[Native Accelerator] Migrated legacy default " + key + "=" + oldValue
-                    + " -> " + newValue);
-        }
-    }
-
-    private static int parseRevision(String value) {
-        if (value == null || value.isBlank()) return 0;
-        try { return Integer.parseInt(value.trim()); } catch (NumberFormatException ignored) { return 0; }
     }
 
     private static void saveLocked() {

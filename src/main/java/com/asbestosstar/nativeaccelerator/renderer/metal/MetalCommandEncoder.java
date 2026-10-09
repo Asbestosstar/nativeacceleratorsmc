@@ -64,23 +64,33 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         if(command!=0L){
             long start=MetalPerfCounters.tic();
             if (device.mac1Compat()) {
-                // Do not immediately wait for legacy Mac1 submissions. The old correctness path
-                // serialized every frame and erased the benefit of frames-in-flight. Retire
-                // transient buffers/texture-transfer buffers behind the native fence instead.
                 long submittedIndex = logicalCurrentSubmitIndex++;
-                long nativeFence = SDLGPU.SDL_SubmitGPUCommandBufferAndAcquireFence(command);
-                if (nativeFence == 0L) {
-                    throw new IllegalStateException("SDL_SubmitGPUCommandBufferAndAcquireFence failed: " + MetalInterop.lastSdlError());
-                }
-                if (MetalTrace.enabled()) MetalTrace.log("MAC1_REAL_SUBMIT", "encoder=" + traceEncoderId + " logicalSubmit=" + submittedIndex
-                        + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command)
-                        + " nativeFence=" + MetalTrace.hex(nativeFence));
                 List<Long> transfers = retainedTextureTransfers.isEmpty()
-                        ? List.of() : retainedTextureTransfers;
+                        ? List.of() : new java.util.ArrayList<>(retainedTextureTransfers);
                 retainedTextureTransfers.clear();
                 MetalTransientMemory retiringMemory = transientMemory;
-                device.retireSubmission(retiringMemory, nativeFence, transfers,
-                        () -> markLogicalSubmitCompleted(submittedIndex));
+                if (device.mac1FencelessRing()) {
+                    // Fenceless ring-buffer retirement: SDL_SetGPUAllowedFramesInFlight(N)
+                    // guarantees the GPU is never more than N frames behind. Evicting the
+                    // oldest ring slot is therefore always GPU-complete — no fence needed.
+                    if (!SDLGPU.SDL_SubmitGPUCommandBuffer(command)) {
+                        throw new IllegalStateException("SDL_SubmitGPUCommandBuffer failed: " + MetalInterop.lastSdlError());
+                    }
+                    if (MetalTrace.enabled()) MetalTrace.log("MAC1_FENCELESS_SUBMIT", "encoder=" + traceEncoderId + " logicalSubmit=" + submittedIndex
+                            + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command));
+                    device.retireSubmissionFenceless(retiringMemory, transfers);
+                    markLogicalSubmitCompleted(submittedIndex);
+                } else {
+                    long nativeFence = SDLGPU.SDL_SubmitGPUCommandBufferAndAcquireFence(command);
+                    if (nativeFence == 0L) {
+                        throw new IllegalStateException("SDL_SubmitGPUCommandBufferAndAcquireFence failed: " + MetalInterop.lastSdlError());
+                    }
+                    if (MetalTrace.enabled()) MetalTrace.log("MAC1_REAL_SUBMIT", "encoder=" + traceEncoderId + " logicalSubmit=" + submittedIndex
+                            + " seq=" + traceCommandSequence + " cmd=" + MetalTrace.hex(command)
+                            + " nativeFence=" + MetalTrace.hex(nativeFence));
+                    device.retireSubmission(retiringMemory, nativeFence, transfers,
+                            () -> markLogicalSubmitCompleted(submittedIndex));
+                }
             } else if (transientMemory.isEmpty()) {
                 MetalTransfers.submit(command);
                 transientMemory.release();
@@ -116,7 +126,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         MetalCoordinatePolicy.TargetMode targetMode = MetalCoordinatePolicy.TargetMode.DEFAULT;
         // Upload staged terrain writes and mapped CPU-shadow updates immediately before render work.
         flushPendingBufferUploads();
-        device.flushDirtyBuffers(commandHandle());
+        if (device.hasDirtyBuffers()) device.flushDirtyBuffers(commandHandle());
         SDL_GPUColorTargetInfo.Buffer colors=null;
         SDL_GPUDepthStencilTargetInfo depth=null;
         try {
@@ -234,31 +244,31 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         }
 
         int pixels = Math.multiplyExact(width, height);
+        byte r = unorm8(colorValue.x()), g = unorm8(colorValue.y()),
+             b = unorm8(colorValue.z()), a = unorm8(colorValue.w());
+
+        // Fast fill: pack as int, use Arrays.fill, write via IntBuffer view in one pass
         ByteBuffer colorBytes = acquirePool(CLEAR_COLOR_POOL, Math.multiplyExact(pixels, 4));
-        byte r = unorm8(colorValue.x());
-        byte g = unorm8(colorValue.y());
-        byte b = unorm8(colorValue.z());
-        byte a = unorm8(colorValue.w());
-        for (int i = 0; i < pixels; i++) colorBytes.put(r).put(g).put(b).put(a);
-        colorBytes.flip();
+        int[] fillInts = new int[pixels];
+        java.util.Arrays.fill(fillInts, ((a & 0xFF) << 24) | ((b & 0xFF) << 16) | ((g & 0xFF) << 8) | (r & 0xFF));
+        colorBytes.asIntBuffer().put(fillInts);
+        colorBytes.position(0).limit(Math.multiplyExact(pixels, 4));
 
-        ByteBuffer depthBytes = acquirePool(CLEAR_DEPTH_POOL, Math.multiplyExact(pixels, Float.BYTES));
-        float z = (float)depthValue;
-        for (int i = 0; i < pixels; i++) depthBytes.putFloat(z);
-        depthBytes.flip();
-
-        writeToTexture(color, colorBytes, mip, 0, x, y, width, height);
         if (device.mac1Compat() && device.mac1RegionalDepthAttachmentClear()) {
-            // Legacy Mac1/NVIDIA: avoid uploading D32_FLOAT subregions through a transfer buffer.
-            // The GUI item atlas only needs fresh depth while rendering the next slot; previous
-            // slots' depth values are not sampled after their color result has been produced.
-            // Clearing the complete depth attachment is therefore conservative and avoids the
-            // unreliable D32 transfer path without erasing neighboring color slots.
+            // Legacy fallback: upload color only, clear full depth via render pass
+            writeToTexture(color, colorBytes, mip, 0, x, y, width, height);
             if (MetalTrace.enabled()) MetalTrace.log("GUI_ATLAS_DEPTH_SAFE_CLEAR", "depth=" + MetalTrace.hex(metal(depth).handle())
                     + " requestedRect=" + x + "," + y + "," + width + "x" + height + " value=" + depthValue);
             clearDepthTexture(depth, depthValue);
         } else {
-            writeToTexture(depth, depthBytes, mip, 0, x, y, width, height);
+            // Batched path: color + depth in one copy pass → one ring slot instead of two
+            ByteBuffer depthBytes = acquirePool(CLEAR_DEPTH_POOL, Math.multiplyExact(pixels, Float.BYTES));
+            java.util.Arrays.fill(fillInts, Float.floatToRawIntBits((float) depthValue));
+            depthBytes.asIntBuffer().put(fillInts);
+            depthBytes.position(0).limit(Math.multiplyExact(pixels, Float.BYTES));
+            MetalTransfers.encodeUploadTwoTextures(device.handle(), commandHandle(),
+                    metal(color), colorBytes, metal(depth), depthBytes,
+                    mip, 0, x, y, width, height);
         }
     }
 
@@ -386,6 +396,15 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         if (timeoutNs == 0L) return false;
 
         if (timeoutNs < 0L) {
+            if (device.mac1FencelessRing()) {
+                // Fenceless ring: logicalCompletedSubmitIndex advances only inside submit().
+                // A fence on a past index is already satisfied; avoid spinning on an empty deque.
+                long deadline = System.nanoTime() + 50_000_000L;
+                while (logicalCompletedSubmitIndex < submitIndex && System.nanoTime() < deadline) {
+                    LockSupport.parkNanos(100_000L);
+                }
+                return logicalCompletedSubmitIndex >= submitIndex;
+            }
             while (logicalCompletedSubmitIndex < submitIndex) {
                 device.waitForOldestRetiredSubmission();
             }

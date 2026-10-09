@@ -56,7 +56,7 @@ public final class GraphicsTuningOptions {
                 booleanOption(options, "nativeaccelerator.options.mac1CycleClearedTargets", "renderer.metal.mac1CycleClearedTargets", false));
         list.addSmall(
                 booleanOption(options, "nativeaccelerator.options.guiRegionalClearUpload", "renderer.metal.guiRegionalClearUpload", true),
-                booleanOption(options, "nativeaccelerator.options.resetSamplersPerPipeline", "renderer.metal.resetSamplersPerPipeline", true));
+                booleanOption(options, "nativeaccelerator.options.resetSamplersPerPipeline", "renderer.metal.resetSamplersPerPipeline", false));
         list.addSmall(
                 booleanOption(options, "nativeaccelerator.options.forceRenderAreaScissor", "renderer.metal.forceRenderAreaScissor", true),
                 booleanOption(options, "nativeaccelerator.options.explicitViewportPerPass", "renderer.metal.explicitViewportPerPass", true));
@@ -67,8 +67,8 @@ public final class GraphicsTuningOptions {
                 booleanOption(options, "nativeaccelerator.options.mac1ForcePresentedSourceFirstClear", "renderer.metal.mac1ForcePresentedSourceFirstClear", true),
                 booleanOption(options, "nativeaccelerator.options.mac1SerializeBufferUploads", "renderer.metal.mac1SerializeBufferUploads", false));
         list.addSmall(
-                booleanOption(options, "nativeaccelerator.options.mac1RetainTextureTransfers", "renderer.metal.mac1RetainTextureTransfers", true),
-                booleanOption(options, "nativeaccelerator.options.mac1RegionalDepthAttachmentClear", "renderer.metal.mac1RegionalDepthAttachmentClear", true));
+                booleanOption(options, "nativeaccelerator.options.mac1RetainTextureTransfers", "renderer.metal.mac1RetainTextureTransfers", false),
+                booleanOption(options, "nativeaccelerator.options.mac1RegionalDepthAttachmentClear", "renderer.metal.mac1RegionalDepthAttachmentClear", false));
         list.addBig(booleanOption(options, "nativeaccelerator.options.mac1RelaxImplicitPassScissor", "renderer.metal.mac1RelaxImplicitPassScissor", true));
     }
 
