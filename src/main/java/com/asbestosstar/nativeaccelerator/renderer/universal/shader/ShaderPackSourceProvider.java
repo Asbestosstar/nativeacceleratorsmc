@@ -3,6 +3,7 @@ package com.asbestosstar.nativeaccelerator.renderer.universal.shader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -25,8 +26,16 @@ public final class ShaderPackSourceProvider {
     }
 
     public static ShaderPackSource open(Path path, ShaderPackReadLimits limits) throws IOException {
-        if (path == null || !Files.exists(path)) throw new IOException("Shader pack does not exist: " + path);
-        if (Files.isDirectory(path)) return new DirectorySource(path.toRealPath(), limits);
+        if (path == null || !Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Shader pack does not exist: " + path);
+        }
+        if (Files.isSymbolicLink(path)) throw new IOException("shader pack root must not be symbolic link: " + path);
+        if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+            return new DirectorySource(path.toRealPath(LinkOption.NOFOLLOW_LINKS), limits);
+        }
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("shader pack is not a regular file or directory: " + path);
+        }
         return new ZipSource(path, limits);
     }
 
@@ -48,7 +57,10 @@ public final class ShaderPackSourceProvider {
         void add(String raw, InputStream stream, long declaredSize) throws IOException {
             String path = normalize(raw);
             if (path == null) { diagnostics.add(new ShaderPackDiagnostic(ShaderPackDiagnostic.Kind.INVALID_PATH, raw, "unsafe or empty path")); return; }
-            if (files.containsKey(path)) return;
+            if (files.containsKey(path)) {
+                throw new ShaderPackSourceDiagnosticException(new ShaderPackDiagnostic(
+                        ShaderPackDiagnostic.Kind.INVALID_PATH, path, "duplicate source entry"));
+            }
             if (files.size() >= limits.maxEntries()) throw limit("entry count", path);
             if (declaredSize > limits.maxFileBytes()) throw tooLarge(path, declaredSize);
             byte[] bytes = readBounded(stream, path);
@@ -85,8 +97,17 @@ public final class ShaderPackSourceProvider {
         private void scan(Path root, Path current) throws IOException {
             try (var stream = Files.list(current)) {
                 for (Path p : stream.sorted().toList()) {
-                    if (Files.isDirectory(p)) scan(root, p);
-                    else if (Files.isRegularFile(p)) try (InputStream in = Files.newInputStream(p)) { add(root.relativize(p).toString(), in, Files.size(p)); }
+                    if (Files.isSymbolicLink(p)) {
+                        throw new ShaderPackSourceDiagnosticException(new ShaderPackDiagnostic(
+                                ShaderPackDiagnostic.Kind.INVALID_PATH, root.relativize(p).toString(),
+                                "symbolic links are not allowed in shader packs"));
+                    }
+                    if (Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) scan(root, p);
+                    else if (Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
+                        try (InputStream in = Files.newInputStream(p)) {
+                            add(root.relativize(p).toString(), in, Files.size(p));
+                        }
+                    }
                 }
             }
         }
@@ -96,8 +117,16 @@ public final class ShaderPackSourceProvider {
         private final ZipFile zip;
         ZipSource(Path path, ShaderPackReadLimits limits) throws IOException { super(limits); zip = new ZipFile(path.toFile()); scan(); }
         private void scan() throws IOException {
-            var entries = zip.stream().filter(e -> !e.isDirectory()).sorted(Comparator.comparing(ZipEntry::getName)).toList();
-            for (ZipEntry e : entries) try (InputStream in = zip.getInputStream(e)) { add(e.getName(), in, e.getSize()); }
+            var entries = zip.stream().sorted(Comparator.comparing(ZipEntry::getName)).toList();
+            for (ZipEntry e : entries) {
+                if (e.isDirectory()) continue;
+                if (e.getMethod() != ZipEntry.STORED && e.getCompressedSize() > 0
+                        && e.getSize() > limits.maxFileBytes()
+                        && e.getSize() >= 0) {
+                    throw tooLarge(e.getName(), e.getSize());
+                }
+                try (InputStream in = zip.getInputStream(e)) { add(e.getName(), in, e.getSize()); }
+            }
         }
         @Override public void close() throws IOException { zip.close(); }
     }
