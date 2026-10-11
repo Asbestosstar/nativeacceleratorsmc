@@ -25,8 +25,54 @@ final class MetalInterop {
     static final String SDL_PROPERTIES = "org.lwjgl.sdl.SDLProperties";
 
     private static final Map<String, Class<?>> CLASSES = new ConcurrentHashMap<>();
-    private static final Map<String, Method> METHODS = new ConcurrentHashMap<>();
+    /** Resolved binding plus its parameter types (Method.getParameterTypes() clones on every call). */
+    private record Resolved(Method method, Class<?>[] parameterTypes) {}
+
+    /**
+     * Allocation-light cache key. The previous implementation built a String from every argument's
+     * class name on every call, even on cache hits, which put dozens of string concatenations on
+     * the per-render-pass and per-upload hot paths.
+     */
+    private static final class MethodKey {
+        private final Class<?> owner;
+        private final String name;
+        private final boolean isStatic;
+        private final Class<?>[] argTypes;
+        private final int hash;
+
+        MethodKey(Class<?> owner, String name, boolean isStatic, Object[] args) {
+            this.owner = owner;
+            this.name = name;
+            this.isStatic = isStatic;
+            Class<?>[] types = new Class<?>[args.length];
+            int h = owner.hashCode();
+            h = 31 * h + name.hashCode();
+            h = 31 * h + (isStatic ? 1 : 0);
+            for (int i = 0; i < args.length; i++) {
+                Class<?> type = args[i] == null ? null : args[i].getClass();
+                types[i] = type;
+                h = 31 * h + (type == null ? 0 : type.hashCode());
+            }
+            this.argTypes = types;
+            this.hash = h;
+        }
+
+        @Override public int hashCode() { return hash; }
+
+        @Override public boolean equals(Object other) {
+            if (this == other) return true;
+            if (!(other instanceof MethodKey k)) return false;
+            return hash == k.hash && owner == k.owner && isStatic == k.isStatic
+                    && name.equals(k.name) && Arrays.equals(argTypes, k.argTypes);
+        }
+    }
+
+    private static final Map<MethodKey, Resolved> METHODS = new ConcurrentHashMap<>();
     private static final Map<String, Integer> INTS = new ConcurrentHashMap<>();
+    /** SDLGPU constants keyed by bare name: no owner#name concatenation on every lookup. */
+    private static final Map<String, Integer> SDL_GPU_INTS = new ConcurrentHashMap<>();
+    /** LWJGL SDL struct classes keyed by simple name: no "org.lwjgl.sdl." concatenation per calloc. */
+    private static final Map<String, Class<?>> SDL_STRUCTS = new ConcurrentHashMap<>();
     private static final Map<String, String> STRINGS = new ConcurrentHashMap<>();
 
     private MetalInterop() {}
@@ -55,7 +101,11 @@ final class MetalInterop {
     }
 
     static Class<?> sdlStructType(String simpleName) {
-        return type("org.lwjgl.sdl." + simpleName);
+        Class<?> cached = SDL_STRUCTS.get(simpleName);
+        if (cached != null) return cached;
+        Class<?> resolved = type("org.lwjgl.sdl." + simpleName);
+        SDL_STRUCTS.put(simpleName, resolved);
+        return resolved;
     }
 
     static int constant(String owner, String name) {
@@ -71,7 +121,11 @@ final class MetalInterop {
     }
 
     static int sdl(String name) {
-        return constant(SDL_GPU, name);
+        Integer cached = SDL_GPU_INTS.get(name);
+        if (cached != null) return cached;
+        int value = constant(SDL_GPU, name);
+        SDL_GPU_INTS.put(name, value);
+        return value;
     }
 
     static String stringConstant(String owner, String name) {
@@ -183,7 +237,7 @@ final class MetalInterop {
         if (bufferSize < 0) throw new IllegalArgumentException("bufferSize");
 
         Object[] friendlyArgs = {device, transfer, cycle, (long)bufferSize};
-        Method friendly;
+        Resolved friendly;
         try {
             friendly = resolve(type(SDL_GPU), "SDL_MapGPUTransferBuffer", true, friendlyArgs);
         } catch (IllegalStateException noFriendlyBinding) {
@@ -232,7 +286,7 @@ final class MetalInterop {
 
         Object[] friendlyArgs = {commandBuffer, colorTargetInfos, depthStencilTargetInfo};
         try {
-            Method friendly = resolve(type(SDL_GPU), "SDL_BeginGPURenderPass", true, friendlyArgs);
+            Resolved friendly = resolve(type(SDL_GPU), "SDL_BeginGPURenderPass", true, friendlyArgs);
             Object value = invoke(friendly, null, friendlyArgs);
             return ((Number)value).longValue();
         } catch (IllegalStateException noFriendlyBinding) {
@@ -275,10 +329,11 @@ final class MetalInterop {
         return invoke(resolve(owner, name, true, args), null, args);
     }
 
-    private static Object invoke(Method method, Object receiver, Object[] args) {
+    private static Object invoke(Resolved resolved, Object receiver, Object[] args) {
         long perfStart = MetalPerfCounters.tic();
+        Method method = resolved.method();
         try {
-            return method.invoke(receiver, adapt(method.getParameterTypes(), args));
+            return method.invoke(receiver, adapt(resolved.parameterTypes(), args));
         } catch (IllegalAccessException e) {
             throw new IllegalStateException("Cannot access native binding " + method, e);
         } catch (InvocationTargetException e) {
@@ -291,8 +346,10 @@ final class MetalInterop {
         }
     }
 
-    private static Method resolve(Class<?> owner, String name, boolean isStatic, Object[] args) {
-        String key = methodKey(owner, name, isStatic, args);
+    private static Resolved resolve(Class<?> owner, String name, boolean isStatic, Object[] args) {
+        MethodKey key = new MethodKey(owner, name, isStatic, args);
+        Resolved hit = METHODS.get(key);
+        if (hit != null) return hit;
         return METHODS.computeIfAbsent(key, ignored -> {
             Method best = null;
             int bestScore = Integer.MIN_VALUE;
@@ -311,14 +368,8 @@ final class MetalInterop {
                 throw new IllegalStateException("No compatible native binding: " + owner.getName() + '.' + name
                         + Arrays.toString(Arrays.stream(args).map(v -> v == null ? null : v.getClass().getName()).toArray()));
             }
-            return best;
+            return new Resolved(best, best.getParameterTypes());
         });
-    }
-
-    private static String methodKey(Class<?> owner, String name, boolean isStatic, Object[] args) {
-        StringBuilder key = new StringBuilder(owner.getName()).append('#').append(name).append('#').append(isStatic);
-        for (Object arg : args) key.append(':').append(arg == null ? "null" : arg.getClass().getName());
-        return key.toString();
     }
 
     private static int compatibility(Class<?>[] parameters, Object[] args) {
@@ -362,17 +413,23 @@ final class MetalInterop {
     }
 
     private static Object[] adapt(Class<?>[] parameters, Object[] args) {
-        Object[] adapted = args.clone();
+        // Only copy the argument array (and re-box) when a numeric argument really needs a
+        // different primitive width; the common case passes args through untouched.
+        Object[] adapted = args;
         for (int i = 0; i < parameters.length; i++) {
-            Object arg = adapted[i];
-            if (!(arg instanceof Number number) || !isNumeric(parameters[i])) continue;
-            Class<?> target = parameters[i].isPrimitive() ? parameters[i] : primitive(parameters[i]);
-            if (target == byte.class) adapted[i] = number.byteValue();
-            else if (target == short.class) adapted[i] = number.shortValue();
-            else if (target == int.class) adapted[i] = number.intValue();
-            else if (target == long.class) adapted[i] = number.longValue();
-            else if (target == float.class) adapted[i] = number.floatValue();
-            else if (target == double.class) adapted[i] = number.doubleValue();
+            if (!(args[i] instanceof Number number)) continue;
+            Class<?> parameter = parameters[i];
+            Class<?> target = parameter.isPrimitive() ? parameter : primitive(parameter);
+            Object converted;
+            if (target == int.class) { if (number instanceof Integer) continue; converted = number.intValue(); }
+            else if (target == long.class) { if (number instanceof Long) continue; converted = number.longValue(); }
+            else if (target == float.class) { if (number instanceof Float) continue; converted = number.floatValue(); }
+            else if (target == double.class) { if (number instanceof Double) continue; converted = number.doubleValue(); }
+            else if (target == short.class) { if (number instanceof Short) continue; converted = number.shortValue(); }
+            else if (target == byte.class) { if (number instanceof Byte) continue; converted = number.byteValue(); }
+            else continue;
+            if (adapted == args) adapted = args.clone();
+            adapted[i] = converted;
         }
         return adapted;
     }

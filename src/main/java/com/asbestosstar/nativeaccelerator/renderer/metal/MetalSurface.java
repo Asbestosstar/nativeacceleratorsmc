@@ -37,6 +37,10 @@ final class MetalSurface implements GpuSurfaceBackend {
         Object ok=MetalInterop.sdlCall("SDL_SetGPUSwapchainParameters",device.handle(),window,MetalInterop.sdl("SDL_GPU_SWAPCHAINCOMPOSITION_SDR"),mode);
         if(ok instanceof Boolean b && !b)throw new SurfaceException("SDL_SetGPUSwapchainParameters failed: "+MetalInterop.lastSdlError());
         suboptimal=false;
+        // One line per (re)configure, not per frame: shows whether a ~60 FPS cap comes from the
+        // VSync option (requested=FIFO) or from Metal only offering FIFO (supported=[FIFO]).
+        System.out.println("[Native Accelerator] Metal present marker: requested=" + config.presentMode()
+                + "; supported=" + supportedPresentModes() + "; size=" + config.width() + "x" + config.height());
     }
     @Override public boolean isSuboptimal(){return suboptimal;}
     @Override public void acquireNextTexture() throws SurfaceException { if(config==null)throw new SurfaceException("Metal surface is not configured");acquired=true; if (MetalTrace.enabled()) MetalTrace.log("SURFACE_ACQUIRE_REQUEST", "nextFrame=" + (presentSequence+1) + " configured=" + config.width() + "x" + config.height()); }
@@ -76,8 +80,15 @@ final class MetalSurface implements GpuSurfaceBackend {
         if(supports("SDL_GPU_PRESENTMODE_IMMEDIATE"))out.add(GpuSurface.PresentMode.IMMEDIATE);
         return List.copyOf(out);
     }
-    private boolean supports(String constant){try{return MetalInterop.sdlBool("SDL_WindowSupportsGPUPresentMode",device.handle(),window,MetalInterop.sdl(constant));}catch(Throwable ignored){return false;}}
+    private static final java.util.Set<String> PROBE_FAILURES_REPORTED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private boolean supports(String constant){
+        try{return MetalInterop.sdlBool("SDL_WindowSupportsGPUPresentMode",device.handle(),window,MetalInterop.sdl(constant));}
+        catch(Throwable failure){
+            // A failed probe silently removes IMMEDIATE/MAILBOX and leaves only vsync (FIFO); say so once.
+            if (PROBE_FAILURES_REPORTED.add(constant)) System.out.println("[Native Accelerator] Metal present-mode probe failed for " + constant + ": " + failure);
+            return false;
+        }
+    }
     private static int presentMode(GpuSurface.PresentMode mode){return MetalInterop.sdl(switch(mode){case FIFO, FIFO_RELAXED->"SDL_GPU_PRESENTMODE_VSYNC";case MAILBOX->"SDL_GPU_PRESENTMODE_MAILBOX";case IMMEDIATE->"SDL_GPU_PRESENTMODE_IMMEDIATE";});}
     @Override public void close(){try{MetalInterop.sdlCall("SDL_WaitForGPUSwapchain",device.handle(),window);}catch(Throwable ignored){}MetalInterop.sdlCall("SDL_ReleaseWindowFromGPUDevice",device.handle(),window);}
 }
-

@@ -1,0 +1,23 @@
+# FILE INDEX
+
+- `README.md` — 440 words
+- `core/00_MASTER_ARCHITECTURE.md` — 623 words
+- `core/01_MINECRAFT_INTEGRATION.md` — 374 words
+- `core/02_SHADER_COMPILER_AND_IR.md` — 429 words
+- `core/03_CAPABILITY_MATRIX.md` — 304 words
+- `core/04_IMPLEMENTATION_ROADMAP.md` — 356 words
+- `legacy/ARB_NVIDIA_LEGACY_PROGRAMS.md` — 337 words
+- `legacy/HP_VISUALIZE_STARBASE_PHIGS_PEX.md` — 463 words
+- `legacy/IBM_AIX_ZOS_GRAPHICS.md` — 184 words
+- `legacy/SGIX_OPENGL_EXTENSIONS.md` — 448 words
+- `legacy/SGI_ISL_3_AND_EXTENDED.md` — 572 words
+- `modern/DIRECT3D12_BACKEND.md` — 140 words
+- `modern/METAL_BACKEND.md` — 196 words
+- `modern/OPENGL_BACKEND.md` — 193 words
+- `modern/SOFTWARE_BACKENDS.md` — 180 words
+- `modern/VULKAN_BACKEND.md` — 276 words
+- `reference/OFFICIAL_SOURCES.md` — 183 words
+- `shader_languages/GLSL.md` — 301 words
+- `shader_languages/HLSL_CG_WGSL.md` — 210 words
+- `shader_languages/RENDERMAN_RSL_OSL.md` — 256 words
+- `testing/CONFORMANCE_AND_TESTING.md` — 328 words

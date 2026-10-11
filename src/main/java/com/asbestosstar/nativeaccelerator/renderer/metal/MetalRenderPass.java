@@ -16,6 +16,7 @@ import org.lwjgl.sdl.SDL_GPUTextureSamplerBinding;
 import org.lwjgl.sdl.SDL_GPUViewport;
 import org.lwjgl.sdl.SDL_Rect;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
@@ -38,6 +39,14 @@ final class MetalRenderPass implements RenderPassBackend {
     private MetalRenderPipeline pipeline;
     private Object[] uniforms = new Object[0];
     private boolean[] dirtyUniforms = new boolean[0];
+    /** Mirrors GlRenderPass.anyUniformDirty: lets beforeDraw skip the per-uniform scan entirely. */
+    private boolean anyUniformDirty;
+    // Scissor state is deferred to draw time like GlRenderPass.scissorStateDirty: GUI code toggles
+    // enable/disable scissor many times between draws, often with identical rectangles.
+    private int appliedScissorX, appliedScissorY, appliedScissorW, appliedScissorH;
+    private boolean scissorApplied;
+    private int pendingScissorX, pendingScissorY, pendingScissorW, pendingScissorH;
+    private boolean scissorDirty;
     private ByteBuffer pushConstants;
     private boolean pushConstantsDirty;
     private ByteBuffer vertexPackedUniforms;
@@ -46,6 +55,12 @@ final class MetalRenderPass implements RenderPassBackend {
     private boolean fragmentPackedDirty;
     private final MetalGpuBuffer[] boundVertexBuffers = new MetalGpuBuffer[16];
     private final long[] boundVertexOffsets = new long[16];
+    private final boolean[] dirtyVertexBuffers = new boolean[16];
+    /** Last CPU-shadow generation observed for each dynamically bound uniform buffer. */
+    private long[] uniformEpochs = new long[0];
+    private boolean[] epochTrackedUniforms = new boolean[0];
+    private boolean hasEpochTrackedUniforms;
+    private boolean dirtyIndexBuffer;
     private MetalGpuBuffer boundIndexBuffer;
     private IndexType boundIndexType;
     private final long[] boundVertexSamplerTextures = new long[16];
@@ -67,6 +82,7 @@ final class MetalRenderPass implements RenderPassBackend {
         // inherit stale world/pass dimensions and makes GUI atlas/button rendering order-dependent.
         setViewport(0, 0, outputWidth, outputHeight);
         setScissor(renderArea.x(), renderArea.y(), renderArea.width(), renderArea.height());
+        flushScissor();
     }
 
     long handle() { return handle; }
@@ -112,9 +128,16 @@ final class MetalRenderPass implements RenderPassBackend {
 
         // A genuinely different pipeline has a different logical binding namespace. FrontendRenderPass
         // replays the bindings needed by the new pipeline, so clear only on an actual transition.
-        uniforms = new Object[p.uniformCount()];
-        dirtyUniforms = new boolean[p.uniformCount()];
+        int uniformCount = p.uniformCount();
+        if (uniforms.length == uniformCount) Arrays.fill(uniforms, null); else uniforms = new Object[uniformCount];
+        if (dirtyUniforms.length != uniformCount) dirtyUniforms = new boolean[uniformCount];
+        if (uniformEpochs.length != uniformCount) uniformEpochs = new long[uniformCount];
+        if (epochTrackedUniforms.length != uniformCount) epochTrackedUniforms = new boolean[uniformCount];
         Arrays.fill(dirtyUniforms, true);
+        Arrays.fill(uniformEpochs, 0L);
+        Arrays.fill(epochTrackedUniforms, false);
+        hasEpochTrackedUniforms = false;
+        anyUniformDirty = uniformCount > 0;
         pushConstantsDirty = false;
         vertexPackedUniforms = packedBuffer(vertexPackedUniforms, p.vertexLayout().packedUniformBytes());
         fragmentPackedUniforms = packedBuffer(fragmentPackedUniforms, p.fragmentLayout().packedUniformBytes());
@@ -129,6 +152,10 @@ final class MetalRenderPass implements RenderPassBackend {
         Arrays.fill(boundFragmentSamplerHandles, 0L);
         Arrays.fill(boundVertexStorageBuffers, 0L);
         Arrays.fill(boundFragmentStorageBuffers, 0L);
+        for (int i = 0; i < boundVertexBuffers.length; i++) {
+            dirtyVertexBuffers[i] = boundVertexBuffers[i] != null;
+        }
+        dirtyIndexBuffer = boundIndexBuffer != null;
 
         long perfStart=MetalPerfCounters.tic();
         SDLGPU.SDL_BindGPUGraphicsPipeline(handle, p.handle(hasDepthAttachment, targetMode));
@@ -141,9 +168,16 @@ final class MetalRenderPass implements RenderPassBackend {
             throw new IndexOutOfBoundsException("Metal uniform index " + index + " outside pipeline "
                     + pipeline.name() + " uniform count " + uniforms.length);
         }
-        if (sameUniformBinding(uniforms[index], value)) return;
+        Object previous = uniforms[index];
+        if (sameUniformBinding(previous, value)
+                && !(value instanceof GpuBufferSlice slice && uniformContentChanged(index, slice))) {
+            return;
+        }
         uniforms[index] = value;
+        if (value instanceof GpuBufferSlice slice) rememberUniformEpoch(index, slice);
+        else clearUniformEpoch(index);
         dirtyUniforms[index] = true;
+        anyUniformDirty = true;
         if (value instanceof GpuBufferSlice slice) {
             if (MetalTrace.enabled()) MetalTrace.log("UNIFORM_SET", "pass=" + tracePassId + " pipeline=\"" + (pipeline==null?"<none>":MetalTrace.safe(pipeline.name())) + "\" index=" + index + " kind=buffer handle=" + MetalTrace.hex(metal(slice.buffer()).handle()) + " offset=" + slice.offset() + " length=" + slice.length());
         } else if (value instanceof TextureViewAndSampler pair) {
@@ -189,6 +223,7 @@ final class MetalRenderPass implements RenderPassBackend {
             SDLGPU.SDL_SetGPUViewport(handle, vp);
         }
     }
+    /** Records the desired scissor; the native SDL call happens in flushScissor() only if it changed. */
     private void setScissor(int x,int y,int w,int h) {
         MetalCoordinatePolicy.Rect converted = MetalCoordinatePolicy.scissorRect(
                 targetMode, outputHeight, x, y, w, h);
@@ -197,38 +232,53 @@ final class MetalRenderPass implements RenderPassBackend {
                 + " metal=" + converted.x() + "," + converted.y() + ","
                 + converted.width() + "x" + converted.height()
                 + " targetMode=" + targetMode);
+        pendingScissorX = converted.x();
+        pendingScissorY = converted.y();
+        pendingScissorW = converted.width();
+        pendingScissorH = converted.height();
+        scissorDirty = !scissorApplied
+                || pendingScissorX != appliedScissorX || pendingScissorY != appliedScissorY
+                || pendingScissorW != appliedScissorW || pendingScissorH != appliedScissorH;
+    }
+
+    private void flushScissor() {
+        if (!scissorDirty) return;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             SDL_Rect rect = SDL_Rect.calloc(stack)
-                    .x(converted.x()).y(converted.y()).w(converted.width()).h(converted.height());
+                    .x(pendingScissorX).y(pendingScissorY).w(pendingScissorW).h(pendingScissorH);
             SDLGPU.SDL_SetGPUScissor(handle, rect);
         }
+        appliedScissorX = pendingScissorX; appliedScissorY = pendingScissorY;
+        appliedScissorW = pendingScissorW; appliedScissorH = pendingScissorH;
+        scissorApplied = true;
+        scissorDirty = false;
     }
 
     @Override public void setVertexBuffer(int slot, GpuBufferSlice slice) {
         if (slice == null) return;
+        if (slot < 0 || slot >= boundVertexBuffers.length) {
+            throw new IndexOutOfBoundsException("Metal vertex-buffer slot " + slot);
+        }
         MetalGpuBuffer b = metal(slice.buffer());
         long offset = slice.offset();
-        if (slot >= 0 && slot < boundVertexBuffers.length && boundVertexBuffers[slot] == b && boundVertexOffsets[slot] == offset) {
-            MetalPerfCounters.vertexBindSkip();
+        if (boundVertexBuffers[slot] == b && boundVertexOffsets[slot] == offset) {
+            if (!dirtyVertexBuffers[slot]) MetalPerfCounters.vertexBindSkip();
             return;
         }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            SDL_GPUBufferBinding.Buffer binding = SDL_GPUBufferBinding.calloc(1, stack);
-            binding.buffer(b.handle()).offset(Math.toIntExact(offset));
-            SDLGPU.SDL_BindGPUVertexBuffers(handle, slot, binding);
-        }
-        if (slot >= 0 && slot < boundVertexBuffers.length) { boundVertexBuffers[slot] = b; boundVertexOffsets[slot] = offset; }
+        boundVertexBuffers[slot] = b;
+        boundVertexOffsets[slot] = offset;
+        dirtyVertexBuffers[slot] = true;
         if (MetalTrace.enabled()) MetalTrace.log("VERTEX_BUFFER", "pass=" + tracePassId + " slot=" + slot + " handle=" + MetalTrace.hex(b.handle()) + " offset=" + offset + " length=" + slice.length());
-        MetalPerfCounters.vertexBind();
     }
     @Override public void setIndexBuffer(GpuBuffer buffer, IndexType type) {
         MetalGpuBuffer b=metal(buffer);
-        if (boundIndexBuffer == b && boundIndexType == type) { MetalPerfCounters.indexBindSkip(); return; }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            SDL_GPUBufferBinding binding = SDL_GPUBufferBinding.calloc(stack).set(b.handle(), 0);
-            SDLGPU.SDL_BindGPUIndexBuffer(handle, binding, MetalConversions.indexType(type));
+        if (boundIndexBuffer == b && boundIndexType == type) {
+            if (!dirtyIndexBuffer) MetalPerfCounters.indexBindSkip();
+            return;
         }
-        boundIndexBuffer=b; boundIndexType=type; MetalPerfCounters.indexBind();
+        boundIndexBuffer=b;
+        boundIndexType=type;
+        dirtyIndexBuffer=true;
         if (MetalTrace.enabled()) MetalTrace.log("INDEX_BUFFER", "pass=" + tracePassId + " handle=" + MetalTrace.hex(b.handle()) + " type=" + type);
     }
 
@@ -301,11 +351,16 @@ final class MetalRenderPass implements RenderPassBackend {
      */
     private void drawIndexedIndirectCpuFallback(MetalGpuBuffer buffer,long offset,int drawCount) {
         ByteBuffer bytes=buffer.shadowSlice(offset,Math.multiplyExact((long)drawCount,MetalIndirectCommandDecoder.INDEXED_DRAW_BYTES));
-        boolean terrain=inTerrainGroup();
-        for(int i=0;i<drawCount;i++){
-            MetalIndirectCommandDecoder.IndexedDraw command=MetalIndirectCommandDecoder.indexed(bytes,i);
+        final boolean terrain=inTerrainGroup();
+        final long pass=handle;
+        // Decode in place: no per-command record allocation, and zero-sized commands (which cannot
+        // produce fragments) never cost a native call. Layout matches MetalIndirectCommandDecoder.indexed().
+        for(int i=0,base=0;i<drawCount;i++,base+=MetalIndirectCommandDecoder.INDEXED_DRAW_BYTES){
+            int indexCount=bytes.getInt(base);
+            int instanceCount=bytes.getInt(base+4);
+            if(indexCount==0||instanceCount==0) continue;
             long perfStart=MetalPerfCounters.tic();
-            SDLGPU.SDL_DrawGPUIndexedPrimitives(handle,command.indexCount(),command.instanceCount(),command.firstIndex(),command.vertexOffset(),command.firstInstance());
+            SDLGPU.SDL_DrawGPUIndexedPrimitives(pass,indexCount,instanceCount,bytes.getInt(base+8),bytes.getInt(base+12),bytes.getInt(base+16));
             MetalPerfCounters.cpuIndirectCommand();
             MetalPerfCounters.draw(true,terrain,perfStart);
         }
@@ -314,20 +369,51 @@ final class MetalRenderPass implements RenderPassBackend {
     /** MTLDrawPrimitivesIndirectArguments / VkDrawIndirectCommand: four 32-bit fields. */
     private void drawIndirectCpuFallback(MetalGpuBuffer buffer,long offset,int drawCount) {
         ByteBuffer bytes=buffer.shadowSlice(offset,Math.multiplyExact((long)drawCount,MetalIndirectCommandDecoder.DRAW_BYTES));
-        boolean terrain=inTerrainGroup();
-        for(int i=0;i<drawCount;i++){
-            MetalIndirectCommandDecoder.Draw command=MetalIndirectCommandDecoder.draw(bytes,i);
+        final boolean terrain=inTerrainGroup();
+        final long pass=handle;
+        for(int i=0,base=0;i<drawCount;i++,base+=MetalIndirectCommandDecoder.DRAW_BYTES){
+            int vertexCount=bytes.getInt(base);
+            int instanceCount=bytes.getInt(base+4);
+            if(vertexCount==0||instanceCount==0) continue;
             long perfStart=MetalPerfCounters.tic();
-            SDLGPU.SDL_DrawGPUPrimitives(handle,command.vertexCount(),command.instanceCount(),command.firstVertex(),command.firstInstance());
+            SDLGPU.SDL_DrawGPUPrimitives(pass,vertexCount,instanceCount,bytes.getInt(base+8),bytes.getInt(base+12));
             MetalPerfCounters.cpuIndirectCommand();
             MetalPerfCounters.draw(false,terrain,perfStart);
         }
     }
 
+    private void flushBufferBindings() {
+        for (int slot = 0; slot < boundVertexBuffers.length; slot++) {
+            if (!dirtyVertexBuffers[slot]) continue;
+            MetalGpuBuffer buffer = boundVertexBuffers[slot];
+            if (buffer == null) continue;
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                SDL_GPUBufferBinding.Buffer binding = SDL_GPUBufferBinding.calloc(1, stack);
+                binding.buffer(buffer.handle()).offset(Math.toIntExact(boundVertexOffsets[slot]));
+                SDLGPU.SDL_BindGPUVertexBuffers(handle, slot, binding);
+            }
+            dirtyVertexBuffers[slot] = false;
+            MetalPerfCounters.vertexBind();
+        }
+        if (dirtyIndexBuffer && boundIndexBuffer != null && boundIndexType != null) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                SDL_GPUBufferBinding binding = SDL_GPUBufferBinding.calloc(stack)
+                        .set(boundIndexBuffer.handle(), 0);
+                SDLGPU.SDL_BindGPUIndexBuffer(handle, binding, MetalConversions.indexType(boundIndexType));
+            }
+            dirtyIndexBuffer = false;
+            MetalPerfCounters.indexBind();
+        }
+    }
+
     private void beforeDraw() {
         if(pipeline==null)throw new IllegalStateException("No Metal pipeline bound");
-        int dirtyCount=0; for (boolean d : dirtyUniforms) if (d) dirtyCount++;
-        if (MetalTrace.enabled()) MetalTrace.log("BEFORE_DRAW_BEGIN", "pass=" + tracePassId + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" dirtyUniforms=" + dirtyCount + " pushDirty=" + pushConstantsDirty + " groups=\"" + MetalTrace.safe(debugGroups) + "\"");
+        flushScissor();
+        flushBufferBindings();
+        if (MetalTrace.enabled()) {
+            int dirtyCount=0; for (boolean d : dirtyUniforms) if (d) dirtyCount++;
+            MetalTrace.log("BEFORE_DRAW_BEGIN", "pass=" + tracePassId + " pipeline=\"" + MetalTrace.safe(pipeline.name()) + "\" dirtyUniforms=" + dirtyCount + " pushDirty=" + pushConstantsDirty + " groups=\"" + MetalTrace.safe(debugGroups) + "\"");
+        }
 
         boolean packedVertexChanged = false;
         boolean packedFragmentChanged = false;
@@ -337,8 +423,13 @@ final class MetalRenderPass implements RenderPassBackend {
         // useful message instead of becoming a transparent/blank GUI draw.
         if (encoder.device().validateBindings()) validateUniformBindings();
 
-        for (int i = 0; i < uniforms.length; i++) {
-            if (i >= dirtyUniforms.length || !dirtyUniforms[i]) continue;
+        if (anyUniformDirty || hasEpochTrackedUniforms) for (int i = 0; i < uniforms.length; i++) {
+            if (uniforms[i] instanceof GpuBufferSlice slice && uniformContentChanged(i, slice)) {
+                rememberUniformEpoch(i, slice);
+                dirtyUniforms[i] = true;
+                anyUniformDirty = true;
+            }
+            if (!anyUniformDirty || i >= dirtyUniforms.length || !dirtyUniforms[i]) continue;
             Object value = uniforms[i];
 
             if (value instanceof GpuBufferSlice slice) {
@@ -384,6 +475,7 @@ final class MetalRenderPass implements RenderPassBackend {
 
             dirtyUniforms[i] = false;
         }
+        anyUniformDirty = false;
 
         if (pushConstantsDirty && pushConstants != null) {
             int vs=pipeline.vertexLayout().pushConstantSlot(),fs=pipeline.fragmentLayout().pushConstantSlot();
@@ -445,9 +537,8 @@ final class MetalRenderPass implements RenderPassBackend {
         if (current == null || current.capacity() < bytes) {
             current = ByteBuffer.allocateDirect(bytes);
         }
-        ByteBuffer clear = current.duplicate();
-        clear.clear();
-        while (clear.hasRemaining()) clear.put((byte)0);
+        current.clear();
+        MemoryUtil.memSet(current, 0);
         return current;
     }
 
@@ -522,25 +613,25 @@ final class MetalRenderPass implements RenderPassBackend {
                     "Metal TEXEL_BUFFER lowering requires a whole GpuBuffer slice; got offset="
                             + slice.offset() + " length=" + slice.length() + " size=" + buffer.size());
         }
-        if (vs >= 0) bindStorageBufferStage("SDL_BindGPUVertexStorageBuffers", vs, buffer);
-        if (fs >= 0) bindStorageBufferStage("SDL_BindGPUFragmentStorageBuffers", fs, buffer);
+        if (vs >= 0) bindStorageBufferStage(true, vs, buffer);
+        if (fs >= 0) bindStorageBufferStage(false, fs, buffer);
     }
 
-    private void bindStorageBufferStage(String method, int slot, MetalGpuBuffer buffer) {
+    private void bindStorageBufferStage(boolean vertexStage, int slot, MetalGpuBuffer buffer) {
         long bufferHandle = buffer.handle();
-        long[] cache = "SDL_BindGPUVertexStorageBuffers".equals(method) ? boundVertexStorageBuffers : boundFragmentStorageBuffers;
+        long[] cache = vertexStage ? boundVertexStorageBuffers : boundFragmentStorageBuffers;
         if (slot >= 0 && slot < cache.length && cache[slot] == bufferHandle) return;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             PointerBuffer buffers = stack.mallocPointer(1);
             buffers.put(0, bufferHandle);
-            if ("SDL_BindGPUVertexStorageBuffers".equals(method)) {
+            if (vertexStage) {
                 SDLGPU.SDL_BindGPUVertexStorageBuffers(handle, slot, buffers);
             } else {
                 SDLGPU.SDL_BindGPUFragmentStorageBuffers(handle, slot, buffers);
             }
             if (slot >= 0 && slot < cache.length) cache[slot] = bufferHandle;
             MetalPerfCounters.storageBind();
-            if (MetalTrace.enabled()) MetalTrace.log("STORAGE_BIND", "pass=" + tracePassId + " method=" + method + " slot=" + slot + " buffer=" + MetalTrace.hex(bufferHandle));
+            if (MetalTrace.enabled()) MetalTrace.log("STORAGE_BIND", "pass=" + tracePassId + " method=" + (vertexStage ? "SDL_BindGPUVertexStorageBuffers" : "SDL_BindGPUFragmentStorageBuffers") + " slot=" + slot + " buffer=" + MetalTrace.hex(bufferHandle));
         }
     }
 
@@ -576,32 +667,59 @@ final class MetalRenderPass implements RenderPassBackend {
         if(!(value instanceof TextureViewAndSampler pair)||pipeline==null)return;
         if(!(pair.view() instanceof MetalTextureView view)||!(pair.sampler() instanceof MetalSampler sampler))throw new IllegalArgumentException("Foreign texture/sampler bound to Metal pipeline");
         int vs=slot(pipeline.vertexLayout().samplerSlots(),index),fs=slot(pipeline.fragmentLayout().samplerSlots(),index);
-        if(vs>=0) bindSamplerStage("SDL_BindGPUVertexSamplers",vs,view,sampler);
-        if(fs>=0) bindSamplerStage("SDL_BindGPUFragmentSamplers",fs,view,sampler);
+        if(vs>=0) bindSamplerStage(true,vs,view,sampler);
+        if(fs>=0) bindSamplerStage(false,fs,view,sampler);
     }
-    private void bindSamplerStage(String method,int slot,MetalTextureView view,MetalSampler sampler) {
+    private void bindSamplerStage(boolean vertexStage,int slot,MetalTextureView view,MetalSampler sampler) {
         long textureHandle = view.metalTexture().handle();
         long samplerHandle = sampler.handleForView(view);
-        long[] textures = "SDL_BindGPUVertexSamplers".equals(method) ? boundVertexSamplerTextures : boundFragmentSamplerTextures;
-        long[] samplers = "SDL_BindGPUVertexSamplers".equals(method) ? boundVertexSamplerHandles : boundFragmentSamplerHandles;
+        long[] textures = vertexStage ? boundVertexSamplerTextures : boundFragmentSamplerTextures;
+        long[] samplers = vertexStage ? boundVertexSamplerHandles : boundFragmentSamplerHandles;
         if (slot >= 0 && slot < textures.length && textures[slot] == textureHandle && samplers[slot] == samplerHandle) return;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             SDL_GPUTextureSamplerBinding.Buffer binding = SDL_GPUTextureSamplerBinding.calloc(1, stack);
             binding.texture(textureHandle).sampler(samplerHandle);
-            if ("SDL_BindGPUVertexSamplers".equals(method)) {
+            if (vertexStage) {
                 SDLGPU.SDL_BindGPUVertexSamplers(handle, slot, binding);
             } else {
                 SDLGPU.SDL_BindGPUFragmentSamplers(handle, slot, binding);
             }
             if (slot >= 0 && slot < textures.length) { textures[slot] = textureHandle; samplers[slot] = samplerHandle; }
             MetalPerfCounters.samplerBind();
-            if (MetalTrace.enabled()) MetalTrace.log("SAMPLER_BIND", "pass=" + tracePassId + " method=" + method + " slot=" + slot + " texture=" + MetalTrace.hex(textureHandle) + " sampler=" + MetalTrace.hex(samplerHandle) + " baseMip=" + view.baseMipLevel() + " mipLevels=" + view.mipLevels());
+            if (MetalTrace.enabled()) MetalTrace.log("SAMPLER_BIND", "pass=" + tracePassId + " method=" + (vertexStage ? "SDL_BindGPUVertexSamplers" : "SDL_BindGPUFragmentSamplers") + " slot=" + slot + " texture=" + MetalTrace.hex(textureHandle) + " sampler=" + MetalTrace.hex(samplerHandle) + " baseMip=" + view.baseMipLevel() + " mipLevels=" + view.mipLevels());
         }
     }
     private boolean inTerrainGroup(){
         if (!MetalPerfCounters.ENABLED) return false;
         for(String group:debugGroups) if(group.startsWith("Terrain layer:")) return true;
         return false;
+    }
+
+    private boolean uniformContentChanged(int index, GpuBufferSlice slice) {
+        if (index < 0 || index >= uniformEpochs.length) return false;
+        MetalGpuBuffer buffer = metal(slice.buffer());
+        return !epochTrackedUniforms[index] || uniformEpochs[index] != buffer.contentEpoch();
+    }
+
+    private void rememberUniformEpoch(int index, GpuBufferSlice slice) {
+        if (index < 0 || index >= uniformEpochs.length) return;
+        uniformEpochs[index] = metal(slice.buffer()).contentEpoch();
+        epochTrackedUniforms[index] = true;
+        hasEpochTrackedUniforms = true;
+    }
+
+    private void clearUniformEpoch(int index) {
+        if (index < 0 || index >= epochTrackedUniforms.length) return;
+        epochTrackedUniforms[index] = false;
+        if (hasEpochTrackedUniforms) {
+            hasEpochTrackedUniforms = false;
+            for (boolean tracked : epochTrackedUniforms) {
+                if (tracked) {
+                    hasEpochTrackedUniforms = true;
+                    break;
+                }
+            }
+        }
     }
 
     private static boolean sameUniformBinding(Object a, Object b) {

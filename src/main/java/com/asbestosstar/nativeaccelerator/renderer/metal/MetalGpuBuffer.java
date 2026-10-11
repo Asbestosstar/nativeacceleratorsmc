@@ -23,6 +23,11 @@ final class MetalGpuBuffer extends BaseGpuBuffer {
 
     private int dirtyStart = Integer.MAX_VALUE;
     private int dirtyEnd = -1;
+    /**
+     * Monotonic CPU-shadow content generation. Render-pass bindings are identity based, but a
+     * reused slice can point at bytes that were rewritten through map()/writeToBuffer().
+     */
+    private long contentEpoch;
 
     MetalGpuBuffer(MetalDevice device, int usage, long size) {
         super(usage, size);
@@ -87,18 +92,34 @@ final class MetalGpuBuffer extends BaseGpuBuffer {
         ByteBuffer dst = current.duplicate();
         dst.position((int)offset).limit((int)offset + src.remaining());
         dst.put(src);
+        contentEpoch++;
+    }
+
+    void touchContent() {
+        contentEpoch++;
+    }
+
+    long contentEpoch() {
+        return contentEpoch;
     }
 
     void markDirty(long offset, long length) {
-        if (length <= 0 || !requiresGpuContents()) return;
+        if (length <= 0) return;
         ensureRange(offset, length);
+        boolean upload;
         synchronized (this) {
-            int start = Math.toIntExact(offset);
-            int end = Math.toIntExact(offset + length);
-            dirtyStart = Math.min(dirtyStart, start);
-            dirtyEnd = Math.max(dirtyEnd, end);
+            // Uniform-only buffers are pushed from the shadow rather than uploaded through SDL, but
+            // their mapped contents still changed and must invalidate an identity-based binding.
+            contentEpoch++;
+            upload = requiresGpuContents();
+            if (upload) {
+                int start = Math.toIntExact(offset);
+                int end = Math.toIntExact(offset + length);
+                dirtyStart = Math.min(dirtyStart, start);
+                dirtyEnd = Math.max(dirtyEnd, end);
+            }
         }
-        device.markDirty(this);
+        if (upload) device.markDirty(this);
     }
 
     synchronized boolean hasDirtyRange() {
