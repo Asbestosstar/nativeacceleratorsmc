@@ -18,6 +18,22 @@ public final class Minecraft263RendererTargets {
     public static final String GPU_DEVICE_BACKEND = "com.mojang.renderpearl.backend.api.GpuDeviceBackend";
     public static final String RENDER_PASS_BACKEND = "com.mojang.renderpearl.backend.api.RenderPassBackend";
     public static final String COMMAND_ENCODER_BACKEND = "com.mojang.renderpearl.backend.api.CommandEncoderBackend";
+    public static final String LEVEL_RENDERER = "net.minecraft.client.renderer.LevelRenderer";
+    public static final String FRAME_GRAPH_BUILDER = "com.mojang.blaze3d.framegraph.FrameGraphBuilder";
+
+    /**
+     * Conservative 26.3 frame lifecycle seam. The accessor exposes only existing renderer state,
+     * while the mixin calls an optional observer at render entry/exit; neither modifies the graph.
+     */
+    public static final List<Target> LEVEL_FRAME_GRAPH = List.of(
+            new Target(LEVEL_RENDERER,
+                    "render(GraphicsResourceAllocator,boolean,CameraRenderState,GpuBufferSlice,Vector4f,boolean,boolean)",
+                    "frame lifecycle dispatch around vanilla frame graph; no rendering replacement"),
+            new Target(LEVEL_RENDERER, "levelRenderState / submitNodeStorage (Accessor)",
+                    "read-only access for optional frame observers"),
+            new Target(FRAME_GRAPH_BUILDER, "constructed and executed inside LevelRenderer.render",
+                    "documented seam only; Native Accelerator does not add or execute passes")
+    );
 
     public static final List<Target> VULKAN_REWRITE = List.of(
             new Target(FRONTEND_COMMAND_ENCODER, "submit/createRenderPass/copy/upload", "bridge command lifetime into native renderer"),

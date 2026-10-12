@@ -57,7 +57,15 @@ public final class ConventionalShaderpackPreparation {
             return blocked(packId, "shaderpack backend is unavailable");
         }
         ShaderpackConventionalProfile profile = profileScanner.scan(source);
+        ConventionalShaderpackGraphAdapter.Result graph = new ConventionalShaderpackGraphAdapter().build(profile);
         List<String> profileFailures = unsupportedProfile(profile);
+        if (!graph.validation().valid()) {
+            profileFailures = new ArrayList<>(profileFailures);
+            profileFailures.addAll(graph.validation().errors().stream().map(error -> "invalid pass graph: " + error).toList());
+        }
+        if (!graph.supported() && profileFailures.isEmpty()) {
+            profileFailures = List.of("conventional pass graph contains features without a validated execution lifecycle");
+        }
         List<ShaderpackStageVariant> variants = scanner.scan(source);
         if (variants.isEmpty()) return unsupported(packId, source.contentHash(), List.of("no conventional vertex/fragment wrappers found"));
         if (!profileFailures.isEmpty()) return unsupported(packId, source.contentHash(), profileFailures);
