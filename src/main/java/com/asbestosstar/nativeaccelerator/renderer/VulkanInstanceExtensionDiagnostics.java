@@ -78,7 +78,7 @@ public final class VulkanInstanceExtensionDiagnostics {
         if (second != 0) throw new IllegalStateException("enumeration-result=" + second);
         Set<String> supported = new HashSet<>();
         for (int i = 0; i < properties.capacity(); i++) {
-            supported.add(properties.get(i).extensionNameString());
+            supported.add(decodeName(properties.get(i).extensionName()));
         }
         return supported;
     }
@@ -115,6 +115,12 @@ public final class VulkanInstanceExtensionDiagnostics {
         return "requestedInstanceExtensions=" + requestedValues
                 + " supportedInstanceExtensions=" + supportedValues
                 + " missingInstanceExtensions=" + missing;
+    }
+
+    private static String decodeName(java.nio.ByteBuffer bytes) {
+        int length = 0;
+        while (length < bytes.remaining() && bytes.get(bytes.position() + length) != 0) length++;
+        return java.nio.charset.StandardCharsets.UTF_8.decode(bytes.slice(bytes.position(), length)).toString();
     }
 
     private static List<String> names(PointerBuffer pointers) {
