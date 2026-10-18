@@ -11,3 +11,13 @@ CI matrix may run headless EGL/OSMesa llvmpipe, Vulkan lavapipe under appropriat
 
 ## Acceptance
 Deterministic pixels in CPU reference; GL Vulkan sample scenes on llvmpipe/lavapipe when installed; conformance results match permitted tolerance, and a useful skip reason when driver absent.
+
+## RenderPearl capability diagnostics
+
+lavapipe remains a valid Vulkan runtime, but a particular Mesa version may lack a Vulkan extension or
+feature required by Minecraft's RenderPearl device-selection path. Native Accelerator reports
+RenderPearl's `BackendCreationException` reason and exact `getMissingCapabilities()` values during
+both the availability probe and device-creation attempt. For `VULKAN_MISSING_EXTENSION`, the log
+labels the values as `missingExtensions=[...]`; use those names when investigating an ICD/package
+workaround. The original exception is preserved so Minecraft can retain its normal fallback behavior;
+Native Accelerator does not relax RenderPearl requirements or classify CPU Vulkan as unsupported.

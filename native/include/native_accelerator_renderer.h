@@ -6,8 +6,10 @@
 
 #if defined(_WIN32)
 #  define NAR_EXPORT __declspec(dllexport)
-#else
+#elif defined(__GNUC__) || defined(__clang__)
 #  define NAR_EXPORT __attribute__((visibility("default")))
+#else
+#  define NAR_EXPORT
 #endif
 
 #ifdef __cplusplus

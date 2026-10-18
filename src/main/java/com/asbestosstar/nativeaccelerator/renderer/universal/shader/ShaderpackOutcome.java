@@ -11,10 +11,17 @@ public enum ShaderpackOutcome {
     /** Fidelity is reduced and the user explicitly opted into the approximation. */
     APPROXIMATION_OPT_IN,
     /** The profile cannot be executed faithfully with the current capabilities. */
-    UNSUPPORTED;
+    UNSUPPORTED,
+    /** Preparation could not be proven because a compiler, device, or runtime prerequisite is absent. */
+    BLOCKED,
+    /** Source or declarations violate the supported input contract. */
+    INVALID,
+    /** Source preparation succeeded but no complete execution adapter is available. */
+    FRONTEND_ONLY;
 
     /** Whether this outcome is usable without an explicit approximation opt-in. */
     public boolean acceptedByDefault() {
-        return this != UNSUPPORTED && this != APPROXIMATION_OPT_IN;
+        return this != UNSUPPORTED && this != BLOCKED && this != INVALID
+                && this != FRONTEND_ONLY && this != APPROXIMATION_OPT_IN;
     }
 }

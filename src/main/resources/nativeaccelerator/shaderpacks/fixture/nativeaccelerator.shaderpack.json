@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "id": "nativeaccelerator-fixture",
+  "name": "Native Accelerator Metal Fixture",
+  "language": "glsl",
+  "profile": "vulkan",
+  "program": {
+    "vertex": "shaders/fullscreen.vert",
+    "fragment": "shaders/fullscreen.frag",
+    "defines": { "NATIVE_ACCELERATOR_FIXTURE": "1" }
+  },
+  "pass": {
+    "type": "fullscreen-postprocess",
+    "output": "main",
+    "inputs": [ "main" ]
+  }
+}

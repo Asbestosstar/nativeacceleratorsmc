@@ -53,7 +53,7 @@ final class MetalRuntimeCapabilities {
         if (!arrays) throw new IllegalStateException("Metal runtime probe failed: 2D texture arrays unavailable");
         if (!fence) throw new IllegalStateException("Metal runtime probe failed: command submission/fence path unavailable");
 
-        System.out.println("[Native Accelerator] Metal runtime verification: storage=pass, textureArrays=pass, fences=pass"
+        MetalLogging.info("Metal runtime verification: storage=pass, textureArrays=pass, fences=pass"
                 + ", anisotropy=" + aniso + "x"
                 + ", SDLdevice=" + (actualName.isBlank() ? "unknown" : actualName)
                 + ", preflightDeviceMatch=" + sameDevice
@@ -61,7 +61,7 @@ final class MetalRuntimeCapabilities {
                 + ", nativeIndirect=" + (nativeIndirect ? "verified" : "CPU-fallback")
                 + " (ICB query: " + metal.indirectCommandBufferSupportDetail() + ")");
         if (!sameDevice && metal.available() && !actualName.isBlank()) {
-            System.out.println("[Native Accelerator] Metal preflight/SDL device mismatch: preflight='"
+            System.err.println("[Native Accelerator] Metal preflight/SDL device mismatch: preflight='"
                     + metal.deviceName() + "', SDL='" + actualName
                     + "'; native indirect is disabled because the preflight capability query covered a different GPU");
         }

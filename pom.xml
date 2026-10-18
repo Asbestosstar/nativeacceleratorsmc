@@ -256,6 +256,11 @@
     <version>3.4.3</version>
 </dependency>
 <dependency>
+    <groupId>org.lwjgl</groupId>
+    <artifactId>lwjgl-shaderc</artifactId>
+    <version>3.4.3</version>
+</dependency>
+<dependency>
     <groupId>org.jspecify</groupId>
     <artifactId>jspecify</artifactId>
     <version>1.0.0</version>
@@ -374,6 +379,31 @@
     </build>
 
     <profiles>
+        <!-- Optional LWJGL native artifacts for real shader/GPU smoke runs. The default build
+             remains platform-neutral; set -Dlwjgl.natives=natives-macos (or the matching
+             classifier) only on a host where the native runtime is intended to execute. -->
+        <profile>
+            <id>lwjgl-natives</id>
+            <activation>
+                <property>
+                    <name>lwjgl.natives</name>
+                </property>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>org.lwjgl</groupId>
+                    <artifactId>lwjgl</artifactId>
+                    <version>3.4.3</version>
+                    <classifier>${lwjgl.natives}</classifier>
+                </dependency>
+                <dependency>
+                    <groupId>org.lwjgl</groupId>
+                    <artifactId>lwjgl-shaderc</artifactId>
+                    <version>3.4.3</version>
+                    <classifier>${lwjgl.natives}</classifier>
+                </dependency>
+            </dependencies>
+        </profile>
         <profile>
             <id>native</id>
             <activation>

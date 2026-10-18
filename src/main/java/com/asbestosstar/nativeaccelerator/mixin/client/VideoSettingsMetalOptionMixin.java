@@ -117,6 +117,10 @@ public abstract class VideoSettingsMetalOptionMixin extends OptionsSubScreen {
         optionsList.addBig(MetalGraphicsOption.forOptions(this.options));
         MetalGraphicsOption.markInsertedByDisplayOptions(this.options);
         GraphicsTuningOptions.addControlsTo(optionsList, this.options);
+        optionsList.addBig(Button.builder(
+                GraphicsMenuText.component(this.options, "nativeaccelerator.legacyShaders"),
+                button -> this.minecraft.gui.setScreen(new com.asbestosstar.nativeaccelerator.client.LegacyShadersScreen((Screen)(Object)this)))
+                .build());
         this.nativeaccelerator$nativeEntries = new ArrayList(optionsList.children());
 
         nativeaccelerator$showPage(NATIVEACCELERATOR_PAGE_DISPLAY);

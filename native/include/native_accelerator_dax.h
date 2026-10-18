@@ -3,6 +3,14 @@
 
 #include <stdint.h>
 
+#if defined(_WIN32)
+#  define NA_DAX_EXPORT __declspec(dllexport)
+#elif defined(__GNUC__) || defined(__clang__)
+#  define NA_DAX_EXPORT __attribute__((visibility("default")))
+#else
+#  define NA_DAX_EXPORT
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -12,11 +20,11 @@ extern "C" {
  * libdax development headers/library are available.  Their absence is a
  * supported state; Java discovers them with optional symbol lookup.
  */
-int na_dax_i32_count_range(const int32_t *src, uint64_t count,
+NA_DAX_EXPORT int na_dax_i32_count_range(const int32_t *src, uint64_t count,
                            int32_t lower_inclusive, int32_t upper_inclusive,
                            uint64_t *matched);
 
-int na_dax_i32_select_range(int32_t *dst, uint64_t dst_capacity,
+NA_DAX_EXPORT int na_dax_i32_select_range(int32_t *dst, uint64_t dst_capacity,
                             const int32_t *src, uint64_t count,
                             int32_t lower_inclusive, int32_t upper_inclusive,
                             uint64_t *selected);

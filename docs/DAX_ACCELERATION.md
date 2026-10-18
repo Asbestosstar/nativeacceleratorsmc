@@ -86,13 +86,21 @@ arrays after Java-to-direct staging.
 
 ## Build integration
 
-The main CMake file should include `native/cmake/Dax.cmake` after creating the `nativeaccelerator` target and call:
+The main CMake file includes `native/cmake/Dax.cmake` after creating the `nativeaccelerator` target and calls:
 
 ```cmake
 include(cmake/Dax.cmake)
 na_enable_solaris_dax(nativeaccelerator)
 ```
 
-The helper checks for both `dax.h` and `libdax`, adds the Solaris source only when both exist, and links
-`-ldax`. No stub symbol is emitted on unsupported systems so Java optional-symbol detection remains exact.
+The helper recognizes Solaris and illumos names and checks for both `dax.h` and `libdax`. It adds the
+Solaris adapter, pthread support, and optional symbols only when both development files are available.
+A target without the DAX development interface continues to build normally, with no stub symbols emitted
+so Java optional-symbol detection remains exact. A library built with the adapter enabled requires the
+matching libdax runtime on the target; the ordinary no-DAX build remains the portable fallback.
+
+`./scripts/build-native.sh` is a host-native `/bin/sh` build. On Solaris/illumos it packages the canonical
+resource IDs `solaris-amd64` or `solaris-sparcv9-be`; running it on macOS or Linux does not produce a
+Solaris binary. A Solaris cross-build must provide its own CMake toolchain/sysroot and target-aware
+packaging validation.
 

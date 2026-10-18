@@ -232,7 +232,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         if (activePass != null) throw new IllegalStateException("Cannot clear texture region inside a Metal render pass");
         if (width <= 0 || height <= 0) return;
         if (REGIONAL_CLEAR_MARKER_REPORTED.compareAndSet(false, true)) {
-            System.out.println("[Native Accelerator] Metal regional clear marker: subresource-upload-fix30");
+            MetalLogging.info("Metal regional clear marker: subresource-upload-fix30");
         }
         if (color == null || depth == null) {
             throw new UnsupportedOperationException("Metal regional clear currently requires color + depth together");
@@ -433,7 +433,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         ByteBuffer block = pendingUploadBlock;
         if (block == null || block.remaining() < size) {
             int capacity = Math.max(UPLOAD_BLOCK_BYTES, alignUp(size, 64 * 1024));
-            block = ByteBuffer.allocateDirect(capacity).order(ByteOrder.nativeOrder());
+            block = MetalUploadBufferPool.acquire(capacity, UPLOAD_BLOCK_BYTES);
             pendingUploadBlocks.add(block);
             pendingUploadBlock = block;
         }
@@ -451,10 +451,14 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
         try {
             MetalTransfers.encodeUploadBuffersInPass(device.handle(), copyPass, pendingBufferUploads);
         } finally {
-            SDLGPU.SDL_EndGPUCopyPass(copyPass);
-            pendingBufferUploads.clear();
-            pendingUploadBlocks.clear();
-            pendingUploadBlock = null;
+            try {
+                SDLGPU.SDL_EndGPUCopyPass(copyPass);
+            } finally {
+                transientMemory.retainUploadBlocks(pendingUploadBlocks);
+                pendingBufferUploads.clear();
+                pendingUploadBlocks.clear();
+                pendingUploadBlock = null;
+            }
         }
     }
 

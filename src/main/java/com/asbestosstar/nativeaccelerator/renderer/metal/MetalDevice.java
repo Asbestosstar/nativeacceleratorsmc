@@ -121,22 +121,6 @@ final class MetalDevice implements GpuDeviceBackend {
         }
         this.framesInFlight = Math.max(1, Math.min(3, requestedFrames));
         try { SDLGPU.SDL_SetGPUAllowedFramesInFlight(handle,this.framesInFlight); } catch(Throwable ignored){}
-        System.out.println("[Native Accelerator] Metal core marker: residual-gui-dynamic-texture-fix51; framesInFlight="
-                + this.framesInFlight + "; mac1Compat=" + this.mac1Compat
-                + "; transientLifetime=fenced; clearedTargetCycling=" + cycleClearedTargets()
-                + "; guiRegionalClearUpload=" + guiRegionalClearUpload()
-                + "; resetSamplersPerPipeline=" + resetSamplersPerPipeline()
-                + "; forceRenderAreaScissor=" + forceRenderAreaScissor()
-                + "; explicitViewportPerPass=" + explicitViewportPerPass()
-                + "; serializeBufferUploads=" + mac1SerializeBufferUploads()
-                + "; waitForSwapchain=" + waitForSwapchainBeforeAcquire()
-                + "; validateBindings=" + validateBindings()
-                + "; retainTextureTransfers=" + mac1RetainTextureTransfers()
-                + "; regionalDepthAttachmentClear=" + mac1RegionalDepthAttachmentClear()
-                + "; relaxImplicitPassScissor=" + mac1RelaxImplicitPassScissor()
-                + "; strictSwapchainPresent=" + strictSwapchainPresent()
-                + "; forcePresentedSourceFirstClear=" + forcePresentedSourceFirstClear()
-                + "; fix25Cycling=false");
         if (MetalTrace.enabled()) MetalTrace.log("DEVICE_READY", "handle=" + MetalTrace.hex(handle) + " name=\"" + MetalTrace.safe(deviceName) + "\" vendor=" + vendor + " mac1=" + mac1Compat + " framesInFlight=" + framesInFlight + " traceFile=\"" + MetalTrace.safe(MetalTrace.path()) + "\"");
         this.cachedCycleClearedTargets = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1CycleClearedTargets", "false"));
         this.cachedGuiRegionalClearUpload = Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.guiRegionalClearUpload", "true"));
@@ -152,7 +136,7 @@ final class MetalDevice implements GpuDeviceBackend {
         this.cachedWaitForSwapchainBeforeAcquire = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1WaitForSwapchain", "false"));
         this.cachedForcePresentedSourceFirstClear = mac1Compat && Boolean.parseBoolean(System.getProperty("nativeaccelerator.renderer.metal.mac1ForcePresentedSourceFirstClear", "true"));
         this.cachedMac1FencelessRing = this.mac1Compat && Boolean.parseBoolean(
-            System.getProperty("nativeaccelerator.renderer.metal.mac1FencelessRing", "true"));
+            System.getProperty("nativeaccelerator.renderer.metal.mac1FencelessRing", "false"));
         if (this.cachedMac1FencelessRing) {
             this.mac1RingSize = Math.max(32, this.framesInFlight + 28);
             this.mac1Ring = new MetalTransientMemory[this.mac1RingSize];
@@ -163,6 +147,24 @@ final class MetalDevice implements GpuDeviceBackend {
             this.mac1RingTransfers = null; this.mac1RingCompletions = null;
         }
         this.mac1RingHead = 0;
+        MetalLogging.info("Metal core marker: residual-gui-dynamic-texture-fix51; framesInFlight="
+                + this.framesInFlight + "; mac1Compat=" + this.mac1Compat
+                + "; transientLifetime=" + (this.cachedMac1FencelessRing ? "fenceless" : "fenced")
+                + "; mac1FencelessRing=" + this.cachedMac1FencelessRing
+                + "; clearedTargetCycling=" + cycleClearedTargets()
+                + "; guiRegionalClearUpload=" + guiRegionalClearUpload()
+                + "; resetSamplersPerPipeline=" + resetSamplersPerPipeline()
+                + "; forceRenderAreaScissor=" + forceRenderAreaScissor()
+                + "; explicitViewportPerPass=" + explicitViewportPerPass()
+                + "; serializeBufferUploads=" + mac1SerializeBufferUploads()
+                + "; waitForSwapchain=" + waitForSwapchainBeforeAcquire()
+                + "; validateBindings=" + validateBindings()
+                + "; retainTextureTransfers=" + mac1RetainTextureTransfers()
+                + "; regionalDepthAttachmentClear=" + mac1RegionalDepthAttachmentClear()
+                + "; relaxImplicitPassScissor=" + mac1RelaxImplicitPassScissor()
+                + "; strictSwapchainPresent=" + strictSwapchainPresent()
+                + "; forcePresentedSourceFirstClear=" + forcePresentedSourceFirstClear()
+                + "; fix25Cycling=false");
     }
 
     private static String vendorName(String deviceName) {
@@ -269,27 +271,31 @@ final class MetalDevice implements GpuDeviceBackend {
     }
 
     private void releaseRetiredSubmission(RetiredSubmission retired) {
+        releaseRetiredSubmission(retired, handle());
+    }
+
+    private void releaseRetiredSubmission(RetiredSubmission retired, long rawHandle) {
         try {
             if (retired.memory() != null) retired.memory().release();
             for (long transfer : retired.textureTransfers()) {
-                MetalTransfers.releaseTransferBuffer(handle, transfer);
+                MetalTransfers.releaseTransferBuffer(rawHandle, transfer);
             }
             if (retired.completion() != null) retired.completion().run();
         } finally {
-            SDLGPU.SDL_ReleaseGPUFence(handle, retired.fence());
+            SDLGPU.SDL_ReleaseGPUFence(rawHandle, retired.fence());
         }
     }
 
-    private synchronized void releaseAllRetiredTransientMemory() {
+    private synchronized void releaseAllRetiredTransientMemory(long rawHandle) {
         while (!retiredSubmissions.isEmpty()) {
             RetiredSubmission retired = retiredSubmissions.removeFirst();
             // close() waits for GPU idle first, so all resources are safe to release here.
-            releaseRetiredSubmission(retired);
+            releaseRetiredSubmission(retired, rawHandle);
         }
         if (mac1Ring != null) {
             for (int i = 0; i < mac1RingSize; i++) {
                 if (mac1Ring[i] != null) { mac1Ring[i].release(); mac1Ring[i] = null; }
-                if (mac1RingTransfers[i] != null) { for (long t : mac1RingTransfers[i]) MetalTransfers.releaseTransferBuffer(handle, t); mac1RingTransfers[i] = null; }
+                if (mac1RingTransfers[i] != null) { for (long t : mac1RingTransfers[i]) MetalTransfers.releaseTransferBuffer(rawHandle, t); mac1RingTransfers[i] = null; }
                 if (mac1RingCompletions[i] != null) { mac1RingCompletions[i].run(); mac1RingCompletions[i] = null; }
             }
         }
@@ -412,11 +418,23 @@ final class MetalDevice implements GpuDeviceBackend {
     @Override public List<String> getLastDebugMessages(){synchronized(messages){return List.copyOf(messages);}}
     @Override public boolean isDebuggingEnabled(){return debug.logLevel()>0||debug.useLabels()||debug.useValidationLayers();}
     @Override public BackendRenderPipeline.Pending compilePipeline(BackendRenderPipeline.CreateInfo createInfo){
-        return ()->{try{return new MetalRenderPipeline(this,createInfo);}catch(Throwable t){MetalTrace.logError("PIPELINE_COMPILE_FAIL name=\""+MetalTrace.safe(createInfo.name())+"\"",t);messages.add("Metal pipeline '"+createInfo.name()+"' failed: "+t);return null;}};
+        return ()->{try{return new MetalRenderPipeline(this,createInfo);}catch(Throwable t){MetalTrace.logError("PIPELINE_COMPILE_FAIL name=\""+MetalTrace.safe(createInfo.name())+"\"",t);String detail=t.getMessage()==null?t.getClass().getSimpleName():t.getMessage();messages.add("Metal pipeline '"+createInfo.name()+"' failed: "+detail);return null;}};
     }
     @Override public GpuQueryPool createTimestampQueryPool(int size){return new MetalQueryPool(size);}
     @Override public long getTimestampCalibrationOffset(){return 0L;}
     @Override public DeviceInfo getDeviceInfo(){return info;}
-    @Override public void close(){if(closed.compareAndSet(false,true)){try{SDLGPU.SDL_WaitForGPUIdle(handle);}catch(Throwable ignored){}releaseAllRetiredTransientMemory();try{fanIndexBuffer.close();}catch(Throwable ignored){}SDLGPU.SDL_DestroyGPUDevice(handle);MetalBackend.deviceClosed();}}
+    @Override public void close(){
+        if(closed.compareAndSet(false,true)){
+            // Capture the raw SDL handle before poisoning the public handle() accessor. Close must
+            // drain submissions and release their fences/transfers even though normal operations
+            // correctly reject a device after closed becomes true.
+            final long rawHandle = handle;
+            try{SDLGPU.SDL_WaitForGPUIdle(rawHandle);}catch(Throwable ignored){}
+            releaseAllRetiredTransientMemory(rawHandle);
+            try{fanIndexBuffer.close(rawHandle);}catch(Throwable ignored){}
+            try{SDLGPU.SDL_DestroyGPUDevice(rawHandle);}catch(Throwable ignored){}
+            MetalBackend.deviceClosed();
+        }
+    }
 }
 

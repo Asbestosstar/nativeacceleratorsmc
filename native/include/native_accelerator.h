@@ -7,8 +7,10 @@
 
 #if defined(_WIN32)
 #  define NA_EXPORT __declspec(dllexport)
-#else
+#elif defined(__GNUC__) || defined(__clang__)
 #  define NA_EXPORT __attribute__((visibility("default")))
+#else
+#  define NA_EXPORT
 #endif
 
 #define NA_ABI_VERSION 3u

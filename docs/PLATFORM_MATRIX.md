@@ -8,7 +8,7 @@ and the common kernel ABI. Endian-variable architectures use endian-qualified na
 | Linux AMD64 | `os/posix` + `os/linux` | `arch/amd64` | `linux-amd64` | scalar + AVX2 + AVX-512 XOR dispatch; ABI v3 kernels |
 | Linux SPARCv9 | `os/posix` + `os/linux` | `arch/sparc` | `linux-sparcv9-be` normally | SPARC base; VIS kernels next |
 | Solaris/illumos AMD64 | `os/posix` + `os/solaris` | `arch/amd64` | `solaris-amd64` | AVX dispatch + DAX discovery |
-| Solaris/illumos SPARCv9 | `os/posix` + `os/solaris` | `arch/sparc` | `solaris-sparcv9-be` | SPARC base + DAX discovery |
+| Solaris/illumos SPARCv9 | `os/posix` + `os/solaris` | `arch/sparc` | `solaris-sparcv9-be` | SPARC base + optional DAX discovery/adapter |
 | FreeBSD AMD64 | `os/posix` + `os/bsd` + `os/freebsd` | `arch/amd64` | `freebsd-amd64` | explicit BSD/FreeBSD backend + AVX |
 | NetBSD AMD64 | `os/posix` + `os/bsd` + `os/netbsd` | `arch/amd64` | `netbsd-amd64` | explicit BSD/NetBSD backend + AVX |
 | OpenBSD AMD64 | `os/posix` + `os/bsd` + `os/openbsd` | `arch/amd64` | `openbsd-amd64` | explicit BSD/OpenBSD backend + AVX |

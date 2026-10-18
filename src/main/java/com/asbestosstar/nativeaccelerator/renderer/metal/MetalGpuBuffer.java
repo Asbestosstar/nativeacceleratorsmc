@@ -170,9 +170,14 @@ final class MetalGpuBuffer extends BaseGpuBuffer {
 
     @Override
     public void close() {
+        close(device.handle());
+    }
+
+    /** Internal shutdown path used after the owning device has been poisoned. */
+    void close(long rawDeviceHandle) {
         if (closed.compareAndSet(false, true)) {
             device.forgetDirty(this);
-            MetalInterop.sdlCall("SDL_ReleaseGPUBuffer", device.handle(), handle);
+            MetalInterop.sdlCall("SDL_ReleaseGPUBuffer", rawDeviceHandle, handle);
         }
     }
 

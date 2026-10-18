@@ -39,7 +39,7 @@ final class MetalSurface implements GpuSurfaceBackend {
         suboptimal=false;
         // One line per (re)configure, not per frame: shows whether a ~60 FPS cap comes from the
         // VSync option (requested=FIFO) or from Metal only offering FIFO (supported=[FIFO]).
-        System.out.println("[Native Accelerator] Metal present marker: requested=" + config.presentMode()
+        MetalLogging.info("Metal present marker: requested=" + config.presentMode()
                 + "; supported=" + supportedPresentModes() + "; size=" + config.width() + "x" + config.height());
     }
     @Override public boolean isSuboptimal(){return suboptimal;}
@@ -85,7 +85,9 @@ final class MetalSurface implements GpuSurfaceBackend {
         try{return MetalInterop.sdlBool("SDL_WindowSupportsGPUPresentMode",device.handle(),window,MetalInterop.sdl(constant));}
         catch(Throwable failure){
             // A failed probe silently removes IMMEDIATE/MAILBOX and leaves only vsync (FIFO); say so once.
-            if (PROBE_FAILURES_REPORTED.add(constant)) System.out.println("[Native Accelerator] Metal present-mode probe failed for " + constant + ": " + failure);
+            if (PROBE_FAILURES_REPORTED.add(constant)) {
+                System.err.println("[Native Accelerator] Metal present-mode probe failed for " + constant + ": " + failure);
+            }
             return false;
         }
     }

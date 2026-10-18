@@ -39,9 +39,10 @@ public final class GlslFrontend implements ShaderFrontend {
 
     private ShaderModule compileInternal(ShaderSourceSpec source, List<ShaderDiagnostic> priorDiagnostics) {
         List<ShaderDiagnostic> diagnostics = new ArrayList<>(priorDiagnostics == null ? List.of() : priorDiagnostics);
-        if (!"460".equals(source.version())) {
+        if (!supportedVersion(source.version())) {
             diagnostics.add(new ShaderDiagnostic(ShaderDiagnostic.Severity.ERROR,
-                    "URD vertical slice requires exact GLSL version 460", source.sourceName(), 0, 0));
+                    "unsupported GLSL version for the conventional shaderpack frontend: " + source.version(),
+                    source.sourceName(), 0, 0));
             return new ShaderModule(source, null, emptyReflection(), diagnostics);
         }
         ShaderType type;
@@ -63,8 +64,10 @@ public final class GlslFrontend implements ShaderFrontend {
                     ? sourceId
                     : "nativeaccelerator:" + sourceId);
             ShaderSource shaderSource = new InlineShaderSource(id, type, source.source());
+            ShaderDefines.Builder defineBuilder = ShaderDefines.builder();
+            source.defines().forEach((name, value) -> defineBuilder.define(name, value));
             try (SpvModule module = compiler.compileToSpv(source.sourceName(), source.source(), type,
-                    ShaderDefines.EMPTY, shaderSource)) {
+                    defineBuilder.build(), shaderSource)) {
                 SpvModule.Reflection reflected = module.reflect();
                 ByteBuffer nativeWords = module.spv().duplicate();
                 ByteBuffer words = ByteBuffer.allocateDirect(nativeWords.remaining()).order(nativeWords.order());
@@ -100,6 +103,16 @@ public final class GlslFrontend implements ShaderFrontend {
     private static String typeName(SpvModule.Reflection.Type type) {
         return "base=" + type.baseType() + ",dims=" + type.dimensions() + ",vec=" + type.vectorSize()
                 + ",arrays=" + type.arrayDimensions();
+    }
+
+    private static boolean supportedVersion(String version) {
+        try {
+            int value = Integer.parseInt(version == null ? "0" : version.trim());
+            // Conventional Minecraft packs commonly use GLSL 130; retain modern profiles too.
+            return value >= 110 && value <= 460;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
     }
 
     private static ShaderReflection emptyReflection() {

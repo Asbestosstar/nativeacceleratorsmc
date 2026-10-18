@@ -28,11 +28,12 @@ public final class Minecraft263RendererTargets {
     public static final List<Target> LEVEL_FRAME_GRAPH = List.of(
             new Target(LEVEL_RENDERER,
                     "render(GraphicsResourceAllocator,boolean,CameraRenderState,GpuBufferSlice,Vector4f,boolean,boolean)",
-                    "frame lifecycle dispatch around vanilla frame graph; no rendering replacement"),
-            new Target(LEVEL_RENDERER, "levelRenderState / submitNodeStorage (Accessor)",
-                    "read-only access for optional frame observers"),
-            new Target(FRAME_GRAPH_BUILDER, "constructed and executed inside LevelRenderer.render",
-                    "documented seam only; Native Accelerator does not add or execute passes")
+                    "frame lifecycle observation and optional pre-execute conventional final pass"),
+            new Target(LEVEL_RENDERER, "levelRenderState / submitNodeStorage / targets (Accessor)",
+                    "read-only access to frame state and the frame-scoped main target handle"),
+            new Target(FRAME_GRAPH_BUILDER,
+                    "execute(GraphicsResourceAllocator, Inspector) invocation from LevelRenderer.render",
+                    "optional pass insertion immediately before forwarding the vanilla graph exactly once")
     );
 
     public static final List<Target> VULKAN_REWRITE = List.of(

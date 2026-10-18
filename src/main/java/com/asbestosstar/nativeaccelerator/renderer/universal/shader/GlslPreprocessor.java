@@ -146,7 +146,7 @@ public final class GlslPreprocessor {
                 if (directive.equals("include")) {
                     Matcher include = INCLUDE.matcher(argument);
                     if (!include.find()) { error(path, lineNumber, "malformed #include"); continue; }
-                    String child = normalize(relative(path, include.group(1)));
+                    String child = resolveInclude(path, include.group(1));
                     if (child == null) { error(path, lineNumber, "include escapes shaderpack root"); continue; }
                     expand(child, output, depth + 1, false);
                     appendLine(output, "#line " + (lineNumber + 1) + " \"" + escape(path) + "\"",
@@ -172,10 +172,10 @@ public final class GlslPreprocessor {
     private boolean handleConditional(String directive, String argument, Conditional conditional,
                                       String path, int line) {
         switch (directive) {
-            case "if" -> conditional.begin(evaluate(argument), conditional.active());
+            case "if" -> conditional.begin(condition(argument, path, line), conditional.active());
             case "ifdef" -> conditional.begin(macros.containsKey(argument), conditional.active());
             case "ifndef" -> conditional.begin(!macros.containsKey(argument), conditional.active());
-            case "elif" -> conditional.elif(evaluate(argument));
+            case "elif" -> conditional.elif(condition(argument, path, line));
             case "else" -> conditional.otherwise();
             case "endif" -> conditional.end();
             default -> { return false; }
@@ -238,15 +238,155 @@ public final class GlslPreprocessor {
         return value;
     }
 
-    private boolean evaluate(String expression) {
-        String value = expression.replace("defined", "").replace("(", "").replace(")", "").trim();
-        if (macros.containsKey(value)) return integer(macros.get(value).body()) != 0;
-        if (INTEGER.matcher(value).matches()) return integer(value) != 0;
-        return false;
+    private boolean condition(String expression, String path, int line) {
+        try {
+            return new ConditionParser(expression == null ? "" : expression).parse() != 0;
+        } catch (IllegalArgumentException ex) {
+            error(path, line, "invalid conditional expression: " + ex.getMessage());
+            return false;
+        }
+    }
+
+    private final class ConditionParser {
+        private final String input;
+        private int cursor;
+
+        private ConditionParser(String input) { this.input = input; }
+
+        private int parse() {
+            int value = or();
+            skip();
+            if (cursor != input.length()) throw new IllegalArgumentException("unexpected token");
+            return value;
+        }
+
+        private int or() {
+            int value = and();
+            while (take("||")) { int right = and(); value = truth(value) != 0 || truth(right) != 0 ? 1 : 0; }
+            return value;
+        }
+
+        private int and() {
+            int value = bitOr();
+            while (take("&&")) { int right = bitOr(); value = truth(value) != 0 && truth(right) != 0 ? 1 : 0; }
+            return value;
+        }
+
+        private int bitOr() {
+            int value = bitXor();
+            while (takeSingle("|", "||")) value |= bitXor();
+            return value;
+        }
+
+        private int bitXor() {
+            int value = bitAnd();
+            while (take("^")) value ^= bitAnd();
+            return value;
+        }
+
+        private int bitAnd() {
+            int value = equality();
+            while (takeSingle("&", "&&")) value &= equality();
+            return value;
+        }
+
+        private int equality() {
+            int value = relational();
+            while (true) {
+                if (take("==")) value = value == relational() ? 1 : 0;
+                else if (take("!=")) value = value != relational() ? 1 : 0;
+                else return value;
+            }
+        }
+
+        private int relational() {
+            int value = additive();
+            while (true) {
+                if (take("<=")) value = value <= additive() ? 1 : 0;
+                else if (take(">=")) value = value >= additive() ? 1 : 0;
+                else if (take("<")) value = value < additive() ? 1 : 0;
+                else if (take(">")) value = value > additive() ? 1 : 0;
+                else return value;
+            }
+        }
+
+        private int additive() {
+            int value = multiplicative();
+            while (true) {
+                if (take("+")) value += multiplicative();
+                else if (take("-")) value -= multiplicative();
+                else return value;
+            }
+        }
+
+        private int multiplicative() {
+            int value = unary();
+            while (true) {
+                if (take("*")) value *= unary();
+                else if (take("/")) { int divisor = unary(); if (divisor == 0) throw new IllegalArgumentException("division by zero"); value /= divisor; }
+                else if (take("%")) { int divisor = unary(); if (divisor == 0) throw new IllegalArgumentException("division by zero"); value %= divisor; }
+                else return value;
+            }
+        }
+
+        private int unary() {
+            if (take("!")) return truth(unary()) == 0 ? 1 : 0;
+            if (take("~")) return ~unary();
+            if (take("+")) return unary();
+            if (take("-")) return -unary();
+            return primary();
+        }
+
+        private int primary() {
+            skip();
+            if (take("(")) { int value = or(); require(")"); return value; }
+            if (takeWord("defined")) {
+                boolean parenthesized = take("(");
+                String name = identifier();
+                if (parenthesized) require(")");
+                return macros.containsKey(name) ? 1 : 0;
+            }
+            if (cursor < input.length() && (Character.isDigit(input.charAt(cursor)))) return number();
+            String name = identifier();
+            Macro macro = macros.get(name);
+            return macro == null ? 0 : integer(macro.body());
+        }
+
+        private int number() {
+            int start = cursor;
+            while (cursor < input.length() && (Character.isDigit(input.charAt(cursor)) ||
+                    Character.toLowerCase(input.charAt(cursor)) >= 'a' && Character.toLowerCase(input.charAt(cursor)) <= 'f' ||
+                    input.charAt(cursor) == 'x' || input.charAt(cursor) == 'X')) cursor++;
+            String value = input.substring(start, cursor);
+            try { return value.startsWith("0x") || value.startsWith("0X") ? Integer.parseUnsignedInt(value.substring(2), 16) : Integer.parseInt(value); }
+            catch (NumberFormatException ex) { throw new IllegalArgumentException("invalid integer " + value); }
+        }
+
+        private String identifier() {
+            skip();
+            int start = cursor;
+            if (cursor >= input.length() || !(Character.isLetter(input.charAt(cursor)) || input.charAt(cursor) == '_')) throw new IllegalArgumentException("identifier expected");
+            cursor++;
+            while (cursor < input.length() && (Character.isLetterOrDigit(input.charAt(cursor)) || input.charAt(cursor) == '_')) cursor++;
+            return input.substring(start, cursor);
+        }
+
+        private boolean takeWord(String word) {
+            skip(); int end = cursor + word.length();
+            if (end <= input.length() && input.regionMatches(cursor, word, 0, word.length()) &&
+                    (end == input.length() || !Character.isLetterOrDigit(input.charAt(end)) && input.charAt(end) != '_')) { cursor = end; return true; }
+            return false;
+        }
+
+        private boolean take(String token) { skip(); if (input.startsWith(token, cursor)) { cursor += token.length(); return true; } return false; }
+        private boolean takeSingle(String token, String longer) { skip(); if (input.startsWith(longer, cursor)) return false; return take(token); }
+        private void require(String token) { if (!take(token)) throw new IllegalArgumentException("expected " + token); }
+        private void skip() { while (cursor < input.length() && Character.isWhitespace(input.charAt(cursor))) cursor++; }
+        private int truth(int value) { return value == 0 ? 0 : 1; }
     }
 
     private static int integer(String value) {
-        try { return Integer.parseInt(value.trim()); } catch (NumberFormatException ignored) { return value.isBlank() ? 0 : 1; }
+        try { return Integer.decode(value.trim()); } catch (NumberFormatException ignored) { return value.isBlank() ? 0 : 1; }
     }
 
     private void appendLine(StringBuilder output, String line, SourceLocation location) {
@@ -270,6 +410,17 @@ public final class GlslPreprocessor {
 
     private void error(String path, int line, String message) {
         diagnostics.add(new ShaderDiagnostic(ShaderDiagnostic.Severity.ERROR, message, path, line, 0));
+    }
+
+    private static String resolveInclude(String parent, String child) {
+        if (child == null || child.isBlank() || child.indexOf('\0') >= 0) return null;
+        // OptiFine/Iris shaderpack includes beginning with one slash are rooted at the pack's
+        // normalized shader source view, not at the host filesystem. Strip only that anchor; the
+        // ordinary provider normalization still rejects traversal and absolute host paths.
+        String candidate = child.startsWith("/")
+                ? child.substring(1)
+                : relative(parent, child);
+        return normalize(candidate);
     }
 
     private static String relative(String parent, String child) {
@@ -315,13 +466,26 @@ public final class GlslPreprocessor {
 
     private static final class Conditional {
         private final ArrayDeque<Branch> branches = new ArrayDeque<>();
-        void begin(boolean condition, boolean parentActive) { branches.push(new Branch(parentActive, parentActive && condition, parentActive && condition)); }
-        void elif(boolean condition) { if (branches.isEmpty()) return; Branch b = branches.pop(); boolean active = b.parent() && !b.taken() && condition; branches.push(new Branch(b.parent(), b.taken() || active, active)); }
-        void otherwise() { if (branches.isEmpty()) return; Branch b = branches.pop(); boolean active = b.parent() && !b.taken(); branches.push(new Branch(b.parent(), true, active)); }
-        void end() { if (!branches.isEmpty()) branches.pop(); }
+        private boolean invalid;
+        void begin(boolean condition, boolean parentActive) { branches.push(new Branch(parentActive, parentActive && condition, parentActive && condition, false)); }
+        void elif(boolean condition) {
+            if (branches.isEmpty()) { invalid = true; return; }
+            Branch b = branches.pop();
+            if (b.elseSeen()) { invalid = true; branches.push(b); return; }
+            boolean active = b.parent() && !b.taken() && condition;
+            branches.push(new Branch(b.parent(), b.taken() || active, active, false));
+        }
+        void otherwise() {
+            if (branches.isEmpty()) { invalid = true; return; }
+            Branch b = branches.pop();
+            if (b.elseSeen()) { invalid = true; branches.push(b); return; }
+            boolean active = b.parent() && !b.taken();
+            branches.push(new Branch(b.parent(), true, active, true));
+        }
+        void end() { if (branches.isEmpty()) invalid = true; else branches.pop(); }
         boolean active() { return branches.stream().allMatch(Branch::active); }
         boolean empty() { return branches.isEmpty(); }
-        boolean invalid() { return false; }
-        private record Branch(boolean parent, boolean taken, boolean active) { }
+        boolean invalid() { return invalid; }
+        private record Branch(boolean parent, boolean taken, boolean active, boolean elseSeen) { }
     }
 }

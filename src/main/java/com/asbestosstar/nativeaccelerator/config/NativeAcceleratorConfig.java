@@ -84,7 +84,11 @@ public final class NativeAcceleratorConfig {
             String normalized = value == null ? "" : value.trim();
             VALUES.setProperty(key, normalized);
             String systemKey = "nativeaccelerator." + key;
-            if (!normalized.isBlank() && !"auto".equalsIgnoreCase(normalized)
+            if (normalized.isBlank()) {
+                // An explicit reset must clear the mirrored JVM value too; otherwise the old system
+                // property would continue to outrank the newly persisted empty file value.
+                System.clearProperty(systemKey);
+            } else if (!"auto".equalsIgnoreCase(normalized)
                     && System.getProperty(systemKey) == null) {
                 System.setProperty(systemKey, normalized);
             }

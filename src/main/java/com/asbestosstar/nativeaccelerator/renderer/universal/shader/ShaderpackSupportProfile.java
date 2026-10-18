@@ -66,6 +66,9 @@ public final class ShaderpackSupportProfile {
 
     public boolean accepted(boolean approximationOptIn) {
         return outcome != ShaderpackOutcome.UNSUPPORTED
+                && outcome != ShaderpackOutcome.BLOCKED
+                && outcome != ShaderpackOutcome.INVALID
+                && outcome != ShaderpackOutcome.FRONTEND_ONLY
                 && (outcome != ShaderpackOutcome.APPROXIMATION_OPT_IN || approximationOptIn);
     }
 
@@ -147,6 +150,9 @@ public final class ShaderpackSupportProfile {
                 case SEMANTIC_EMULATION -> 2;
                 case APPROXIMATION_OPT_IN -> 3;
                 case UNSUPPORTED -> 4;
+                case BLOCKED -> 5;
+                case FRONTEND_ONLY -> 6;
+                case INVALID -> 7;
             };
         }
     }

@@ -3,6 +3,7 @@ package com.asbestosstar.nativeaccelerator.renderer.universal;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.legacy.ShaderPropertiesParser;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.legacy.ShaderPropertiesProfile;
 
+import java.util.List;
 import java.util.Set;
 
 public final class ShaderPropertiesParserTest {
@@ -36,6 +37,22 @@ public final class ShaderPropertiesParserTest {
         require(profile.options().get("quality").displayName().equals("Render quality"), "option display name");
         require(ShaderPropertiesParser.parse("profile.a=bloom=true\nprofile.b=a shadows=true", Set.of("b"))
                 .feature("bloom", false), "parent inheritance");
+        var firstOrder = ShaderPropertiesParser.parse(
+                "profile.a=bloom=true\nprofile.b=bloom=false", List.of("a", "b"));
+        var reverseOrder = ShaderPropertiesParser.parse(
+                "profile.a=bloom=true\nprofile.b=bloom=false", List.of("b", "a"));
+        require(firstOrder.feature("bloom", false) && !reverseOrder.feature("bloom", true),
+                "conflicting profile assignments respect caller order");
+        require(ShaderPropertiesParser.parse("profile.a=bloom=true", List.of("missing")).diagnostics()
+                .stream().anyMatch(value -> value.contains("unknown requested profile")),
+                "unknown requested profile diagnostic");
+        StringBuilder manyAssignments = new StringBuilder();
+        for (int i = 0; i < 500; i++) manyAssignments.append("profile.p").append(i).append("=feature").append(i).append("=true\n");
+        require(ShaderPropertiesParser.parse(manyAssignments.toString(), List.of()).diagnostics().isEmpty(),
+                "realistic profile assignment volume stays within the bounded limit");
+        require(ShaderPropertiesParser.parse("option.enabled=true false\nprogram.composite.enabled=enabled",
+                List.of(), java.util.Map.of("enabled", "true")).programEnabled("composite", false),
+                "selected boolean option feeds conventional .enabled program expression");
         require(!ShaderPropertiesParser.parse("profile.a=b\nprofile.b=a", Set.of("a")).diagnostics().isEmpty(), "cycle diagnostic");
         boolean bounded = false;
         try { ShaderPropertiesParser.parse("x=true", Set.of(), new ShaderPropertiesParser.Limits(2, 10, 2, 2, 10, 2)); }

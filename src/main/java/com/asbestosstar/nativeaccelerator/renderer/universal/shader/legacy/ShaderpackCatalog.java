@@ -19,6 +19,7 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.zip.ZipEntry;
@@ -100,6 +101,8 @@ public final class ShaderpackCatalog {
         Set<ShaderTechnology> technologies = new TreeSet<>(Comparator.comparing(Enum::name));
         String reason = "No recognized shader source was found";
         ShaderpackStatus status = ShaderpackStatus.UNKNOWN;
+        ShaderpackConventionalProfile conventionalProfile = new ShaderpackConventionalProfile(
+                ShaderpackFormat.UNKNOWN, "", Map.of(), List.of(), Set.of(), List.of());
         try {
             List<String> names = kind == ShaderpackDescriptor.Kind.DIRECTORY ? directoryNames(path) : archiveNames(path);
             for (String name : names) {
@@ -108,14 +111,35 @@ public final class ShaderpackCatalog {
                 String lower = name.toLowerCase(Locale.ROOT);
                 if (lower.contains("sgix")) technologies.add(ShaderTechnology.SGIX);
             }
+            try (ShaderPackSource source = ShaderPackSourceProvider.open(path, ShaderPackReadLimits.DEFAULT)) {
+                conventionalProfile = new ShaderpackConventionalScanner().scan(source);
+            }
+            if (conventionalProfile.format() != ShaderpackFormat.UNKNOWN) {
+                technologies.add(ShaderTechnology.GLSL);
+            }
+            if (!conventionalProfile.unsupportedFeatures().isEmpty()) {
+                reason = "Detected conventional features requiring additional adapters: "
+                        + String.join(", ", conventionalProfile.unsupportedFeatures());
+            }
             if (technologies.isEmpty()) {
                 status = kind == ShaderpackDescriptor.Kind.OTHER ? ShaderpackStatus.UNKNOWN : ShaderpackStatus.UNKNOWN;
             } else if (technologies.stream().anyMatch(ShaderTechnology::incomplete)) {
                 status = ShaderpackStatus.INCOMPLETE;
                 reason = "One or more detected technologies have no complete shaderpack runtime";
             } else if (technologies.contains(ShaderTechnology.GLSL)) {
-                status = ShaderpackStatus.FRONTEND_ONLY;
-                reason = "GLSL compilation exists only for the narrow URD vertical slice; pack execution is not wired";
+                boolean fixture = hasNativeAcceleratorManifest(path);
+                if (!fixture && conventionalProfile.hasWorldPrograms()) {
+                    status = ShaderpackStatus.UNSUPPORTED;
+                    reason = "Conventional pack discovered; world-stage programs require the staged frame-graph adapter";
+                } else if (!fixture && conventionalProfile.hasExecutableFullscreenFamily()) {
+                    status = ShaderpackStatus.FRONTEND_ONLY;
+                    reason = "Conventional final/composite programs discovered; compiler and generated PostChain validation are still required";
+                } else {
+                    status = ShaderpackStatus.FRONTEND_ONLY;
+                    reason = fixture
+                            ? "Native Accelerator fullscreen fixture; execution requires backend preparation"
+                            : "GLSL sources discovered; no executable conventional compatibility profile is selected";
+                }
             } else {
                 status = ShaderpackStatus.UNSUPPORTED;
                 reason = "Detected technology has no shaderpack execution path";
@@ -124,7 +148,17 @@ public final class ShaderpackCatalog {
             status = ShaderpackStatus.INVALID;
             reason = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
         }
-        return new ShaderpackDescriptor(id, id, path, kind, technologies, status, reason, hash(path));
+        return new ShaderpackDescriptor(id, id, path, kind, technologies, status, reason, hash(path), conventionalProfile);
+    }
+
+    private static boolean hasNativeAcceleratorManifest(Path path) {
+        try (ShaderPackSource source = ShaderPackSourceProvider.open(path, ShaderPackReadLimits.DEFAULT)) {
+            String root = new ShaderpackConventionalScanner().scan(source).root();
+            return source.read("nativeaccelerator.shaderpack.json").isPresent()
+                    || (!root.isEmpty() && source.read(root + "/nativeaccelerator.shaderpack.json").isPresent());
+        } catch (IOException | RuntimeException ignored) {
+            return false;
+        }
     }
 
     private static ShaderpackDescriptor.Kind kind(Path path) {

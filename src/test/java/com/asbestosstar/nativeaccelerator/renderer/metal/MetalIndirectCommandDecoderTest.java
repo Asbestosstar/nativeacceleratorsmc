@@ -13,13 +13,18 @@ public final class MetalIndirectCommandDecoderTest {
         var a = MetalIndirectCommandDecoder.indexed(indexed, 0);
         var b = MetalIndirectCommandDecoder.indexed(indexed, 1);
         expect(36, a.indexCount(), "indexed[0].count");
+        expect(2, a.instanceCount(), "indexed[0].instances");
+        expect(7, a.firstIndex(), "indexed[0].firstIndex");
         expect(-3, a.vertexOffset(), "indexed[0].baseVertex");
+        expect(11, a.firstInstance(), "indexed[0].firstInstance");
         expect(22, b.firstInstance(), "indexed[1].firstInstance");
 
         ByteBuffer draw = ByteBuffer.allocateDirect(16).order(ByteOrder.nativeOrder());
         draw.putInt(0, 12).putInt(4, 3).putInt(8, 4).putInt(12, 9);
         var d = MetalIndirectCommandDecoder.draw(draw, 0);
         expect(12, d.vertexCount(), "draw.count");
+        expect(3, d.instanceCount(), "draw.instances");
+        expect(4, d.firstVertex(), "draw.firstVertex");
         expect(9, d.firstInstance(), "draw.firstInstance");
         System.out.println("MetalIndirectCommandDecoderTest: PASS");
     }
@@ -28,4 +33,3 @@ public final class MetalIndirectCommandDecoderTest {
         if (expected != actual) throw new AssertionError(what + ": expected " + expected + ", got " + actual);
     }
 }
-

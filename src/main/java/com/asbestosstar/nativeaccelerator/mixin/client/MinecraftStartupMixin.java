@@ -4,7 +4,9 @@ import com.asbestosstar.nativeaccelerator.cache.DeferredCacheWriter;
 import com.asbestosstar.nativeaccelerator.startup.StartupStages;
 import com.asbestosstar.nativeaccelerator.startup.StartupTimer;
 import com.asbestosstar.nativeaccelerator.renderer.metal.GraphicsBackendPreference;
+import com.asbestosstar.nativeaccelerator.renderer.metal.MetalLogging;
 import com.asbestosstar.nativeaccelerator.renderer.RendererBackendRuntime;
+import com.asbestosstar.nativeaccelerator.renderer.VulkanBackendDiagnostics;
 import com.mojang.renderpearl.api.device.BackendCreationException;
 import com.mojang.renderpearl.api.device.GpuBackend;
 import com.mojang.renderpearl.api.device.GpuDebugOptions;
@@ -95,10 +97,14 @@ public abstract class MinecraftStartupMixin {
             require = 1)
     private @Nullable BackendCreationException nativeaccelerator$conditionalVulkanAvailabilityProbe() {
         if (!GraphicsBackendPreference.shouldRunVanillaVulkanProbe()) {
-            System.out.println("[Native Accelerator] Explicit Metal/OpenGL selection: skipping Minecraft's Vulkan availability probe");
+            MetalLogging.info("Explicit Metal/OpenGL selection: skipping Minecraft's Vulkan availability probe");
             return null;
         }
-        return VulkanBackend.checkBackendAvailable();
+        BackendCreationException failure = VulkanBackend.checkBackendAvailable();
+        if (failure != null) {
+            VulkanBackendDiagnostics.report("availability probe", failure);
+        }
+        return failure;
     }
 
     /**
@@ -114,9 +120,17 @@ public abstract class MinecraftStartupMixin {
             require = 1)
     private GpuDevice nativeaccelerator$createGraphicsDevice(GpuBackend backend, GpuDebugOptions options)
             throws BackendCreationException {
-        GpuDevice device = backend.createDevice(options);
+        GpuDevice device;
+        try {
+            device = backend.createDevice(options);
+        } catch (BackendCreationException failure) {
+            if (backend instanceof VulkanBackend) {
+                VulkanBackendDiagnostics.report("device creation", failure);
+            }
+            throw failure;
+        }
         GraphicsBackendPreference.backendCreated(backend);
-        RendererBackendRuntime.backendCreated(backend);
+        RendererBackendRuntime.backendCreated(backend, device);
         return device;
     }
 

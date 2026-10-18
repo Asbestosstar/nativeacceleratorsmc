@@ -1,7 +1,9 @@
 package com.asbestosstar.nativeaccelerator.renderer;
 
 import com.asbestosstar.nativeaccelerator.renderer.metal.MetalBackend;
+import com.asbestosstar.nativeaccelerator.renderer.universal.UniversalRendererRuntime;
 import com.mojang.renderpearl.api.device.GpuBackend;
+import com.mojang.renderpearl.api.device.GpuDevice;
 import com.mojang.renderpearl.backend.opengl.GlBackend;
 import com.mojang.renderpearl.backend.vulkan.VulkanBackend;
 
@@ -36,10 +38,16 @@ public final class RendererBackendRuntime {
     }
 
     public static void backendCreated(GpuBackend backend) {
+        backendCreated(backend, null);
+    }
+
+    /** Records the successful device and optionally starts the opt-in URD shadow/demo path. */
+    public static void backendCreated(GpuBackend backend, GpuDevice device) {
         Backend kind = classify(backend);
         ACTIVE.set(kind);
         System.out.println("[Native Accelerator] Minecraft graphics backend created: " + kind.name().toLowerCase(Locale.ROOT)
                 + " (" + backend.getName() + ")");
+        UniversalRendererRuntime.backendCreated(kind, device);
 
         // The independent native Vulkan renderer is strictly Vulkan-only. In particular, do not even
         // ask RendererPlatformPolicy to load/probe its native companion while Metal/OpenGL is active.

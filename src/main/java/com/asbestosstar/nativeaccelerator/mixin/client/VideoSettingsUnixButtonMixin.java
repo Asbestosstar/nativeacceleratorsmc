@@ -5,6 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractButton;
 import net.minecraft.client.gui.screens.options.VideoSettingsScreen;
+import com.asbestosstar.nativeaccelerator.client.LegacyShadersScreen;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -15,7 +16,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class VideoSettingsUnixButtonMixin {
     @Inject(method = "extractDefaultSprite", at = @At("HEAD"), cancellable = true, require = 0)
     private void nativeaccelerator$unixButtonSprite(GuiGraphicsExtractor graphics, CallbackInfo ci) {
-        if (!(Minecraft.getInstance().gui.screen() instanceof VideoSettingsScreen)) return;
+        if (!(Minecraft.getInstance().gui.screen() instanceof VideoSettingsScreen)
+                && !(Minecraft.getInstance().gui.screen() instanceof LegacyShadersScreen)) return;
         if (!NativeAcceleratorConfig.booleanValue("graphics.unixTheme", true)) return;
 
         AbstractButton button = (AbstractButton)(Object)this;

@@ -234,7 +234,7 @@ public final class MetalBackend implements GpuBackend {
         MacMetalCapabilities.Result metal = MacMetalCapabilities.current();
         MetalCapabilityTier capabilityTier = detectCapabilityTier();
         boolean allowMacFamily1 = shouldAllowMacFamily1(metal);
-        System.out.println("[Native Accelerator] Metal preflight: device=" + metal.deviceName()
+        MetalLogging.info("Metal preflight: device=" + metal.deviceName()
                 + ", tier=" + metal.tier()
                 + ", families={mac1=" + metal.mac1()
                 + ", mac2=" + metal.mac2()
@@ -266,7 +266,7 @@ public final class MetalBackend implements GpuBackend {
         boolean forceMac1Validation = Boolean.parseBoolean(System.getProperty(MAC1_VALIDATION_PROPERTY, "false"));
         boolean effectiveDebug = requestedDebug && (!(compatibilityTier || runtimeProbeUnsafe) || forceMac1Validation);
         if (requestedDebug && !effectiveDebug) {
-            System.out.println("[Native Accelerator] Metal validation disabled before device creation: "
+            MetalLogging.info("Metal validation disabled before device creation: "
                     + "legacy/patched capability path (tier=" + capabilityTier
                     + ", legacyNvidia=" + metal.legacyNvidia()
                     + ", icbSupported=" + metal.indirectCommandBufferSupported() + "). "
@@ -301,7 +301,7 @@ public final class MetalBackend implements GpuBackend {
             // otherwise patched host, treating this as Mac1 is safer than touching unsupported ICBs.
             capabilityTier = MetalCapabilityTier.MAC1_COMPAT;
         }
-        System.out.println("[Native Accelerator] SDL3 Metal device created successfully; probe=" + lastProbeReason
+        MetalLogging.info("SDL3 Metal device created successfully; probe=" + lastProbeReason
                 + ", allowMacFamily1=" + allowMacFamily1
                 + ", capabilityTier=" + capabilityTier);
 

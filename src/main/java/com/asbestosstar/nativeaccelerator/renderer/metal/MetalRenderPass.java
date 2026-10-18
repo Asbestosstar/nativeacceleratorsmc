@@ -351,34 +351,66 @@ final class MetalRenderPass implements RenderPassBackend {
      */
     private void drawIndexedIndirectCpuFallback(MetalGpuBuffer buffer,long offset,int drawCount) {
         ByteBuffer bytes=buffer.shadowSlice(offset,Math.multiplyExact((long)drawCount,MetalIndirectCommandDecoder.INDEXED_DRAW_BYTES));
-        final boolean terrain=inTerrainGroup();
         final long pass=handle;
+        // Keep the ordinary MacFamily1 path free of telemetry scaffolding. Benchmark mode is an
+        // explicit diagnostic and takes the measured path below instead.
+        if (!MetalPerfCounters.ENABLED) {
+            for(int i=0,base=0;i<drawCount;i++,base+=MetalIndirectCommandDecoder.INDEXED_DRAW_BYTES){
+                int indexCount=bytes.getInt(base);
+                int instanceCount=bytes.getInt(base+4);
+                if(indexCount==0||instanceCount==0) continue;
+                SDLGPU.SDL_DrawGPUIndexedPrimitives(pass,indexCount,instanceCount,bytes.getInt(base+8),bytes.getInt(base+12),bytes.getInt(base+16));
+            }
+            return;
+        }
+        final boolean terrain=inTerrainGroup();
+        final long batchStart=MetalPerfCounters.tic();
+        long batchDrawNs=0L;
         // Decode in place: no per-command record allocation, and zero-sized commands (which cannot
         // produce fragments) never cost a native call. Layout matches MetalIndirectCommandDecoder.indexed().
-        for(int i=0,base=0;i<drawCount;i++,base+=MetalIndirectCommandDecoder.INDEXED_DRAW_BYTES){
-            int indexCount=bytes.getInt(base);
-            int instanceCount=bytes.getInt(base+4);
-            if(indexCount==0||instanceCount==0) continue;
-            long perfStart=MetalPerfCounters.tic();
-            SDLGPU.SDL_DrawGPUIndexedPrimitives(pass,indexCount,instanceCount,bytes.getInt(base+8),bytes.getInt(base+12),bytes.getInt(base+16));
-            MetalPerfCounters.cpuIndirectCommand();
-            MetalPerfCounters.draw(true,terrain,perfStart);
+        try {
+            for(int i=0,base=0;i<drawCount;i++,base+=MetalIndirectCommandDecoder.INDEXED_DRAW_BYTES){
+                int indexCount=bytes.getInt(base);
+                int instanceCount=bytes.getInt(base+4);
+                if(indexCount==0||instanceCount==0) continue;
+                long perfStart=MetalPerfCounters.tic();
+                SDLGPU.SDL_DrawGPUIndexedPrimitives(pass,indexCount,instanceCount,bytes.getInt(base+8),bytes.getInt(base+12),bytes.getInt(base+16));
+                MetalPerfCounters.cpuIndirectCommand();
+                batchDrawNs += MetalPerfCounters.draw(true,terrain,perfStart);
+            }
+        } finally {
+            MetalPerfCounters.cpuIndirectBatch(drawCount,batchStart,batchDrawNs);
         }
     }
 
     /** MTLDrawPrimitivesIndirectArguments / VkDrawIndirectCommand: four 32-bit fields. */
     private void drawIndirectCpuFallback(MetalGpuBuffer buffer,long offset,int drawCount) {
         ByteBuffer bytes=buffer.shadowSlice(offset,Math.multiplyExact((long)drawCount,MetalIndirectCommandDecoder.DRAW_BYTES));
-        final boolean terrain=inTerrainGroup();
         final long pass=handle;
-        for(int i=0,base=0;i<drawCount;i++,base+=MetalIndirectCommandDecoder.DRAW_BYTES){
-            int vertexCount=bytes.getInt(base);
-            int instanceCount=bytes.getInt(base+4);
-            if(vertexCount==0||instanceCount==0) continue;
-            long perfStart=MetalPerfCounters.tic();
-            SDLGPU.SDL_DrawGPUPrimitives(pass,vertexCount,instanceCount,bytes.getInt(base+8),bytes.getInt(base+12));
-            MetalPerfCounters.cpuIndirectCommand();
-            MetalPerfCounters.draw(false,terrain,perfStart);
+        if (!MetalPerfCounters.ENABLED) {
+            for(int i=0,base=0;i<drawCount;i++,base+=MetalIndirectCommandDecoder.DRAW_BYTES){
+                int vertexCount=bytes.getInt(base);
+                int instanceCount=bytes.getInt(base+4);
+                if(vertexCount==0||instanceCount==0) continue;
+                SDLGPU.SDL_DrawGPUPrimitives(pass,vertexCount,instanceCount,bytes.getInt(base+8),bytes.getInt(base+12));
+            }
+            return;
+        }
+        final boolean terrain=inTerrainGroup();
+        final long batchStart=MetalPerfCounters.tic();
+        long batchDrawNs=0L;
+        try {
+            for(int i=0,base=0;i<drawCount;i++,base+=MetalIndirectCommandDecoder.DRAW_BYTES){
+                int vertexCount=bytes.getInt(base);
+                int instanceCount=bytes.getInt(base+4);
+                if(vertexCount==0||instanceCount==0) continue;
+                long perfStart=MetalPerfCounters.tic();
+                SDLGPU.SDL_DrawGPUPrimitives(pass,vertexCount,instanceCount,bytes.getInt(base+8),bytes.getInt(base+12));
+                MetalPerfCounters.cpuIndirectCommand();
+                batchDrawNs += MetalPerfCounters.draw(false,terrain,perfStart);
+            }
+        } finally {
+            MetalPerfCounters.cpuIndirectBatch(drawCount,batchStart,batchDrawNs);
         }
     }
 

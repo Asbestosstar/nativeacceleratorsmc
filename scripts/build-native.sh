@@ -24,7 +24,7 @@ BUILD_TYPE=${NA_BUILD_TYPE:-RelWithDebInfo}
 normalize_os() {
     case "$(uname -s)" in
         Linux) echo linux ;;
-        SunOS) echo solaris ;;
+        SunOS|Solaris|illumos|Illumos) echo solaris ;;
         FreeBSD) echo freebsd ;;
         NetBSD) echo netbsd ;;
         OpenBSD) echo openbsd ;;
@@ -68,6 +68,7 @@ RESOURCE_ARCH=$(tr -d '\r\n' < "$RESOURCE_ARCH_FILE")
 PLATFORM="$OS-$RESOURCE_ARCH"
 DEST="$OUTPUT_DIR/META-INF/native/$PLATFORM"
 DEBUG_DEST="$OUTPUT_DIR/META-INF/native-debug/$PLATFORM"
+rm -rf "$DEST" "$DEBUG_DEST"
 mkdir -p "$DEST" "$DEBUG_DEST"
 
 case "$OS" in

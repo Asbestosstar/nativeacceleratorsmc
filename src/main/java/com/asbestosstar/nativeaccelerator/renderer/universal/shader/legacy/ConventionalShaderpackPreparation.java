@@ -4,6 +4,7 @@ import com.asbestosstar.nativeaccelerator.renderer.RendererBackendRuntime;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.GlslFrontend;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.GlslProfile;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.ShaderModule;
+import com.asbestosstar.nativeaccelerator.renderer.universal.shader.ShaderFrontend;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.ShaderPackSource;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.ShaderpackGeneration;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.ShaderpackOutcome;
@@ -24,7 +25,7 @@ import java.util.Optional;
  * reported as BLOCKED and never yields a partially executable generation.</p>
  */
 public final class ConventionalShaderpackPreparation {
-    private final GlslFrontend frontend;
+    private final ShaderFrontend frontend;
     private final ShaderpackConventionalVariantScanner scanner;
     private final ShaderpackConventionalScanner profileScanner;
     private final ShaderpackRenderTargetParser targets;
@@ -34,13 +35,13 @@ public final class ConventionalShaderpackPreparation {
                 new ShaderpackConventionalScanner(), new ShaderpackRenderTargetParser());
     }
 
-    public ConventionalShaderpackPreparation(GlslFrontend frontend,
+    public ConventionalShaderpackPreparation(ShaderFrontend frontend,
                                               ShaderpackConventionalVariantScanner scanner,
                                               ShaderpackRenderTargetParser targets) {
         this(frontend, scanner, new ShaderpackConventionalScanner(), targets);
     }
 
-    public ConventionalShaderpackPreparation(GlslFrontend frontend,
+    public ConventionalShaderpackPreparation(ShaderFrontend frontend,
                                               ShaderpackConventionalVariantScanner scanner,
                                               ShaderpackConventionalScanner profileScanner,
                                               ShaderpackRenderTargetParser targets) {
@@ -52,23 +53,49 @@ public final class ConventionalShaderpackPreparation {
 
     public Prepared prepare(ShaderPackSource source, String packId,
                             RendererBackendRuntime.Backend backend) {
+        return prepare(source, packId, backend, ShaderpackDimension.UNKNOWN, List.of(), Map.of());
+    }
+
+    public Prepared prepare(ShaderPackSource source, String packId,
+                            RendererBackendRuntime.Backend backend,
+                            ShaderpackDimension dimension,
+                            List<String> requestedProfiles,
+                            Map<String, String> requestedOptions) {
         if (source == null || packId == null || packId.isBlank()) return blocked(packId, "source or pack id is missing");
         if (backend == null || backend == RendererBackendRuntime.Backend.NONE || backend == RendererBackendRuntime.Backend.OTHER) {
             return blocked(packId, "shaderpack backend is unavailable");
         }
         ShaderpackConventionalProfile profile = profileScanner.scan(source);
+        List<String> profileNames = requestedProfiles == null ? List.of() : List.copyOf(requestedProfiles);
+        Map<String, String> optionValues = requestedOptions == null ? Map.of() : Map.copyOf(requestedOptions);
+        ConventionalShaderpackSelection selection = ConventionalShaderpackSelection.resolve(
+                profile, dimension, profileNames, optionValues);
         ConventionalShaderpackGraphAdapter.Result graph = new ConventionalShaderpackGraphAdapter().build(profile);
-        List<String> profileFailures = unsupportedProfile(profile);
+        List<String> profileFailures = new ArrayList<>(selection.diagnostics());
+        boolean supportedFullscreen = supportsFinalFullscreenOnly(profile, selection, dimension);
+        if (!supportedFullscreen) {
+            profileFailures.addAll(unsupportedProfile(profile));
+            profileFailures.add("executable conventional profile requires one shared final.vsh/final.fsh pair, no extra programs, and a known dimension");
+        }
         if (!graph.validation().valid()) {
-            profileFailures = new ArrayList<>(profileFailures);
             profileFailures.addAll(graph.validation().errors().stream().map(error -> "invalid pass graph: " + error).toList());
         }
-        if (!graph.supported() && profileFailures.isEmpty()) {
-            profileFailures = List.of("conventional pass graph contains features without a validated execution lifecycle");
+        if (!graph.supported() && !supportedFullscreen && profileFailures.isEmpty()) {
+            profileFailures.add("conventional pass graph contains features without a validated execution lifecycle");
         }
-        List<ShaderpackStageVariant> variants = scanner.scan(source);
-        if (variants.isEmpty()) return unsupported(packId, source.contentHash(), List.of("no conventional vertex/fragment wrappers found"));
+        if (selection.enabledPrograms().isEmpty()) {
+            profileFailures.add("no conventional programs are enabled for the selected profile and dimension");
+        }
+        List<ShaderpackStageVariant> variants = scanner.scan(source).stream()
+                .filter(variant -> variant.dimension() == dimension
+                        || (variant.dimension() == ShaderpackDimension.UNKNOWN
+                        && variant.program().equals("final")))
+                .filter(variant -> selection.enabledPrograms().stream().anyMatch(name ->
+                        name.endsWith("/" + variant.program()) || name.equals(variant.program())))
+                .filter(variant -> variant.program().equals("final"))
+                .toList();
         if (!profileFailures.isEmpty()) return unsupported(packId, source.contentHash(), profileFailures);
+        if (variants.isEmpty()) return unsupported(packId, source.contentHash(), List.of("no selected conventional vertex/fragment wrappers found"));
         List<PreparedVariant> prepared = new ArrayList<>();
         List<String> diagnostics = new ArrayList<>(profile.diagnostics());
         diagnostics.addAll(profileFailures.stream().map(reason -> "UNSUPPORTED: " + reason).toList());
@@ -93,6 +120,11 @@ public final class ConventionalShaderpackPreparation {
                     continue;
                 }
                 List<ShaderpackRenderTarget> renderTargets = targets.parse(expanded.source());
+                if (!renderTargets.isEmpty()) {
+                    diagnostics.add(variant.key() + ": declared render targets are unsupported by the fullscreen candidate");
+                    unsupported = true;
+                    continue;
+                }
                 GlslProfile glslProfile = profile(expanded.source());
                 ShaderSourceSpec spec = new ShaderSourceSpec(expanded.source(), stagePath, null, glslProfile,
                         variant.stage(), "main", defines,
@@ -111,9 +143,65 @@ public final class ConventionalShaderpackPreparation {
                 unsupported = true;
             }
         }
-        ShaderpackOutcome outcome = blocked ? ShaderpackOutcome.BLOCKED : unsupported ? ShaderpackOutcome.UNSUPPORTED : ShaderpackOutcome.EXACT_TRANSLATION;
-        if (outcome != ShaderpackOutcome.EXACT_TRANSLATION) diagnostics.add("conventional generation not publishable");
-        return new Prepared(prepared, new ShaderpackGeneration(packId, source.contentHash(), outcome, diagnostics, Instant.now()));
+        ConventionalShaderpackFullscreenPlan plan = null;
+        if (supportedFullscreen && !blocked && !unsupported && prepared.size() == 2) {
+            PreparedVariant vertex = prepared.stream().filter(value -> value.variant().stage().equals("vertex"))
+                    .findFirst().orElse(null);
+            PreparedVariant fragment = prepared.stream().filter(value -> value.variant().stage().equals("fragment"))
+                    .findFirst().orElse(null);
+            if (vertex != null && fragment != null && vertex.module().isValid() && fragment.module().isValid()
+                    && compatibleFullscreenReflection(vertex.module(), fragment.module())) {
+                plan = new ConventionalShaderpackFullscreenPlan(dimension,
+                        List.of(new ConventionalShaderpackFullscreenPlan.Program("final", vertex.module(), fragment.module())),
+                        selection.optionValues(), source.contentHash());
+            } else {
+                unsupported = true;
+                diagnostics.add("final fullscreen interface is not the validated single-color/no-resource contract");
+            }
+        }
+        // A plan is not active support: only the live Minecraft-owned frame graph and validated
+        // output readback may promote it to an executable generation.
+        ShaderpackOutcome outcome = blocked ? ShaderpackOutcome.BLOCKED
+                : unsupported ? ShaderpackOutcome.UNSUPPORTED : ShaderpackOutcome.FRONTEND_ONLY;
+        if (outcome != ShaderpackOutcome.EXACT_TRANSLATION) {
+            diagnostics.add(outcome == ShaderpackOutcome.FRONTEND_ONLY
+                    ? "validated final fullscreen plan prepared; framegraph execution/readback adapter is not yet installed"
+                    : "conventional generation not publishable");
+        }
+        return new Prepared(prepared, plan, new ShaderpackGeneration(packId, source.contentHash(), outcome, diagnostics, Instant.now()));
+    }
+
+    private static boolean supportsFinalFullscreenOnly(ShaderpackConventionalProfile profile,
+                                                       ConventionalShaderpackSelection selection,
+                                                       ShaderpackDimension dimension) {
+        if (dimension == null || dimension == ShaderpackDimension.UNKNOWN
+                || profile.format() == ShaderpackFormat.UNKNOWN
+                || !profile.diagnostics().isEmpty() || !selection.diagnostics().isEmpty()
+                || !profile.unsupportedFeatures().isEmpty() || profile.programs().size() != 1
+                || selection.enabledPrograms().size() != 1 || !selection.enabledPrograms().contains("final")
+                || !selection.optionValues().isEmpty()
+                || profile.properties().keySet().stream().anyMatch(key -> key.startsWith("program.")
+                        || key.startsWith("screen") || key.startsWith("profile.")
+                        || key.startsWith("uniform.") || key.startsWith("variable."))) return false;
+        ShaderpackProgram program = profile.programs().getFirst();
+        if (!program.name().equals("final")) return false;
+        long vertices = program.stages().stream().filter(path -> path.toLowerCase(Locale.ROOT).endsWith(".vsh")).count();
+        long fragments = program.stages().stream().filter(path -> path.toLowerCase(Locale.ROOT).endsWith(".fsh")).count();
+        return vertices == 1 && fragments == 1 && program.stages().size() == 2;
+    }
+
+    private static boolean compatibleFullscreenReflection(ShaderModule vertex, ShaderModule fragment) {
+        var vertexReflection = vertex.reflection();
+        var fragmentReflection = fragment.reflection();
+        if (vertexReflection == null || fragmentReflection == null
+                || !vertexReflection.descriptors().isEmpty() || !fragmentReflection.descriptors().isEmpty()
+                || vertexReflection.pushConstantBytes() != 0 || fragmentReflection.pushConstantBytes() != 0
+                || !vertexReflection.outputs().isEmpty()) return false;
+        if (fragmentReflection.outputs().size() != 1 || fragmentReflection.outputs().getFirst().location() != 0) return false;
+        // The current fullscreen draw has no vertex buffer and the shader pipeline exposes no
+        // inter-stage varying contract. Reject those interfaces rather than relying on backend
+        // pipeline validation after a candidate has already been selected.
+        return vertexReflection.inputs().isEmpty() && fragmentReflection.inputs().isEmpty();
     }
 
     private static List<String> unsupportedProfile(ShaderpackConventionalProfile profile) {
@@ -151,7 +239,7 @@ public final class ConventionalShaderpackPreparation {
     }
 
     private static Prepared blocked(String id, String reason) {
-        return new Prepared(List.of(), new ShaderpackGeneration(id == null || id.isBlank() ? "blocked" : id,
+        return new Prepared(List.of(), null, new ShaderpackGeneration(id == null || id.isBlank() ? "blocked" : id,
                 "blocked", ShaderpackOutcome.BLOCKED, List.of("BLOCKED: " + reason), Instant.now()));
     }
 
@@ -161,16 +249,21 @@ public final class ConventionalShaderpackPreparation {
 
     private static Prepared unsupported(String id, String hash, List<String> reasons) {
         List<String> diagnostics = reasons.stream().map(reason -> "UNSUPPORTED: " + reason).toList();
-        return new Prepared(List.of(), new ShaderpackGeneration(id, hash,
+        return new Prepared(List.of(), null, new ShaderpackGeneration(id, hash,
                 ShaderpackOutcome.UNSUPPORTED, diagnostics, Instant.now()));
     }
 
-    public record Prepared(List<PreparedVariant> variants, ShaderpackGeneration generation) {
+    public record Prepared(List<PreparedVariant> variants,
+                           ConventionalShaderpackFullscreenPlan fullscreenPlan,
+                           ShaderpackGeneration generation) {
         public Prepared {
             variants = List.copyOf(variants == null ? List.of() : variants);
             java.util.Objects.requireNonNull(generation, "generation");
+            if (generation.executable() && fullscreenPlan == null) {
+                throw new IllegalArgumentException("executable conventional generation needs a validated pass plan");
+            }
         }
-        public boolean executable() { return generation.executable() && !variants.isEmpty(); }
+        public boolean executable() { return generation.executable() && fullscreenPlan != null; }
     }
 
     public record PreparedVariant(ShaderpackStageVariant variant,

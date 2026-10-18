@@ -16,7 +16,7 @@ import java.util.regex.Pattern;
  * shaders.properties metadata. It does not interpret arbitrary Java or shader expressions.
  */
 public final class ShaderPropertiesParser {
-    public static final Limits DEFAULT_LIMITS = new Limits(1 << 20, 8192, 256, 256, 4096, 64);
+    public static final Limits DEFAULT_LIMITS = new Limits(1 << 20, 8192, 256, 8192, 4096, 64);
     private static final Pattern IDENT = Pattern.compile("[A-Za-z0-9_.-]{1,128}");
     private static final Pattern COMPARISON = Pattern.compile("([A-Za-z0-9_.-]{1,128})\\s*(==|!=)\\s*(true|false)", Pattern.CASE_INSENSITIVE);
     private ShaderPropertiesParser() {}
@@ -29,15 +29,34 @@ public final class ShaderPropertiesParser {
         }
     }
 
-    /** Parse and resolve requested profiles in caller order; earlier assignments win. */
+    /** Parse profiles in the iteration order supplied by the set; earlier assignments win. */
     public static ShaderPropertiesProfile parse(String input, Set<String> requestedProfiles) {
-        return parse(input, requestedProfiles, DEFAULT_LIMITS);
+        if (requestedProfiles == null) throw new IllegalArgumentException("requestedProfiles is null");
+        return parse(input, new ArrayList<>(requestedProfiles), Map.of(), DEFAULT_LIMITS);
+    }
+
+    /** Parse and resolve requested profiles in caller order; earlier assignments win. */
+    public static ShaderPropertiesProfile parse(String input, List<String> requestedProfiles) {
+        return parse(input, requestedProfiles, Map.of(), DEFAULT_LIMITS);
+    }
+
+    /** Parse profiles and apply selected boolean option values to feature expressions. */
+    public static ShaderPropertiesProfile parse(String input, List<String> requestedProfiles,
+                                                   Map<String, String> selectedOptions) {
+        return parse(input, requestedProfiles, selectedOptions, DEFAULT_LIMITS);
     }
 
     public static ShaderPropertiesProfile parse(String input, Set<String> requestedProfiles, Limits limits) {
+        if (requestedProfiles == null) throw new IllegalArgumentException("requestedProfiles is null");
+        return parse(input, new ArrayList<>(requestedProfiles), Map.of(), limits);
+    }
+
+    public static ShaderPropertiesProfile parse(String input, List<String> requestedProfiles,
+                                                   Map<String, String> selectedOptions, Limits limits) {
         if (input == null) throw new IllegalArgumentException("input is null");
         if (limits == null) throw new IllegalArgumentException("limits is null");
         if (requestedProfiles == null) throw new IllegalArgumentException("requestedProfiles is null");
+        if (selectedOptions == null) throw new IllegalArgumentException("selectedOptions is null");
         if (input.length() > limits.maxChars()) throw new IllegalArgumentException("shaders.properties exceeds character limit");
         String[] lines = input.split("\\R", -1);
         if (lines.length > limits.maxLines()) throw new IllegalArgumentException("shaders.properties exceeds line limit");
@@ -74,6 +93,7 @@ public final class ShaderPropertiesParser {
                 profileDefs.put(profile, parsed);
             } else if (key.startsWith("program.")) {
                 String name = key.substring(8);
+                if (name.endsWith(".enabled")) name = name.substring(0, name.length() - ".enabled".length());
                 if (IDENT.matcher(name).matches()) programExprs.put(name, value);
                 else diagnostics.add("invalid program name: " + name);
             } else if (key.startsWith("screen.")) {
@@ -114,12 +134,27 @@ public final class ShaderPropertiesParser {
         if (assignmentCount > limits.maxAssignments()) throw new IllegalArgumentException("profile assignments exceed limit");
         if (profileDefs.size() > limits.maxProfiles()) throw new IllegalArgumentException("profile count exceeds limit");
 
-        List<String> selected = requestedProfiles.stream().filter(profileDefs::containsKey).sorted().toList();
         if (requestedProfiles.size() > limits.maxProfiles()) throw new IllegalArgumentException("requested profile count exceeds limit");
+        List<String> selected = new ArrayList<>();
+        Set<String> selectedOnce = new LinkedHashSet<>();
+        for (String requested : requestedProfiles) {
+            if (!selectedOnce.add(requested)) continue;
+            if (!profileDefs.containsKey(requested)) {
+                diagnostics.add("unknown requested profile: " + requested);
+                continue;
+            }
+            selected.add(requested);
+        }
         Map<String, Boolean> resolvedFeatures = new LinkedHashMap<>(features);
         Set<String> active = new LinkedHashSet<>();
         Set<String> done = new LinkedHashSet<>();
-        for (String name : selected) resolveProfile(name, profileDefs, resolvedFeatures, active, done, diagnostics, limits);
+        List<String> resolutionOrder = new ArrayList<>(selected);
+        java.util.Collections.reverse(resolutionOrder);
+        for (String name : resolutionOrder) resolveProfile(name, profileDefs, resolvedFeatures, active, done, diagnostics, limits);
+        for (var entry : selectedOptions.entrySet()) {
+            Boolean value = parseBoolean(entry.getValue());
+            if (value != null) resolvedFeatures.put(entry.getKey(), value);
+        }
 
         Map<String, Boolean> programs = new LinkedHashMap<>();
         programExprs.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {

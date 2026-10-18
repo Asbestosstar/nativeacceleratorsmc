@@ -71,12 +71,41 @@ The current integration does not alter the enum at all:
 This path uses ordinary Mixins on `VideoSettingsScreen`, `Options`, and `Minecraft`. It no longer
 depends on the Mixin config plugin's `ClassNodeHook` mechanism for graphics API selection.
 
+## Routine logging and performance diagnostics
+
+Low-volume Metal startup/status messages are controlled by `renderer.metal.logging`, which defaults to
+`false` in the bundled configuration. Enable them in `etc/nativeaccelerator.properties` with:
+
+```properties
+renderer.metal.logging=true
+```
+
+or override the configuration for one launch with:
+
+```text
+-Dnativeaccelerator.renderer.metal.logging=true
+```
+
+When disabled, ordinary success markers, backend-selection announcements, shader-layout diagnostics,
+and renderer-menu status messages are suppressed. Actionable failures remain visible, including device
+creation errors, capability/probe failures, fallback/recovery notices, feature blacklists, and
+configuration or marker-file I/O errors. This switch does not enable high-volume tracing or benchmark
+telemetry: `renderer.metal.trace`/`renderer.metal.traceConsole` and
+`renderer.metal.benchmark` remain independent opt-in diagnostics.
+
 ## Performance diagnostics (buildfix11)
 
 The diagnostic Metal build exposes low-overhead per-frame counters. See
 `METAL_PERFORMANCE_BUILD_FIX11_2026-09-19.txt`. The most important correctness/performance rule is that
 RenderPearl fences must map to asynchronous SDL GPU fences; they must never call `SDL_WaitForGPUIdle` on
-creation, because Minecraft rotates fenced ring buffers continuously.
+creation, because Minecraft rotates fenced ring buffers continuously. On MacFamily1, command-owned transient
+resources and pooled upload staging blocks stay alive until the real SDL submission fence completes. The
+fenceless retirement ring is disabled by default because allowed-frames-in-flight is not proof that an
+arbitrary ring slot is no longer referenced by the GPU; `-Dnativeaccelerator.renderer.metal.mac1FencelessRing=true`
+remains an explicit diagnostic override only. When `renderer.metal.benchmark=true`, the counters also report
+CPU-indirect fallback batch wall time, direct SDL draw time within those batches, command count, and a derived
+residual estimate for traversal/decode work. The residual is diagnostic (not GPU time) and may include timing
+and loop overhead; benchmark-disabled runs do not read clocks for this attribution.
 
 
 ## Runtime capability verification and patched/spoofed macOS stacks (buildfix16 + buildfix17)

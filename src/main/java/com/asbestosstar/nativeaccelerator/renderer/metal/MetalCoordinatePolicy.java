@@ -81,7 +81,7 @@ final class MetalCoordinatePolicy {
 
     static void report(String pipelineName) {
         if (flipGeneratedTextureVertexY(pipelineName) && REPORTED.add(pipelineName)) {
-            System.out.println("[Native Accelerator] Metal coordinate marker: fix31; pipeline="
+            MetalLogging.info("Metal coordinate marker: fix31; pipeline="
                     + pipelineName + "; vertexYFlip=true; frontFace=clockwise");
         }
     }

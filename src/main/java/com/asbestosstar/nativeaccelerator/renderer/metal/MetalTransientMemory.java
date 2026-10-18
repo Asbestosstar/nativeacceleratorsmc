@@ -24,6 +24,7 @@ final class MetalTransientMemory implements TransientMemory {
 
     private final MetalDevice device;
     private final List<MetalGpuBuffer> owned = new ArrayList<>();
+    private final List<ByteBuffer> retainedUploadBlocks = new ArrayList<>();
     private final Map<Integer, GpuArena> gpuArenas = new HashMap<>();
     private final CpuArena cpuArena = new CpuArena();
 
@@ -149,10 +150,18 @@ final class MetalTransientMemory implements TransientMemory {
     }
 
     boolean isEmpty() {
-        return owned.isEmpty();
+        return owned.isEmpty() && retainedUploadBlocks.isEmpty();
+    }
+
+    void retainUploadBlocks(List<ByteBuffer> blocks) {
+        retainedUploadBlocks.addAll(blocks);
     }
 
     void release() {
+        for (ByteBuffer block : retainedUploadBlocks) {
+            MetalUploadBufferPool.release(block);
+        }
+        retainedUploadBlocks.clear();
         for (GpuBuffer buffer : owned) {
             try {
                 buffer.close();

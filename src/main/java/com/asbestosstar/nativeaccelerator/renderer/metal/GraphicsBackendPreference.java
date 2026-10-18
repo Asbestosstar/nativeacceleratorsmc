@@ -95,7 +95,7 @@ public final class GraphicsBackendPreference {
         // authoritative even if a caller changes the renderer outside the normal video-options path.
         saveStoredChoice(selected);
         NativeAcceleratorConfig.setString("renderer.backend", selected.getSerializedName());
-        System.out.println("[Native Accelerator] Saved preferredGraphicsBackend=\""
+        MetalLogging.info("Saved preferredGraphicsBackend=\""
                 + selected.getSerializedName() + "\" in " + OPTIONS_FILE);
     }
 
@@ -143,7 +143,7 @@ public final class GraphicsBackendPreference {
             source = "metal-crash-recovery";
         }
 
-        System.out.println("[Native Accelerator] Graphics preference source=" + source
+        MetalLogging.info("Graphics preference source=" + source
                 + " choice=" + choice.getSerializedName());
 
         return switch (choice) {
@@ -151,20 +151,20 @@ public final class GraphicsBackendPreference {
                 metalAttemptThisRun = true;
                 metalBackendCreatedThisRun = false;
                 markMetalPending();
-                System.out.println("[Native Accelerator] Graphics backend preference=metal; trying Metal then OpenGL fallback");
+                MetalLogging.info("Graphics backend preference=metal; trying Metal then OpenGL fallback");
                 yield new GpuBackend[]{new MetalBackend(), new GlBackend()};
             }
             case OPENGL -> {
-                System.out.println("[Native Accelerator] Graphics backend preference=opengl; Vulkan will not be probed");
+                MetalLogging.info("Graphics backend preference=opengl; Vulkan will not be probed");
                 yield new GpuBackend[]{new GlBackend()};
             }
             case VULKAN -> {
-                System.out.println("[Native Accelerator] Graphics backend preference=vulkan; trying Vulkan then OpenGL fallback");
+                MetalLogging.info("Graphics backend preference=vulkan; trying Vulkan then OpenGL fallback");
                 yield new GpuBackend[]{new VulkanBackend(), new GlBackend()};
             }
             case DEFAULT -> {
                 if (MetalBackend.shouldOffer()) {
-                    System.out.println("[Native Accelerator] Graphics backend preference=default; trying Metal, OpenGL, then Vulkan");
+                    MetalLogging.info("Graphics backend preference=default; trying Metal, OpenGL, then Vulkan");
                     yield new GpuBackend[]{new MetalBackend(), new GlBackend(), new VulkanBackend()};
                 }
                 yield vanillaSelection.getBackendsToTry();
@@ -227,7 +227,7 @@ public final class GraphicsBackendPreference {
         }
         if (legacy != null) {
             saveStoredChoice(legacy);
-            System.out.println("[Native Accelerator] Migrated legacy renderer preference into " + OPTIONS_FILE);
+            MetalLogging.info("Migrated legacy renderer preference into " + OPTIONS_FILE);
         }
         return legacy;
     }

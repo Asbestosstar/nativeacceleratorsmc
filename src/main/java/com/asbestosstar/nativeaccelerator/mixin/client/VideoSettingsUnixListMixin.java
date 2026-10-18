@@ -6,6 +6,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSelectionList;
 import net.minecraft.client.gui.screens.options.VideoSettingsScreen;
+import com.asbestosstar.nativeaccelerator.client.LegacyShadersScreen;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.Identifier;
@@ -29,7 +30,8 @@ public abstract class VideoSettingsUnixListMixin {
 
     @Inject(method = "extractListBackground", at = @At("HEAD"), cancellable = true, require = 0)
     private void nativeaccelerator$unixListBackground(GuiGraphicsExtractor graphics, CallbackInfo ci) {
-        if (!(Minecraft.getInstance().gui.screen() instanceof VideoSettingsScreen)) return;
+        if (!(Minecraft.getInstance().gui.screen() instanceof VideoSettingsScreen)
+                && !(Minecraft.getInstance().gui.screen() instanceof LegacyShadersScreen)) return;
         if (!NativeAcceleratorConfig.booleanValue("graphics.unixTheme", true)) return;
 
         AbstractSelectionList<?> list = (AbstractSelectionList<?>)(Object)this;
@@ -144,7 +146,8 @@ public abstract class VideoSettingsUnixListMixin {
 
     @Inject(method = "extractListSeparators", at = @At("HEAD"), cancellable = true, require = 0)
     private void nativeaccelerator$unixListSeparators(GuiGraphicsExtractor graphics, CallbackInfo ci) {
-        if (!(Minecraft.getInstance().gui.screen() instanceof VideoSettingsScreen)) return;
+        if (!(Minecraft.getInstance().gui.screen() instanceof VideoSettingsScreen)
+                && !(Minecraft.getInstance().gui.screen() instanceof LegacyShadersScreen)) return;
         if (!NativeAcceleratorConfig.booleanValue("graphics.unixTheme", true)) return;
         AbstractSelectionList<?> list = (AbstractSelectionList<?>)(Object)this;
         graphics.fill(list.getX(), list.getY() - 3, list.getRight(), list.getY() - 1, 0xFFC9C5D0);

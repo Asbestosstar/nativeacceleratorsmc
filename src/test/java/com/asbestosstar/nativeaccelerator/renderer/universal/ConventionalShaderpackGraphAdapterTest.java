@@ -36,6 +36,19 @@ public final class ConventionalShaderpackGraphAdapterTest {
                     }
                 }
             }
+            ShaderpackConventionalProfile colliding = new ShaderpackConventionalProfile(
+                    ShaderpackFormat.OPTIFINE_COMPATIBLE, "shaders", Map.of(),
+                    List.of(
+                            new com.asbestosstar.nativeaccelerator.renderer.universal.shader.legacy.ShaderpackProgram(
+                                    "world0/gbuffers_terrain", List.of("world0/gbuffers_terrain.vsh", "world0/gbuffers_terrain.fsh")),
+                            new com.asbestosstar.nativeaccelerator.renderer.universal.shader.legacy.ShaderpackProgram(
+                                    "world0_gbuffers_terrain", List.of("world0_gbuffers_terrain.vsh", "world0_gbuffers_terrain.fsh"))),
+                    Set.of(), List.of());
+            var collisionResult = new ConventionalShaderpackGraphAdapter().build(colliding);
+            if (collisionResult.supported() || collisionResult.validation().valid()
+                    || collisionResult.diagnostics().stream().noneMatch(value -> value.contains("collide"))) {
+                throw new AssertionError("normalized identifier collision did not fail closed: " + collisionResult);
+            }
             ShaderpackConventionalProfile minimal = new ShaderpackConventionalProfile(
                     ShaderpackFormat.OPTIFINE_COMPATIBLE, "shaders", Map.of(), List.of(), Set.of(), List.of());
             if (new ConventionalShaderpackGraphAdapter().build(minimal).supported()) {

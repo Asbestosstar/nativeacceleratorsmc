@@ -9,6 +9,25 @@ The Vulkan renderer is selected by runtime capability, not an operating-system a
 has a working Vulkan loader and physical device, it is eligible. If it does not, the ordinary game
 renderer remains available while the compute accelerator can still operate.
 
+## Vulkan startup diagnostics
+
+RenderPearl owns the authoritative Vulkan physical-device suitability check used by Minecraft. When
+that check finds a missing required extension or capability (a common example on older lavapipe/Mesa
+stacks), Native Accelerator reports the exact `BackendCreationException` reason and the contents of
+`getMissingCapabilities()` during both the early availability probe and device creation. A typical
+line is:
+
+```text
+[Native Accelerator] Vulkan device creation failed: reason=VULKAN_MISSING_EXTENSION message="Device missing capabilities" missingExtensions=[VK_KHR_dynamic_rendering, VK_KHR_swapchain]
+```
+
+The list is the requirement set RenderPearl actually evaluated; Native Accelerator does not maintain
+a second guessed extension list, relax those requirements, or make an unsupported device usable. The
+original exception is returned/rethrown unchanged, so Minecraft's normal backend iteration and fallback
+remain intact. `lavapipe` is still a valid Vulkan runtime; the diagnostic is intended to make a Mesa,
+loader, or driver workaround actionable rather than to classify CPU Vulkan as unsupported. The native
+companion's minimal loader probe is separate and does not own Minecraft's surface/swapchain path.
+
 ## Design goals
 
 The renderer is designed around throughput rather than merely replacing individual Java arithmetic

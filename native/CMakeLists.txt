@@ -20,6 +20,14 @@ if(NOT WIN32)
     endif()
 endif()
 
+# Solaris Studio does not accept every GNU compiler flag used by GCC/Clang.
+# Keep the reference build optimized while only applying GNU visibility flags
+# where the compiler advertises that syntax.
+set(NA_GNU_LIKE_COMPILER FALSE)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    set(NA_GNU_LIKE_COMPILER TRUE)
+endif()
+
 # Reference/distribution builds can keep normal symbol visibility and debug
 # information so the bundled native binaries remain inspectable. This is not
 # required for correctness; it is enabled by scripts/build-native.sh.
@@ -37,6 +45,11 @@ add_library(nativeaccelerator SHARED
 
 target_include_directories(nativeaccelerator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(nativeaccelerator PRIVATE ${NA_POSIX_DEFINITIONS})
+
+# Solaris/illumos DAX is an optional extension.  The helper is a no-op on every
+# other target and when the development header/library are not installed.
+include(cmake/Dax.cmake)
+na_enable_solaris_dax(nativeaccelerator)
 
 # Optional Vulkan renderer companion library. It deliberately has no compile-time
 # dependency on a particular window system or Vulkan SDK: the bootstrap probes
@@ -72,12 +85,14 @@ endif()
 
 if(MSVC)
     target_compile_options(nativeaccelerator_renderer_vulkan PRIVATE /O2)
-else()
+elseif(NA_GNU_LIKE_COMPILER)
     if(NA_REFERENCE_SYMBOLS)
         target_compile_options(nativeaccelerator_renderer_vulkan PRIVATE -O3)
     else()
         target_compile_options(nativeaccelerator_renderer_vulkan PRIVATE -O3 -fvisibility=hidden)
     endif()
+elseif(CMAKE_C_COMPILER_ID MATCHES "SunPro")
+    target_compile_options(nativeaccelerator_renderer_vulkan PRIVATE -xO3)
 endif()
 
 set_target_properties(nativeaccelerator_renderer_vulkan PROPERTIES OUTPUT_NAME "nativeaccelerator_renderer_vulkan")
@@ -99,7 +114,10 @@ file(WRITE "${CMAKE_BINARY_DIR}/nativeaccelerator-endian.txt" "${NA_ENDIAN_TAG}\
 # extra resource-name suffix, while architectures that can appear in either
 # byte order do.
 set(NA_ENDIAN_QUALIFIED FALSE)
-if(NA_PROCESSOR MATCHES "^(x86_64|amd64|x64)$")
+if(NA_PROCESSOR MATCHES "^(x86_64|amd64|x64|x86|i86pc|i[3-6]86)$")
+    if(CMAKE_SIZEOF_VOID_P LESS 8)
+        message(FATAL_ERROR "32-bit x86 is not a supported native resource target")
+    endif()
     set(NA_ARCH_ID "amd64")
     target_sources(nativeaccelerator PRIVATE src/arch/amd64/arch_amd64.c)
 elseif(NA_PROCESSOR MATCHES "sparc|sun4")
@@ -152,8 +170,8 @@ if(NA_SYSTEM MATCHES "^linux$")
     target_sources(nativeaccelerator PRIVATE src/os/linux/os_linux.c)
 elseif(NA_SYSTEM MATCHES "sunos|solaris|illumos")
     target_sources(nativeaccelerator PRIVATE src/os/solaris/os_solaris.c)
-    if(NOT MSVC)
-        target_link_libraries(nativeaccelerator PRIVATE dl)
+    if(NOT MSVC AND CMAKE_DL_LIBS)
+        target_link_libraries(nativeaccelerator PRIVATE ${CMAKE_DL_LIBS})
     endif()
 elseif(NA_SYSTEM MATCHES "^freebsd$")
     target_sources(nativeaccelerator PRIVATE src/os/bsd/os_bsd.c src/os/freebsd/os_freebsd.c)
@@ -173,12 +191,14 @@ endif()
 
 if(MSVC)
     target_compile_options(nativeaccelerator PRIVATE /O2)
-else()
+elseif(NA_GNU_LIKE_COMPILER)
     if(NA_REFERENCE_SYMBOLS)
         target_compile_options(nativeaccelerator PRIVATE -O3)
     else()
         target_compile_options(nativeaccelerator PRIVATE -O3 -fvisibility=hidden)
     endif()
+elseif(CMAKE_C_COMPILER_ID MATCHES "SunPro")
+    target_compile_options(nativeaccelerator PRIVATE -xO3)
 endif()
 
 set_target_properties(nativeaccelerator PROPERTIES OUTPUT_NAME "nativeaccelerator")

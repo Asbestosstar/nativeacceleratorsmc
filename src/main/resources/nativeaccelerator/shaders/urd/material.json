@@ -1,0 +1,14 @@
+{
+  "name": "nativeaccelerator:urd_triangle",
+  "language": "glsl",
+  "profile": "460",
+  "stages": {
+    "vertex": "triangle.vert.glsl",
+    "fragment": "triangle.frag.glsl"
+  },
+  "vertexInputs": [
+    {"location": 0, "type": "vec2"},
+    {"location": 1, "type": "vec3"}
+  ],
+  "coordinateConvention": "clip-space-z-minus-one-to-one"
+}

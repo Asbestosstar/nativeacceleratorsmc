@@ -29,7 +29,7 @@ public final class MetalGraphicsOption {
 
     private static OptionInstance<GraphicsApiChoice> create(Options options) {
         GraphicsApiChoice initial = GraphicsBackendPreference.initialChoice(options.preferredGraphicsBackend().get());
-        System.out.println("[Native Accelerator] Renderer GUI option created; initial choice="
+        MetalLogging.info("Renderer GUI option created; initial choice="
                 + initial.getSerializedName());
 
         OptionInstance<GraphicsApiChoice> result = new OptionInstance<>(
@@ -43,7 +43,7 @@ public final class MetalGraphicsOption {
                     GraphicsBackendPreference.select(value);
                     options.preferredGraphicsBackend().set(GraphicsBackendPreference.vanillaMirror(value));
                     options.save();
-                    System.out.println("[Native Accelerator] Renderer preference changed to "
+                    MetalLogging.info("Renderer preference changed to "
                             + value.getSerializedName() + "; restart required");
                 });
         ((OptionInstanceCaptionAccessor)(Object)result)

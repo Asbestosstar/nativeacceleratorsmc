@@ -24,12 +24,29 @@ public final class ConventionalShaderpackGraphAdapter {
         ShaderProgramGraph.Builder builder = new ShaderProgramGraph.Builder();
         List<String> diagnostics = new ArrayList<>(profile.diagnostics());
         Map<String, String> programIds = new LinkedHashMap<>();
+        Set<String> normalizedProgramIds = new LinkedHashSet<>();
+        boolean malformedOrUnsupported = false;
         builder.resource(new GraphResource(SCENE_COLOR, GraphResource.Kind.TEXTURE,
                 "backend-scene-color", 0, 0, 0, true, true));
 
         for (ShaderpackProgram sourceProgram : profile.programs()) {
             String id = safeId("program", sourceProgram.name());
-            programIds.put(sourceProgram.name(), id);
+            if (programIds.putIfAbsent(sourceProgram.name(), id) != null) {
+                String error = "duplicate conventional program name: " + sourceProgram.name();
+                diagnostics.add(error);
+                ShaderProgramGraph invalid = builder.build();
+                return new Result(invalid,
+                        new ShaderProgramGraph.Validation(List.of(error), List.of(), List.of()),
+                        diagnostics, false);
+            }
+            if (!normalizedProgramIds.add(id)) {
+                String error = "conventional program identifiers collide after normalization: " + sourceProgram.name();
+                diagnostics.add(error);
+                ShaderProgramGraph invalid = builder.build();
+                return new Result(invalid,
+                        new ShaderProgramGraph.Validation(List.of(error), List.of(), List.of()),
+                        diagnostics, false);
+            }
             Map<String, String> stages = new LinkedHashMap<>();
             for (String stagePath : sourceProgram.stages()) {
                 String lower = stagePath.toLowerCase(java.util.Locale.ROOT);
@@ -41,6 +58,11 @@ public final class ConventionalShaderpackGraphAdapter {
                         : lower.endsWith(".csh") ? "compute" : "source";
                 if (stages.putIfAbsent(stage, safeId("source", stagePath)) != null) {
                     diagnostics.add("duplicate " + stage + " stage for " + sourceProgram.name());
+                    malformedOrUnsupported = true;
+                }
+                if (stage.equals("source")) {
+                    diagnostics.add("unrecognized stage extension for " + sourceProgram.name() + ": " + stagePath);
+                    malformedOrUnsupported = true;
                 }
             }
             builder.program(new ShaderProgram(id, stages));
@@ -72,9 +94,12 @@ public final class ConventionalShaderpackGraphAdapter {
         ShaderProgramGraph graph = builder.build();
         ShaderProgramGraph.Validation validation = graph.validate();
         diagnostics.addAll(validation.errors().stream().map(error -> "graph validation: " + error).toList());
+        boolean hasUnsupportedGraphFeature = graph.features().values().stream()
+                .anyMatch(feature -> feature.state() != FeatureStatus.State.SUPPORTED);
         return new Result(graph, validation, diagnostics, profile.format() != ShaderpackFormat.UNKNOWN
                 && !profile.programs().isEmpty() && !graph.passes().isEmpty()
-                && profile.unsupportedFeatures().isEmpty() && validation.valid());
+                && profile.unsupportedFeatures().isEmpty() && !hasUnsupportedGraphFeature
+                && !malformedOrUnsupported && validation.valid());
     }
 
     private static void addFeature(ShaderProgramGraph.Builder builder, ShaderpackConventionalProfile profile,

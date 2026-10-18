@@ -60,7 +60,7 @@ final class MetalSpirvCompiler {
             BackendRenderPipeline.CreateInfo.Shader shader,
             boolean targetVertexYFlip) throws ShaderCompileException {
         if (GENERATOR_MARKER_REPORTED.compareAndSet(false, true)) {
-            System.out.println("[Native Accelerator] Metal generator marker: active-msl-layout-fix31");
+            MetalLogging.info("Metal generator marker: active-msl-layout-fix31");
         }
         SpvModule module = shader.module();
         SpvModule.Reflection reflection = module.reflect();
@@ -157,7 +157,7 @@ final class MetalSpirvCompiler {
                         MetalCoordinatePolicy.report(pipeline.name());
                     }
                     if (targetVertexYFlip) {
-                        System.out.println("[Native Accelerator] Metal target coordinate marker: pipeline="
+                        MetalLogging.info("Metal target coordinate marker: pipeline="
                                 + pipeline.name() + "; target=gui-item-atlas; vertexYFlip=true");
                     }
                 }
@@ -265,7 +265,7 @@ final class MetalSpirvCompiler {
             storageBufferCount = physicalStorageBufferCount;
 
             if (logicalUniformCount > 0 || physicalSamplerCount > 0 || storageBufferCount > 0) {
-                System.out.println("[Native Accelerator] Metal MSL resource layout: pipeline=" + pipeline.name()
+                MetalLogging.info("Metal MSL resource layout: pipeline=" + pipeline.name()
                         + ", stage=" + shader.module().type().getName()
                         + ", uniforms=" + logicalUniformCount + "->" + physicalUniformCount
                         + ", activeUniformLogical=" + java.util.Arrays.toString(uniformsLayout.activeLogicalSlots())

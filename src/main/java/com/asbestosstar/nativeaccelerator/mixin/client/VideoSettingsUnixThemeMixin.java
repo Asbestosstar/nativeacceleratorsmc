@@ -19,7 +19,8 @@ public abstract class VideoSettingsUnixThemeMixin {
     @Inject(method = "extractBackground", at = @At("TAIL"), require = 0)
     private void nativeaccelerator$unixGraphicsBackground(
             GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick, CallbackInfo ci) {
-        if (!((Object)this instanceof VideoSettingsScreen screen)) return;
+        if (!((Object)this instanceof VideoSettingsScreen)) return;
+        Screen screen = (Screen)(Object)this;
         if (!NativeAcceleratorConfig.booleanValue("graphics.unixTheme", true)) return;
         if (NATIVEACCELERATOR_THEME_MARKER.compareAndSet(false, true)) {
             System.out.println("[Native Accelerator] CDE/Motif Graphics shell active; category menu + floating control panel");

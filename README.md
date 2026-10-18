@@ -533,6 +533,16 @@ A custom Vulkan-loader path/name can be supplied through:
 NATIVE_ACCELERATOR_VULKAN_LIBRARY
 ```
 
+When RenderPearl rejects a Vulkan physical device, Native Accelerator logs the exact reason and
+missing requirements from RenderPearl's `BackendCreationException`, for example
+`reason=VULKAN_MISSING_EXTENSION ... missingExtensions=[VK_KHR_dynamic_rendering, VK_KHR_swapchain]`.
+This is especially useful with lavapipe 21: it may provide a valid Vulkan loader/device while not
+providing every extension or feature required by the Minecraft RenderPearl version. The original
+exception is preserved, so Minecraft can continue its normal backend fallback; this diagnostic does
+not relax requirements or make an unsupported device usable. Use the listed names when selecting a
+Mesa/ICD workaround or reporting a driver issue. `renderer.vulkan=required` still fails closed when
+RenderPearl says the device is unsuitable.
+
 ---
 
 ## Building
@@ -573,7 +583,15 @@ META-INF/native/linux-amd64/
     libnativeaccelerator_renderer_vulkan.so
 ```
 
-Library suffixes/names change appropriately on other operating systems.
+Library suffixes/names change appropriately on other operating systems. On Solaris/illumos, a native
+build produces `META-INF/native/solaris-amd64/` or the endian-qualified SPARC path
+`META-INF/native/solaris-sparcv9-be/`, with `.so` libraries matching `System.mapLibraryName`.
+`./scripts/build-native.sh` builds for the host (or a separately configured CMake cross-toolchain); it
+cannot turn a macOS/Linux host binary into a Solaris binary by itself.
+
+Solaris DAX support is optional. When both `dax.h` and the libdax development library are found, CMake
+adds the ABI-v3 DAX adapter; without them, the core library still builds and Java falls back to its
+ordinary DAX/JAR or Java paths. An adapter-enabled binary requires the matching libdax runtime.
 
 The native build also embeds the C/header/assembly implementation sources in the compiled JAR for reference and porting, preserving their native-tree layout:
 
