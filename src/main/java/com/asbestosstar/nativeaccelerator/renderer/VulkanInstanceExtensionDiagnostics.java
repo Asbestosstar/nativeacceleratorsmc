@@ -89,7 +89,7 @@ public final class VulkanInstanceExtensionDiagnostics {
         // Never guess a replacement for an arbitrary extension: a prefix is not an extension name.
         String expected = switch (requested) {
             case "VK_KHR_s" -> "VK_KHR_surface";
-            case "VK_KHR_xlib_s" -> "VK_KHR_xlib_surface";
+            case "VK_KHR_xlib_s", "VK_KHR_xlib_surf" -> "VK_KHR_xlib_surface";
             default -> null;
         };
         // The affected Solaris/LWJGL path truncates the names while reading both SDL and the
