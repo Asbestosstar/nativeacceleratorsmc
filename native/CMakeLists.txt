@@ -46,6 +46,18 @@ add_library(nativeaccelerator SHARED
 target_include_directories(nativeaccelerator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(nativeaccelerator PRIVATE ${NA_POSIX_DEFINITIONS})
 
+# Some Unix linkers, notably Solaris ld, do not resolve a shared library's
+# math symbols transitively when linking an executable. Keep the dependency on
+# the target's public link interface so native consumers and CTest binaries
+# receive libm where the platform provides it; Darwin's libSystem needs no
+# separate math library and simply leaves this unset.
+if(NOT WIN32)
+    find_library(NA_MATH_LIBRARY m)
+    if(NA_MATH_LIBRARY)
+        target_link_libraries(nativeaccelerator PUBLIC ${NA_MATH_LIBRARY})
+    endif()
+endif()
+
 # Solaris/illumos DAX is an optional extension.  The helper is a no-op on every
 # other target and when the development header/library are not installed.
 include(cmake/Dax.cmake)
