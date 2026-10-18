@@ -1,6 +1,7 @@
 package com.asbestosstar.nativeaccelerator.renderer.nativeapi;
 
 import com.asbestosstar.nativeaccelerator.nativeapi.NativeLibraryLoader;
+import com.asbestosstar.nativeaccelerator.nativeapi.PanamaDiagnostics;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -118,19 +119,34 @@ public final class PanamaRendererNativeApi implements RendererNativeApi, AutoClo
     }
 
     public static PanamaRendererNativeApi loadBundled() throws IOException {
-        Path library = NativeLibraryLoader.extractBundledLibrary(LIBRARY);
-        Arena arena = Arena.ofShared();
+        Path library;
         try {
+            library = NativeLibraryLoader.extractBundledLibrary(LIBRARY);
+        } catch (Throwable t) {
+            throw new IOException("Unable to initialize native Vulkan renderer bridge", t);
+        }
+        Arena arena = Arena.ofShared();
+        PanamaDiagnostics.LoadStage stage = new PanamaDiagnostics.LoadStage();
+        try {
+            stage.set(PanamaDiagnostics.Stage.LIBRARY_LOOKUP);
             SymbolLookup lookup = SymbolLookup.libraryLookup(library, arena);
+            stage.set(PanamaDiagnostics.Stage.SYMBOL_BINDING);
             PanamaRendererNativeApi api = new PanamaRendererNativeApi(arena, lookup);
-            if (api.abiVersion() != ABI_VERSION) {
-                throw new IOException("Renderer ABI mismatch: Java=" + ABI_VERSION + ", native=" + api.abiVersion());
+            stage.set(PanamaDiagnostics.Stage.ABI_PROBE);
+            int abi = api.abiVersion();
+            stage.set(PanamaDiagnostics.Stage.ABI_VALIDATION);
+            if (abi != ABI_VERSION) {
+                throw new IOException("Renderer ABI mismatch: Java=" + ABI_VERSION + ", native=" + abi);
             }
             return api;
         } catch (Throwable t) {
-            arena.close();
+            try {
+                arena.close();
+            } catch (Throwable closeFailure) {
+                t.addSuppressed(closeFailure);
+            }
             if (t instanceof IOException ioe) throw ioe;
-            throw new IOException("Unable to initialize native Vulkan renderer bridge", t);
+            throw new IOException("Unable to initialize native Vulkan renderer bridge (stage=" + stage.value() + ")", t);
         }
     }
 

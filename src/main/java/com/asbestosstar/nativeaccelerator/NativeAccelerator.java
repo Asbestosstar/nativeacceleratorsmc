@@ -4,6 +4,7 @@ import com.asbestosstar.nativeaccelerator.cache.PersistentResourceCache;
 import com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig;
 import com.asbestosstar.nativeaccelerator.nativeapi.Capabilities;
 import com.asbestosstar.nativeaccelerator.nativeapi.NativeApi;
+import com.asbestosstar.nativeaccelerator.nativeapi.PanamaDiagnostics;
 import com.asbestosstar.nativeaccelerator.nativeapi.PanamaNativeApi;
 import com.asbestosstar.nativeaccelerator.platform.Platform;
 import com.asbestosstar.nativeaccelerator.platform.ProcessInitializationGuard;
@@ -58,8 +59,8 @@ public final class NativeAccelerator {
             System.out.println("[Native Accelerator] Capabilities: " + Capabilities.names(caps));
         } catch (Throwable t) {
             api = null;
-            System.err.println("[Native Accelerator] Native backend unavailable; Java path remains active: "
-                    + t.getMessage());
+            System.err.println(PanamaDiagnostics.format("compute backend", PanamaDiagnostics.Stage.UNKNOWN, t));
+            System.err.println("[Native Accelerator] Native backend unavailable; Java path remains active.");
         }
 
         // Keep the renderer client-only without binding the common core to any loader API.

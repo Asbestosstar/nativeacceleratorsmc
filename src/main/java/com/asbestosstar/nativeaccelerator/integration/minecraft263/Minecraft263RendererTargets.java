@@ -36,6 +36,13 @@ public final class Minecraft263RendererTargets {
                     "optional pass insertion immediately before forwarding the vanilla graph exactly once")
     );
 
+    /** 26.3 RenderPearl seam: observe requested/supported instance extensions at vkCreateInstance. */
+    public static final List<Target> VULKAN_INSTANCE_DIAGNOSTICS = List.of(
+            new Target("com.mojang.renderpearl.backend.vulkan.VulkanInstance",
+                    "VK12.vkCreateInstance(VkInstanceCreateInfo,VkAllocationCallbacks,PointerBuffer)",
+                    "log requested, supported, and missing instance extensions without changing the result")
+    );
+
     public static final List<Target> VULKAN_REWRITE = List.of(
             new Target(FRONTEND_COMMAND_ENCODER, "submit/createRenderPass/copy/upload", "bridge command lifetime into native renderer"),
             new Target(FRONTEND_RENDER_PASS, "pipeline/uniform/buffer/draw methods", "batch state and emit native Vulkan commands"),

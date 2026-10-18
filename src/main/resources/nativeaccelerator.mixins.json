@@ -58,6 +58,7 @@
     "client.ModelBakeryPhaseProfilingMixin",
     "client.ModelBakerSharedOperationCacheMixin",
     "client.MinecraftStartupMixin",
+    "client.VulkanInstanceDiagnosticsMixin",
     "client.ResourceLoadStateTrackerMixin",
     "client.StitcherThroughputMixin",
     "client.ReloadListenerProfilingMixin",

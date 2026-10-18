@@ -1,6 +1,7 @@
 package com.asbestosstar.nativeaccelerator.renderer;
 
 import com.asbestosstar.nativeaccelerator.platform.LoaderEnvironment;
+import com.asbestosstar.nativeaccelerator.nativeapi.PanamaDiagnostics;
 import com.asbestosstar.nativeaccelerator.renderer.nativeapi.PanamaRendererNativeApi;
 import com.asbestosstar.nativeaccelerator.renderer.nativeapi.RendererNativeApi;
 
@@ -85,6 +86,7 @@ public final class RendererPlatformPolicy {
                     api = PanamaRendererNativeApi.loadBundled();
                 } catch (Throwable t) {
                     libraryFailure = t;
+                    System.err.println(PanamaDiagnostics.format("Vulkan renderer", PanamaDiagnostics.Stage.UNKNOWN, t));
                 }
             }
             return Optional.ofNullable(api);

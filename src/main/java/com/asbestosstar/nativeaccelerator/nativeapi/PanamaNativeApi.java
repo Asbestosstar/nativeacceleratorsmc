@@ -125,21 +125,41 @@ public final class PanamaNativeApi implements NativeApi, AutoCloseable {
     }
 
     public static PanamaNativeApi loadBundled() throws IOException {
-        Path library = NativeLibraryLoader.extractBundledLibrary(LIBRARY);
-        Arena arena = Arena.ofShared();
+        Path library;
         try {
+            library = NativeLibraryLoader.extractBundledLibrary(LIBRARY);
+        } catch (Throwable t) {
+            throw new IOException("Unable to initialize Panama native backend", t);
+        }
+
+        Arena arena;
+        try {
+            arena = Arena.ofShared();
+        } catch (Throwable t) {
+            throw new IOException("Unable to initialize Panama native backend", t);
+        }
+        PanamaDiagnostics.LoadStage stage = new PanamaDiagnostics.LoadStage();
+        try {
+            stage.set(PanamaDiagnostics.Stage.LIBRARY_LOOKUP);
             SymbolLookup lookup = SymbolLookup.libraryLookup(library, arena);
+            stage.set(PanamaDiagnostics.Stage.SYMBOL_BINDING);
             PanamaNativeApi api = new PanamaNativeApi(arena, lookup);
+            stage.set(PanamaDiagnostics.Stage.ABI_PROBE);
             int abi = api.abiVersion();
+            stage.set(PanamaDiagnostics.Stage.ABI_VALIDATION);
             if (abi != ABI_VERSION) {
                 arena.close();
                 throw new IOException("Native ABI mismatch: Java=" + ABI_VERSION + ", native=" + abi);
             }
             return api;
         } catch (Throwable t) {
-            arena.close();
+            try {
+                arena.close();
+            } catch (Throwable closeFailure) {
+                t.addSuppressed(closeFailure);
+            }
             if (t instanceof IOException ioe) throw ioe;
-            throw new IOException("Unable to initialize Panama native backend", t);
+            throw new IOException("Unable to initialize Panama native backend (stage=" + stage.value() + ")", t);
         }
     }
 
