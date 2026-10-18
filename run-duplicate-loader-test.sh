@@ -36,8 +36,20 @@ if [ -z "$JAVA" ]; then
     exit 1
 fi
 
+if [ "${SKIP_MINECRAFT_BOOTSTRAP:-0}" != "1" ]; then
+    echo "[duplicate-loader] provisioning the Minecraft compile dependency..."
+    MAVEN_REPO_LOCAL=${MAVEN_REPO_LOCAL:-${MAVEN_REPO:-}} \
+        MVN="$MVN" "$PROJECT_DIR/scripts/bootstrap-minecraft-maven.sh"
+fi
+
+MAVEN_ARGS=""
+if [ -n "${MAVEN_REPO_LOCAL:-${MAVEN_REPO:-}}" ]; then
+    MAVEN_ARGS="-Dmaven.repo.local=${MAVEN_REPO_LOCAL:-${MAVEN_REPO}}"
+fi
+
 echo "[duplicate-loader] compiling main and test sources..."
-$MVN -o -q test-compile
+# shellcheck disable=SC2086
+$MVN $MAVEN_ARGS -o -q test-compile
 
 CP="$TEST_CLASSES:$PROJECT_DIR/target/classes"
 

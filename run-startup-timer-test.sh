@@ -41,8 +41,20 @@ if [ -z "$JAVA" ]; then
     exit 1
 fi
 
+if [ "${SKIP_MINECRAFT_BOOTSTRAP:-0}" != "1" ]; then
+    echo "[startup-timer] provisioning the Minecraft compile dependency..."
+    MAVEN_REPO_LOCAL=${MAVEN_REPO_LOCAL:-${MAVEN_REPO:-}} \
+        MVN="$MVN" "$PROJECT_DIR/scripts/bootstrap-minecraft-maven.sh"
+fi
+
+MAVEN_ARGS=""
+if [ -n "${MAVEN_REPO_LOCAL:-${MAVEN_REPO:-}}" ]; then
+    MAVEN_ARGS="-Dmaven.repo.local=${MAVEN_REPO_LOCAL:-${MAVEN_REPO}}"
+fi
+
 echo "[startup-timer] compiling main and test sources..."
-$MVN -o -q test-compile
+# shellcheck disable=SC2086
+$MVN $MAVEN_ARGS -o -q test-compile
 
 echo "[startup-timer] resolving runtime classpath..."
 $MVN -o -q dependency:build-classpath -Dmdep.outputFile="$CP_FILE" -Dmdep.includeScope=compile

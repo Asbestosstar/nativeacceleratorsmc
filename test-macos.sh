@@ -40,14 +40,22 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
         echo "test-macos.sh: mvn not found (use SKIP_BUILD=1 to reuse a jar)" >&2
         exit 1
     fi
+    echo "[test-macos] provisioning the Minecraft compile dependency..."
+    ( cd "$PROJECT_DIR" && MAVEN_REPO_LOCAL="${MAVEN_REPO_LOCAL:-${MAVEN_REPO:-}}" ./scripts/bootstrap-minecraft-maven.sh )
+    MAVEN_REPO_ARGS=""
+    if [ -n "${MAVEN_REPO_LOCAL:-${MAVEN_REPO:-}}" ]; then
+        MAVEN_REPO_ARGS="-Dmaven.repo.local=${MAVEN_REPO_LOCAL:-${MAVEN_REPO}}"
+    fi
     echo "[test-macos] building Native Accelerator..."
     # Default (NATIVE=auto) rebuilds the native libraries when they are missing so a
     # fresh checkout works with a plain ./test-macos.sh; NATIVE=1 forces a rebuild and
     # NATIVE=0 skips it to ship a Java-only jar.
     if [ "${NATIVE:-auto}" = "1" ] || { [ "${NATIVE:-auto}" = "auto" ] && [ ! -d "$NATIVE_BUILD_DIR" ]; }; then
-        ( cd "$PROJECT_DIR" && mvn -q -DskipTests -Pnative package )
+        # shellcheck disable=SC2086
+        ( cd "$PROJECT_DIR" && mvn -q $MAVEN_REPO_ARGS -DskipTests -Pnative package )
     else
-        ( cd "$PROJECT_DIR" && mvn -q -DskipTests package )
+        # shellcheck disable=SC2086
+        ( cd "$PROJECT_DIR" && mvn -q $MAVEN_REPO_ARGS -DskipTests package )
     fi
 fi
 

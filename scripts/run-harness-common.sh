@@ -13,6 +13,9 @@ MAIN_CLASSES=${MAIN_CLASSES:-$BUILD_DIR/classes}
 CP_FILE=${CP_FILE:-$BUILD_DIR/${LABEL}-test-classpath.txt}
 
 MAVEN_ARGS=(-q -f "$PROJECT_DIR/pom.xml")
+if [[ -n "${MAVEN_REPO_LOCAL:-${MAVEN_REPO:-}}" ]]; then
+    MAVEN_ARGS+=("-Dmaven.repo.local=${MAVEN_REPO_LOCAL:-${MAVEN_REPO}}")
+fi
 if [[ "${MAVEN_OFFLINE:-0}" == "1" ]]; then
     MAVEN_ARGS+=(-o)
 fi
@@ -46,6 +49,11 @@ fi
 
 prepare_harness_classpath() {
     mkdir -p "$BUILD_DIR"
+    if [[ "${SKIP_MINECRAFT_BOOTSTRAP:-0}" != "1" ]]; then
+        printf '[%s] provisioning the Minecraft compile dependency...\n' "$LABEL"
+        MAVEN_REPO_LOCAL=${MAVEN_REPO_LOCAL:-${MAVEN_REPO:-}} \
+            MVN="$MVN" "$PROJECT_DIR/scripts/bootstrap-minecraft-maven.sh"
+    fi
     printf '[%s] compiling main and test sources...\n' "$LABEL"
     "$MVN" "${MAVEN_ARGS[@]}" test-compile
 

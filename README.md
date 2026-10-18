@@ -559,13 +559,30 @@ For the modern branch:
 
 ### Java/mod JAR only
 
+Minecraft 26.3's client JAR is not published in the Maven repositories. A fresh checkout must
+provision it into the active local Maven repository before Maven resolves this project (Maven
+collects project dependencies before running lifecycle phases such as `initialize`):
+
 ```sh
+./scripts/bootstrap-minecraft-maven.sh
 mvn package
 ```
+
+The bootstrap downloads the version-pinned Mojang client, verifies its SHA-1, and installs it as
+`net.minecraft:minecraft:26.3:client`. It is idempotent and may use an isolated repository for CI:
+
+```sh
+MAVEN_REPO_LOCAL=/tmp/nativeaccelerator-m2 ./scripts/bootstrap-minecraft-maven.sh
+mvn -Dmaven.repo.local=/tmp/nativeaccelerator-m2 package
+```
+
+Use `SKIP_MINECRAFT_BOOTSTRAP=1` only when that artifact has already been provisioned in the Maven
+repository used by the build.
 
 ### Build and bundle native libraries
 
 ```sh
+./scripts/bootstrap-minecraft-maven.sh
 mvn -Dnative.build=true package
 ```
 

@@ -41,7 +41,10 @@
         <minecraft.compatibility>&gt;=26.3</minecraft.compatibility>
         <mixin.config>nativeaccelerator.mixins.json</mixin.config>
         <native.build>false</native.build>
+        <!-- The Mojang client is not published to libraries.minecraft.net. Run
+             scripts/bootstrap-minecraft-maven.sh before resolving this project. -->
         <minecraft.client.url>https://piston-data.mojang.com/v1/objects/e877b6a07acd633fb3bb475002175cec036e7b87/client.jar</minecraft.client.url>
+        <minecraft.client.sha1>e877b6a07acd633fb3bb475002175cec036e7b87</minecraft.client.sha1>
         <minecraft.client.jar>${project.build.directory}/minecraft/client.jar</minecraft.client.jar>
     </properties>
 
@@ -64,7 +67,13 @@
         <repository>
             <id>NeoForge</id>
             <name>NeoForge</name>
-            <url>https://maven.neoforged.net/</url>
+            <url>https://maven.neoforged.net/releases/</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
         </repository>
 
 
@@ -86,11 +95,9 @@
 
     <dependencies>
 
-        <!-- The client jar is downloaded from Mojang and installed by maven-install-plugin in the
-             initialize phase. Declaring it as a provided dependency (rather than
-             additionalClasspathElements, which maven-compiler-plugin 3.15.0 silently ignores) is what
-             actually puts the named net.minecraft.* classes on the compile classpath for Mixins.
-             provided: the classes ship with the game at runtime, so they must never be bundled. -->
+        <!-- Provision with scripts/bootstrap-minecraft-maven.sh before Maven resolves this project.
+             The client remains provided: it supplies named Minecraft classes at compile time and is
+             supplied by the game at runtime, so it must never be bundled in the mod JAR. -->
         <dependency>
             <groupId>net.minecraft</groupId>
             <artifactId>minecraft</artifactId>
@@ -187,7 +194,7 @@
         <dependency>
             <groupId>net.neoforged.fancymodloader</groupId>
             <artifactId>loader</artifactId>
-            <version>10.0.14</version>
+            <version>10.0.37</version>
             <scope>provided</scope>
         </dependency>
 
@@ -310,45 +317,6 @@
         </resources>
 
         <plugins>
-            <plugin>
-                <groupId>com.googlecode.maven-download-plugin</groupId>
-                <artifactId>download-maven-plugin</artifactId>
-                <version>${download.maven.plugin.version}</version>
-                <executions>
-                    <execution>
-                        <id>download-minecraft-client</id>
-                        <phase>initialize</phase>
-                        <goals><goal>wget</goal></goals>
-                        <configuration>
-                            <url>${minecraft.client.url}</url>
-                            <outputDirectory>${project.build.directory}/minecraft</outputDirectory>
-                            <outputFileName>client.jar</outputFileName>
-                            <overwrite>false</overwrite>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-install-plugin</artifactId>
-                <version>${install.maven.plugin.version}</version>
-                <executions>
-                    <execution>
-                        <id>install-minecraft-client</id>
-                        <phase>initialize</phase>
-                        <goals><goal>install-file</goal></goals>
-                        <configuration>
-                            <file>${minecraft.client.jar}</file>
-                            <groupId>net.minecraft</groupId>
-                            <artifactId>minecraft</artifactId>
-                            <version>${minecraft.version}</version>
-                            <classifier>client</classifier>
-                            <packaging>jar</packaging>
-                            <generatePom>true</generatePom>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
