@@ -22,12 +22,30 @@ public abstract class VulkanInstanceDiagnosticsMixin {
                 "nativeaccelerator.renderer.vulkan.instanceDiagnostics", "true"))) {
             return VK12.vkCreateInstance(createInfo, allocator, instance);
         }
+        org.lwjgl.system.MemoryStack stack;
         try {
-            System.err.println("[Native Accelerator] Vulkan instance extension probe: "
-                    + VulkanInstanceExtensionDiagnostics.format(createInfo));
+            stack = org.lwjgl.system.MemoryStack.stackPush();
         } catch (Throwable ignored) {
-            // Diagnostics must never change RenderPearl's creation or fallback behavior.
+            return VK12.vkCreateInstance(createInfo, allocator, instance);
         }
-        return VK12.vkCreateInstance(createInfo, allocator, instance);
+        try {
+            try {
+                boolean repaired = VulkanInstanceExtensionDiagnostics.repairTruncatedExtensions(createInfo, stack);
+                String diagnostic = VulkanInstanceExtensionDiagnostics.format(createInfo);
+                if (repaired) diagnostic += " workaround=rewrote-truncated-extension-name";
+                System.err.println("[Native Accelerator] Vulkan instance extension probe: " + diagnostic);
+            } catch (Throwable ignored) {
+                // Diagnostics must never change RenderPearl's creation or fallback behavior.
+            }
+            // The create-info extension pointers may be backed by this stack, so the original call
+            // must happen before the stack is closed. The Vulkan result is returned unchanged.
+            return VK12.vkCreateInstance(createInfo, allocator, instance);
+        } finally {
+            try {
+                stack.close();
+            } catch (Throwable ignored) {
+                // A diagnostic stack cleanup failure must not replace the Vulkan result/exception.
+            }
+        }
     }
 }
