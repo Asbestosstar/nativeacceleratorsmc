@@ -13,6 +13,7 @@ public class RenderPearlUrdBackend implements UrdBackend {
     }
 
     @Override public String name() { return name; }
+    @Override public UrdBackendOwnership ownership() { return UrdBackendOwnership.RENDERPEARL; }
     @Override public UrdCapabilities capabilities() {
         if (device == null) throw new UrdValidationException("backend has no supplied GPU device");
         try (RenderPearlUrdDevice adapter = new RenderPearlUrdDevice(device, name)) {

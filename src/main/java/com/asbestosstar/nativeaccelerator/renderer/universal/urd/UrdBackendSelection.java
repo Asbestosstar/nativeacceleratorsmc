@@ -9,6 +9,7 @@ public record UrdBackendSelection(
         UrdBackend adapter,
         UrdDevice device,
         UrdCapabilities capabilities,
+        UrdBackendOwnership ownership,
         String reason) {
     public enum Status {
         ACTIVE,
@@ -19,6 +20,7 @@ public record UrdBackendSelection(
     public UrdBackendSelection {
         status = status == null ? Status.BLOCKED : status;
         backend = backend == null ? RendererBackendRuntime.Backend.NONE : backend;
+        ownership = ownership == null ? UrdBackendOwnership.REFERENCE : ownership;
         reason = reason == null ? "" : reason;
     }
 
@@ -27,6 +29,7 @@ public record UrdBackendSelection(
     }
 
     public static UrdBackendSelection blocked(RendererBackendRuntime.Backend backend, String reason) {
-        return new UrdBackendSelection(Status.BLOCKED, backend, null, null, null, reason);
+        return new UrdBackendSelection(Status.BLOCKED, backend, null, null, null,
+                UrdBackendOwnership.REFERENCE, reason);
     }
 }

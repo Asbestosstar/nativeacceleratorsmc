@@ -1,0 +1,3 @@
+nativeaccelerator-kernels 11 0.00752086
+nativeaccelerator-renderer 12 0.157722
+---

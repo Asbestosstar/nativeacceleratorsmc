@@ -166,6 +166,12 @@ uint64_t nar_vulkan_loader_name(char *dst, uint64_t capacity) {
     return length;
 }
 
+void *nar_vulkan_get_proc_address(const char *name) {
+    nar_probe_loader();
+    if (g_loader.handle == 0 || name == NULL) return NULL;
+    return nar_find_symbol(g_loader.handle, name);
+}
+
 static uint32_t nar_enumerate_devices_inprocess(void) {
     nar_probe_loader();
     if (g_loader.handle == 0) return 0;

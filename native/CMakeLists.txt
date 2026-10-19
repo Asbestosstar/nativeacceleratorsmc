@@ -76,6 +76,8 @@ add_library(nativeaccelerator_renderer_vulkan SHARED
     src/renderer/common/pipeline_cache.c
     src/renderer/common/platform_policy.c
     src/renderer/vulkan/vk_loader.c
+    src/renderer/vulkan/vk_session.c
+    src/renderer/vulkan/vk_wsi_solaris_xlib.c
     src/renderer/vulkan/mesa_select.c
 )
 

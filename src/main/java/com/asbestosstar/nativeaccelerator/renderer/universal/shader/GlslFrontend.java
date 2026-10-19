@@ -54,7 +54,9 @@ public final class GlslFrontend implements ShaderFrontend {
             return new ShaderModule(source, null, emptyReflection(), diagnostics);
         }
         // RenderPearl's first flag selects the clip-depth convention; its second flag is a
-        // shader-draw-parameters capability, not a language/profile selector.
+        // shader-draw-parameters capability, not a language/profile selector. The native BASIC
+        // contract targets Vulkan 1.0-era capabilities, so do not require the RenderPearl 1.2
+        // extension set merely to compile a module for that path.
         boolean zeroToOneDepth = source.profile() == GlslProfile.VULKAN;
         try (GlslCompiler compiler = new GlslCompiler(zeroToOneDepth, false)) {
             String sourceId = source.sourceName().replace(' ', '_');

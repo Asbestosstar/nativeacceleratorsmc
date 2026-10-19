@@ -27,7 +27,7 @@ public record ShaderSourceSpec(
     public ShaderSourceSpec(String source, String sourceName, String version,
                             GlslProfile profile, String stage) {
         this(source, sourceName, version, profile, stage, "main", Map.of(), List.of(),
-                "renderpearl-glsl", profile == GlslProfile.VULKAN ? "vulkan1.2" : "opengl");
+                "renderpearl-glsl", profile == GlslProfile.VULKAN ? "vulkan1.0" : "opengl");
     }
 
     public ShaderSourceSpec {

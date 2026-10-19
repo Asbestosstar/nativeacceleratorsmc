@@ -13,6 +13,10 @@ public record ShaderModule(
         diagnostics = List.copyOf(diagnostics == null ? List.of() : diagnostics);
     }
 
+    public ByteBuffer spirvWords() {
+        return spirv == null ? null : spirv.asReadOnlyBuffer();
+    }
+
     public boolean isValid() {
         return spirv != null
                 && spirv.remaining() > 0

@@ -1,6 +1,8 @@
 package com.asbestosstar.nativeaccelerator.renderer.universal;
 
+import com.asbestosstar.nativeaccelerator.renderer.NativeVulkanRenderer;
 import com.asbestosstar.nativeaccelerator.renderer.RendererBackendRuntime;
+import com.asbestosstar.nativeaccelerator.renderer.nativeapi.RendererNativeApi;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.GlslFrontend;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.GlslProfile;
 import com.asbestosstar.nativeaccelerator.renderer.universal.shader.TriangleMaterial;
@@ -30,12 +32,51 @@ public final class UniversalRendererRuntime {
             ShaderpackPostProcessRuntime.backendCreated(backend, device, null);
             return;
         }
+
+        // Opt-in native Vulkan path: uses NativeVulkanRenderer's own session rather than
+        // wrapping the RenderPearl GpuDevice. Enabled only when the property is set AND
+        // the renderer is active with a confirmed API handle. Default: disabled.
+        if (Boolean.getBoolean("nativeaccelerator.urd.nativeVulkan")
+                && backend == RendererBackendRuntime.Backend.VULKAN) {
+            RendererNativeApi nativeApi = NativeVulkanRenderer.api().orElse(null);
+            if (nativeApi != null) {
+                UrdBackendSelection nativeSelection = REGISTRY.registerNativeVulkan(nativeApi);
+                ShaderpackPostProcessRuntime.backendCreated(backend, device, nativeSelection.device());
+                if (!nativeSelection.active()) {
+                    report("NATIVE_VULKAN BLOCKED: " + nativeSelection.reason()
+                            + " — falling through to RenderPearl path");
+                    // Fall through to the RenderPearl registration path below.
+                } else {
+                    if (!nativeSelection.status().equals(UrdBackendSelection.Status.DUPLICATE)) {
+                        report("NATIVE_VULKAN ACTIVE: " + nativeSelection.adapter().name()
+                                + " ownership=" + nativeSelection.ownership());
+                    }
+                    runDemoIfRequested(nativeSelection, backend);
+                    return;
+                }
+            } else {
+                report("NATIVE_VULKAN requested but NativeVulkanRenderer is not active; "
+                        + "falling through to RenderPearl path");
+            }
+        }
+
         UrdBackendSelection selection = REGISTRY.register(backend, device);
         ShaderpackPostProcessRuntime.backendCreated(backend, device, selection.device());
         if (!selection.active()) {
             report("BLOCKED: " + selection.reason());
             return;
         }
+        runDemoIfRequested(selection, backend);
+    }
+
+    /**
+     * Runs the optional URD triangle demo for a registered selection when the
+     * {@code nativeaccelerator.urd.demo} property requests it and the backend matches.
+     * Shared by both the native Vulkan path and the RenderPearl path so neither
+     * duplicates the demo dispatch logic.
+     */
+    private static void runDemoIfRequested(UrdBackendSelection selection, RendererBackendRuntime.Backend backend) {
+        if (!selection.active()) return;
         String demo = System.getProperty("nativeaccelerator.urd.demo", "off").trim().toLowerCase(Locale.ROOT);
         if ("off".equals(demo) || demo.isBlank()) return;
         if (!"opengl".equals(demo) && !"vulkan".equals(demo) && !"metal".equals(demo)) {

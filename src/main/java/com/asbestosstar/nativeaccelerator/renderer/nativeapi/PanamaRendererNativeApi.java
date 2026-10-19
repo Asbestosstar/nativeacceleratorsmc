@@ -50,6 +50,54 @@ public final class PanamaRendererNativeApi implements RendererNativeApi, AutoClo
     private final MethodHandle voxelFaceMasks;
     private final MethodHandle voxelFaceMasksBatch;
 
+    // Optional Vulkan session ABI symbols. Each is null when the loaded library
+    // predates NAR_VULKAN_ABI_VERSION; vulkanSessionSupported() reflects that.
+    private final MethodHandle vulkanQueryCapabilities;
+    private final MethodHandle vulkanSessionCreate;
+    private final MethodHandle vulkanSessionDestroy;
+    private final MethodHandle vulkanSessionTier;
+    private final MethodHandle vulkanSessionFeatures;
+    private final MethodHandle vulkanSessionLastError;
+    private final MethodHandle vulkanMesaPrefix;
+    private final MethodHandle vulkanMesaLoader;
+    private final boolean vulkanSessionSupported;
+
+    private final MethodHandle vulkanSessionCreatePresent;
+    private final MethodHandle vulkanWsiQuery;
+    private final MethodHandle vulkanWsiReportSession;
+    private final MethodHandle vulkanWsiLastError;
+    private final MethodHandle vulkanSwapchainCreate;
+    private final MethodHandle vulkanSwapchainDestroy;
+    private final MethodHandle vulkanSwapchainRecreate;
+    private final MethodHandle vulkanSwapchainAcquire;
+    private final MethodHandle vulkanSwapchainPresent;
+    private final boolean vulkanWsiSupported;
+
+    // Optional offscreen image/render/readback ABI symbols.
+    private final MethodHandle vulkanOffscreenImageCreate;
+    private final MethodHandle vulkanOffscreenImageDestroy;
+    private final MethodHandle vulkanOffscreenRenderBegin;
+    private final MethodHandle vulkanOffscreenRenderEnd;
+    private final MethodHandle vulkanOffscreenReadback;
+    private final boolean vulkanOffscreenSupported;
+
+    // Optional Vulkan buffer resource ABI symbols.
+    private final MethodHandle vulkanBufferCreate;
+    private final MethodHandle vulkanBufferDestroy;
+    private final MethodHandle vulkanBufferUpload;
+    private final MethodHandle vulkanBufferSize;
+    private final boolean vulkanBufferSupported;
+
+    // Optional shader module + graphics pipeline + command recording ABI symbols.
+    private final MethodHandle vulkanShaderModuleCreate;
+    private final MethodHandle vulkanShaderModuleDestroy;
+    private final MethodHandle vulkanPipelineCreate;
+    private final MethodHandle vulkanPipelineDestroy;
+    private final MethodHandle vulkanCmdBindPipeline;
+    private final MethodHandle vulkanCmdBindVertexBuffer;
+    private final MethodHandle vulkanCmdDraw;
+    private final boolean vulkanPipelineSupported;
+
     private PanamaRendererNativeApi(Arena libraryArena, SymbolLookup lookup) {
         Linker linker = Linker.nativeLinker();
         this.libraryArena = libraryArena;
@@ -116,6 +164,107 @@ public final class PanamaRendererNativeApi implements RendererNativeApi, AutoClo
                 ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS);
         voxelFaceMasksBatch = statusCall(linker, lookup, "nar_voxel_face_masks_batch",
                 ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT);
+
+        // Optional session ABI — bind only when the symbols are present.
+        vulkanQueryCapabilities = optDowncall(linker, lookup, "nar_vulkan_query_capabilities",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
+        vulkanSessionCreate = optDowncall(linker, lookup, "nar_vulkan_session_create",
+                FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
+        vulkanSessionDestroy = optDowncall(linker, lookup, "nar_vulkan_session_destroy",
+                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
+        vulkanSessionTier = optDowncall(linker, lookup, "nar_vulkan_session_tier",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
+        vulkanSessionFeatures = optDowncall(linker, lookup, "nar_vulkan_session_features",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
+        vulkanSessionLastError = optDowncall(linker, lookup, "nar_vulkan_session_last_error",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        vulkanMesaPrefix = optDowncall(linker, lookup, "nar_vulkan_mesa_prefix",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        vulkanMesaLoader = optDowncall(linker, lookup, "nar_vulkan_mesa_loader",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        vulkanSessionSupported = vulkanSessionCreate != null && vulkanSessionDestroy != null
+                && vulkanSessionTier != null && vulkanSessionFeatures != null
+                && vulkanSessionLastError != null;
+        vulkanSessionCreatePresent = optDowncall(linker, lookup, "nar_vulkan_session_create_present",
+                FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
+        vulkanWsiQuery = optDowncall(linker, lookup, "nar_vulkan_wsi_supported",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
+        vulkanWsiReportSession = optDowncall(linker, lookup, "nar_vulkan_wsi_report_session",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanWsiLastError = optDowncall(linker, lookup, "nar_vulkan_wsi_last_error",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        vulkanSwapchainCreate = optDowncall(linker, lookup, "nar_vulkan_swapchain_create",
+                FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
+        vulkanSwapchainDestroy = optDowncall(linker, lookup, "nar_vulkan_swapchain_destroy",
+                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanSwapchainRecreate = optDowncall(linker, lookup, "nar_vulkan_swapchain_recreate",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
+        vulkanSwapchainAcquire = optDowncall(linker, lookup, "nar_vulkan_swapchain_acquire",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanSwapchainPresent = optDowncall(linker, lookup, "nar_vulkan_swapchain_present",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+        vulkanWsiSupported = vulkanSessionCreatePresent != null && vulkanWsiQuery != null
+                && vulkanWsiReportSession != null && vulkanWsiLastError != null
+                && vulkanSwapchainCreate != null && vulkanSwapchainDestroy != null
+                && vulkanSwapchainRecreate != null && vulkanSwapchainAcquire != null
+                && vulkanSwapchainPresent != null;
+        // Optional offscreen image/render/readback ABI — absent in pre-offscreen builds.
+        vulkanOffscreenImageCreate = optDowncall(linker, lookup, "nar_vulkan_offscreen_image_create",
+                FunctionDescriptor.of(ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
+        vulkanOffscreenImageDestroy = optDowncall(linker, lookup, "nar_vulkan_offscreen_image_destroy",
+                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanOffscreenRenderBegin = optDowncall(linker, lookup, "nar_vulkan_offscreen_render_begin",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                        ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanOffscreenRenderEnd = optDowncall(linker, lookup, "nar_vulkan_offscreen_render_end",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanOffscreenReadback = optDowncall(linker, lookup, "nar_vulkan_offscreen_readback",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                        ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        vulkanOffscreenSupported = vulkanOffscreenImageCreate != null && vulkanOffscreenImageDestroy != null
+                && vulkanOffscreenRenderBegin != null && vulkanOffscreenRenderEnd != null
+                && vulkanOffscreenReadback != null;
+        // Optional Vulkan buffer resource ABI — absent in pre-buffer builds.
+        vulkanBufferCreate = optDowncall(linker, lookup, "nar_vulkan_buffer_create",
+                FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        vulkanBufferDestroy = optDowncall(linker, lookup, "nar_vulkan_buffer_destroy",
+                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanBufferUpload = optDowncall(linker, lookup, "nar_vulkan_buffer_upload",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                        ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        vulkanBufferSize = optDowncall(linker, lookup, "nar_vulkan_buffer_size",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
+        vulkanBufferSupported = vulkanBufferCreate != null && vulkanBufferDestroy != null
+                && vulkanBufferUpload != null && vulkanBufferSize != null;
+        // Optional shader module + graphics pipeline + command recording ABI.
+        vulkanShaderModuleCreate = optDowncall(linker, lookup, "nar_vulkan_shader_module_create",
+                FunctionDescriptor.of(ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        vulkanShaderModuleDestroy = optDowncall(linker, lookup, "nar_vulkan_shader_module_destroy",
+                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanPipelineCreate = optDowncall(linker, lookup, "nar_vulkan_pipeline_create",
+                FunctionDescriptor.of(ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanPipelineDestroy = optDowncall(linker, lookup, "nar_vulkan_pipeline_destroy",
+                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanCmdBindPipeline = optDowncall(linker, lookup, "nar_vulkan_cmd_bind_pipeline",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                        ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+        vulkanCmdBindVertexBuffer = optDowncall(linker, lookup, "nar_vulkan_cmd_bind_vertex_buffer",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                        ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        vulkanCmdDraw = optDowncall(linker, lookup, "nar_vulkan_cmd_draw",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                        ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                        ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
+        vulkanPipelineSupported = vulkanShaderModuleCreate != null && vulkanShaderModuleDestroy != null
+                && vulkanPipelineCreate != null && vulkanPipelineDestroy != null
+                && vulkanCmdBindPipeline != null && vulkanCmdBindVertexBuffer != null
+                && vulkanCmdDraw != null;
     }
 
     public static PanamaRendererNativeApi loadBundled() throws IOException {
@@ -307,6 +456,367 @@ public final class PanamaRendererNativeApi implements RendererNativeApi, AutoClo
         invokeStatus(voxelFaceMasksBatch, "voxelFaceMasksBatch", requireHandle(context, "context"), out, occupancy, neighborArg, sectionCount);
     }
 
+    // Optional Vulkan session ABI overrides.
+
+    @Override public boolean vulkanSessionSupported() { return vulkanSessionSupported; }
+
+    @Override public MemorySegment vulkanSessionCreate(int mode, int width, int height) {
+        requireSessionAbi("vulkanSessionCreate");
+        if (mode < VULKAN_MODE_AUTO || mode > VULKAN_MODE_PRESENT) throw new IllegalArgumentException("invalid Vulkan session mode");
+        if (width <= 0 || height <= 0) throw new IllegalArgumentException("Vulkan session dimensions must be positive");
+        try {
+            MemorySegment handle = (MemorySegment)vulkanSessionCreate.invokeExact(mode, width, height);
+            if (handle == null || handle.equals(MemorySegment.NULL)) {
+                throw new IllegalStateException("nar_vulkan_session_create returned null — Vulkan unavailable");
+            }
+            return handle;
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public void vulkanSessionDestroy(MemorySegment session) {
+        requireSessionAbi("vulkanSessionDestroy");
+        try { vulkanSessionDestroy.invokeExact(requireHandle(session, "vulkan session")); }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public int vulkanSessionTier(MemorySegment session) {
+        requireSessionAbi("vulkanSessionTier");
+        try { return (int)vulkanSessionTier.invokeExact(requireHandle(session, "vulkan session")); }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public long vulkanSessionFeatures(MemorySegment session) {
+        requireSessionAbi("vulkanSessionFeatures");
+        try { return (long)vulkanSessionFeatures.invokeExact(requireHandle(session, "vulkan session")); }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public boolean vulkanWsiSupported() { return vulkanWsiSupported; }
+
+    @Override public MemorySegment vulkanSessionCreatePresent(int platform, long nativeDisplay, long nativeWindow,
+                                                               int flags, int width, int height) {
+        requireWsiAbi("vulkanSessionCreatePresent");
+        if (width <= 0 || height <= 0 || nativeWindow == 0) throw new IllegalArgumentException("invalid WSI window dimensions/handle");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment descriptor = arena.allocate(48, 8);
+            descriptor.set(ValueLayout.JAVA_INT, 0, 48);
+            descriptor.set(ValueLayout.JAVA_INT, 4, VULKAN_WSI_ABI_VERSION);
+            descriptor.set(ValueLayout.JAVA_INT, 8, platform);
+            descriptor.set(ValueLayout.JAVA_INT, 12, flags);
+            descriptor.set(ValueLayout.JAVA_LONG, 16, nativeDisplay);
+            descriptor.set(ValueLayout.JAVA_LONG, 24, nativeWindow);
+            descriptor.set(ValueLayout.JAVA_INT, 32, width);
+            descriptor.set(ValueLayout.JAVA_INT, 36, height);
+            MemorySegment handle = (MemorySegment)vulkanSessionCreatePresent.invokeExact(descriptor, width, height);
+            if (handle == null || handle.equals(MemorySegment.NULL)) throw new IllegalStateException("native present session creation failed");
+            return handle;
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public int vulkanWsiSupported(int platform) {
+        requireWsiAbi("vulkanWsiSupported");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment report = arena.allocate(436, 8);
+            report.set(ValueLayout.JAVA_INT, 0, 436);
+            report.set(ValueLayout.JAVA_INT, 4, VULKAN_WSI_ABI_VERSION);
+            int rc = (int)vulkanWsiQuery.invokeExact(platform, report);
+            if (rc != 0) return rc;
+            return report.get(ValueLayout.JAVA_INT, 12);
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public MemorySegment vulkanSwapchainCreate(MemorySegment session, int width, int height) {
+        requireWsiAbi("vulkanSwapchainCreate");
+        if (width <= 0 || height <= 0) throw new IllegalArgumentException("swapchain dimensions must be positive");
+        try {
+            MemorySegment handle = (MemorySegment)vulkanSwapchainCreate.invokeExact(requireHandle(session, "vulkan session"), width, height);
+            if (handle == null || handle.equals(MemorySegment.NULL)) throw new IllegalStateException("native swapchain creation failed");
+            return handle;
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+    @Override public void vulkanSwapchainDestroy(MemorySegment session, MemorySegment swapchain) {
+        requireWsiAbi("vulkanSwapchainDestroy");
+        try { vulkanSwapchainDestroy.invokeExact(requireHandle(session, "vulkan session"), requireHandle(swapchain, "swapchain")); }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+    @Override public int vulkanSwapchainRecreate(MemorySegment session, MemorySegment swapchain, int width, int height) {
+        requireWsiAbi("vulkanSwapchainRecreate");
+        if (width <= 0 || height <= 0) throw new IllegalArgumentException("swapchain dimensions must be positive");
+        try { return (int)vulkanSwapchainRecreate.invokeExact(requireHandle(session, "vulkan session"), requireHandle(swapchain, "swapchain"), width, height); }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+    @Override public int vulkanSwapchainAcquire(MemorySegment session, MemorySegment swapchain, MemorySegment outImageIndex) {
+        requireWsiAbi("vulkanSwapchainAcquire");
+        requireRange(outImageIndex, 4, "swapchain image index");
+        try { return (int)vulkanSwapchainAcquire.invokeExact(requireHandle(session, "vulkan session"), requireHandle(swapchain, "swapchain"), outImageIndex); }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+    @Override public int vulkanSwapchainPresent(MemorySegment session, MemorySegment swapchain, int imageIndex) {
+        requireWsiAbi("vulkanSwapchainPresent");
+        try { return (int)vulkanSwapchainPresent.invokeExact(requireHandle(session, "vulkan session"), requireHandle(swapchain, "swapchain"), imageIndex); }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    private void requireWsiAbi(String method) {
+        if (!vulkanWsiSupported) throw new UnsupportedOperationException(method + ": Vulkan WSI ABI not present in this library build");
+    }
+
+    @Override public String vulkanSessionLastError(MemorySegment session) {
+        requireSessionAbi("vulkanSessionLastError");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment buffer = arena.allocate(512);
+            // The native function accepts NULL to query length; pass the actual session handle
+            // (may be NULL for the "no session" static message — native is safe with it).
+            MemorySegment sessionArg = session == null ? MemorySegment.NULL : session;
+            long written = (long)vulkanSessionLastError.invokeExact(sessionArg, buffer, 512L);
+            if (written <= 0) return "";
+            int length = (int)Math.min(written, 511L);
+            byte[] bytes = new byte[length];
+            for (int i = 0; i < length; ++i) bytes[i] = buffer.get(ValueLayout.JAVA_BYTE, i);
+            return new String(bytes, StandardCharsets.UTF_8);
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public String vulkanMesaPrefix() {
+        if (vulkanMesaPrefix == null) return "";
+        return readString(vulkanMesaPrefix, "");
+    }
+
+    @Override public String vulkanMesaLoader() {
+        if (vulkanMesaLoader == null) return "";
+        return readString(vulkanMesaLoader, "");
+    }
+
+    // Optional offscreen image/render/readback ABI overrides.
+
+    @Override public boolean vulkanOffscreenSupported() { return vulkanOffscreenSupported; }
+
+    @Override public MemorySegment vulkanOffscreenImageCreate(MemorySegment session, int width, int height) {
+        requireOffscreenAbi("vulkanOffscreenImageCreate");
+        if (width <= 0 || height <= 0) throw new IllegalArgumentException("offscreen dimensions must be positive");
+        try {
+            MemorySegment handle = (MemorySegment)vulkanOffscreenImageCreate.invokeExact(
+                    requireHandle(session, "vulkan session"), width, height);
+            if (handle == null || handle.equals(MemorySegment.NULL)) {
+                throw new IllegalStateException("nar_vulkan_offscreen_image_create returned null");
+            }
+            return handle;
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public void vulkanOffscreenImageDestroy(MemorySegment session, MemorySegment image) {
+        requireOffscreenAbi("vulkanOffscreenImageDestroy");
+        try {
+            vulkanOffscreenImageDestroy.invokeExact(
+                    requireHandle(session, "vulkan session"), requireHandle(image, "offscreen image"));
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public MemorySegment vulkanOffscreenRenderBegin(MemorySegment session, MemorySegment image) {
+        requireOffscreenAbi("vulkanOffscreenRenderBegin");
+        try (Arena scratch = Arena.ofConfined()) {
+            MemorySegment outCommandBuffer = scratch.allocate(ValueLayout.ADDRESS);
+            int rc = (int)vulkanOffscreenRenderBegin.invokeExact(
+                    requireHandle(session, "vulkan session"),
+                    requireHandle(image, "offscreen image"),
+                    outCommandBuffer);
+            if (rc == OFFSCREEN_RESULT_NO_VULKAN) {
+                throw new IllegalStateException("nar_vulkan_offscreen_render_begin: no Vulkan loader/device");
+            }
+            if (rc < 0) {
+                throw new IllegalStateException("nar_vulkan_offscreen_render_begin failed (native status " + rc + ")");
+            }
+            return outCommandBuffer.get(ValueLayout.ADDRESS, 0);
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public int vulkanOffscreenRenderEnd(MemorySegment session, MemorySegment image) {
+        requireOffscreenAbi("vulkanOffscreenRenderEnd");
+        try {
+            return (int)vulkanOffscreenRenderEnd.invokeExact(
+                    requireHandle(session, "vulkan session"),
+                    requireHandle(image, "offscreen image"));
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public int vulkanOffscreenReadback(MemorySegment session, MemorySegment image,
+                                                 MemorySegment dst, long capacity) {
+        requireOffscreenAbi("vulkanOffscreenReadback");
+        if (capacity < 0) throw new IllegalArgumentException("capacity must be >= 0");
+        requireRange(dst, capacity, "offscreen readback dst");
+        try {
+            return (int)vulkanOffscreenReadback.invokeExact(
+                    requireHandle(session, "vulkan session"),
+                    requireHandle(image, "offscreen image"),
+                    dst, capacity);
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+
+    private void requireOffscreenAbi(String method) {
+        if (!vulkanOffscreenSupported) throw new UnsupportedOperationException(
+                method + ": Vulkan offscreen ABI not present in this library build");
+    }
+
+    // Optional Vulkan buffer resource ABI overrides.
+
+    @Override public boolean vulkanBufferSupported() { return vulkanBufferSupported; }
+
+    @Override public MemorySegment vulkanBufferCreate(MemorySegment session, long size) {
+        requireBufferAbi("vulkanBufferCreate");
+        if (size <= 0) throw new IllegalArgumentException("buffer size must be positive");
+        try {
+            MemorySegment handle = (MemorySegment) vulkanBufferCreate.invokeExact(
+                    requireHandle(session, "vulkan session"), size);
+            if (handle == null || handle.equals(MemorySegment.NULL)) {
+                throw new IllegalStateException("nar_vulkan_buffer_create returned null — Vulkan unavailable or OOM");
+            }
+            return handle;
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public void vulkanBufferDestroy(MemorySegment session, MemorySegment buffer) {
+        requireBufferAbi("vulkanBufferDestroy");
+        // Safe to call with a null buffer — mirrors the native contract.
+        MemorySegment bufArg = (buffer == null) ? MemorySegment.NULL : buffer;
+        try {
+            vulkanBufferDestroy.invokeExact(requireHandle(session, "vulkan session"), bufArg);
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public int vulkanBufferUpload(MemorySegment session, MemorySegment buffer,
+                                            MemorySegment data, long size) {
+        requireBufferAbi("vulkanBufferUpload");
+        if (size < 0) throw new IllegalArgumentException("upload size must be >= 0");
+        requireRange(data, size, "buffer upload data");
+        try {
+            return (int) vulkanBufferUpload.invokeExact(
+                    requireHandle(session, "vulkan session"),
+                    requireHandle(buffer, "vulkan buffer"),
+                    data, size);
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public long vulkanBufferSize(MemorySegment buffer) {
+        requireBufferAbi("vulkanBufferSize");
+        MemorySegment bufArg = (buffer == null) ? MemorySegment.NULL : buffer;
+        try {
+            return (long) vulkanBufferSize.invokeExact(bufArg);
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+
+    private void requireBufferAbi(String method) {
+        if (!vulkanBufferSupported) throw new UnsupportedOperationException(
+                method + ": Vulkan buffer ABI not present in this library build");
+    }
+
+    // Optional shader module + graphics pipeline + command recording ABI overrides.
+
+    @Override public boolean vulkanPipelineSupported() { return vulkanPipelineSupported; }
+
+    @Override public MemorySegment vulkanShaderModuleCreate(MemorySegment session, MemorySegment code, long codeSize) {
+        requirePipelineAbi("vulkanShaderModuleCreate");
+        if (codeSize <= 0 || codeSize % 4 != 0)
+            throw new IllegalArgumentException("SPIR-V code_size must be a positive multiple of 4");
+        requireRange(code, codeSize, "SPIR-V code");
+        try {
+            MemorySegment handle = (MemorySegment) vulkanShaderModuleCreate.invokeExact(
+                    requireHandle(session, "vulkan session"), code, codeSize);
+            if (handle == null || handle.equals(MemorySegment.NULL))
+                throw new IllegalStateException("nar_vulkan_shader_module_create returned null");
+            return handle;
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public void vulkanShaderModuleDestroy(MemorySegment session, MemorySegment module) {
+        requirePipelineAbi("vulkanShaderModuleDestroy");
+        MemorySegment modArg = (module == null) ? MemorySegment.NULL : module;
+        try {
+            vulkanShaderModuleDestroy.invokeExact(requireHandle(session, "vulkan session"), modArg);
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public MemorySegment vulkanPipelineCreate(MemorySegment session, MemorySegment image,
+                                                        MemorySegment vertexShader,
+                                                        MemorySegment fragmentShader) {
+        requirePipelineAbi("vulkanPipelineCreate");
+        try {
+            MemorySegment handle = (MemorySegment) vulkanPipelineCreate.invokeExact(
+                    requireHandle(session, "vulkan session"),
+                    requireHandle(image, "offscreen image"),
+                    requireHandle(vertexShader, "vertex shader module"),
+                    requireHandle(fragmentShader, "fragment shader module"));
+            if (handle == null || handle.equals(MemorySegment.NULL))
+                throw new IllegalStateException("nar_vulkan_pipeline_create returned null");
+            return handle;
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public void vulkanPipelineDestroy(MemorySegment session, MemorySegment pipeline) {
+        requirePipelineAbi("vulkanPipelineDestroy");
+        MemorySegment plArg = (pipeline == null) ? MemorySegment.NULL : pipeline;
+        try {
+            vulkanPipelineDestroy.invokeExact(requireHandle(session, "vulkan session"), plArg);
+        } catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public int vulkanCmdBindPipeline(MemorySegment session, MemorySegment commandBuffer,
+                                               MemorySegment pipeline) {
+        requirePipelineAbi("vulkanCmdBindPipeline");
+        try {
+            return (int) vulkanCmdBindPipeline.invokeExact(
+                    requireHandle(session, "vulkan session"),
+                    requireHandle(commandBuffer, "command buffer"),
+                    requireHandle(pipeline, "pipeline"));
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public int vulkanCmdBindVertexBuffer(MemorySegment session, MemorySegment commandBuffer,
+                                                   MemorySegment buffer, long offset) {
+        requirePipelineAbi("vulkanCmdBindVertexBuffer");
+        if (offset < 0) throw new IllegalArgumentException("vertex buffer offset must be >= 0");
+        try {
+            return (int) vulkanCmdBindVertexBuffer.invokeExact(
+                    requireHandle(session, "vulkan session"),
+                    requireHandle(commandBuffer, "command buffer"),
+                    requireHandle(buffer, "vertex buffer"),
+                    offset);
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    @Override public int vulkanCmdDraw(MemorySegment session, MemorySegment commandBuffer,
+                                       int vertexCount, int firstVertex) {
+        requirePipelineAbi("vulkanCmdDraw");
+        if (vertexCount <= 0) throw new IllegalArgumentException("vertexCount must be positive");
+        if (firstVertex < 0) throw new IllegalArgumentException("firstVertex must be >= 0");
+        try {
+            return (int) vulkanCmdDraw.invokeExact(
+                    requireHandle(session, "vulkan session"),
+                    requireHandle(commandBuffer, "command buffer"),
+                    vertexCount, firstVertex);
+        } catch (RuntimeException | Error e) { throw e; }
+        catch (Throwable t) { throw rethrow(t); }
+    }
+
+    private void requirePipelineAbi(String method) {
+        if (!vulkanPipelineSupported) throw new UnsupportedOperationException(
+                method + ": Vulkan pipeline ABI not present in this library build");
+    }
+
+    private void requireSessionAbi(String method) {
+        if (!vulkanSessionSupported) throw new UnsupportedOperationException(
+                method + ": Vulkan session ABI not present in this library build");
+    }
+
     @Override public void close() { libraryArena.close(); }
 
     private String readString(MethodHandle handle, String fallback) {
@@ -327,6 +837,12 @@ public final class PanamaRendererNativeApi implements RendererNativeApi, AutoClo
     private static MethodHandle downcall(Linker linker, SymbolLookup lookup, String symbol, FunctionDescriptor descriptor) {
         MemorySegment address = lookup.find(symbol).orElseThrow(() -> new UnsatisfiedLinkError("Missing native renderer symbol: " + symbol));
         return linker.downcallHandle(address, descriptor);
+    }
+    /** Bind an optional symbol; returns null when the symbol is absent so older ABI-2 libraries still load. */
+    private static MethodHandle optDowncall(Linker linker, SymbolLookup lookup, String symbol, FunctionDescriptor descriptor) {
+        return lookup.find(symbol)
+                .map(address -> linker.downcallHandle(address, descriptor))
+                .orElse(null);
     }
     private static void invokeStatus(MethodHandle handle, String operation, Object... args) {
         try {

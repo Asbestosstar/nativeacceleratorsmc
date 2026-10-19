@@ -14,6 +14,8 @@ public final class InMemoryUrdBackend implements UrdBackend {
     @Override
     public String name() { return "reference"; }
 
+    public UrdBackendOwnership ownership() { return UrdBackendOwnership.REFERENCE; }
+
     @Override
     public UrdCapabilities capabilities() { return CAPABILITIES; }
 

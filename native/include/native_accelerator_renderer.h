@@ -18,6 +18,134 @@ extern "C" {
 
 #define NAR_ABI_VERSION 2u
 
+/* Optional adaptive Vulkan capability/session ABI. Existing ABI-2 compute symbols remain valid. */
+#define NAR_VULKAN_ABI_VERSION 1u
+#define NAR_VULKAN_MODE_AUTO      0u
+#define NAR_VULKAN_MODE_OFFSCREEN 1u
+#define NAR_VULKAN_MODE_PRESENT   2u
+#define NAR_VULKAN_TIER_UNAVAILABLE 0u
+#define NAR_VULKAN_TIER_BASIC       1u
+#define NAR_VULKAN_TIER_PRESENT     2u
+#define NAR_VULKAN_TIER_ENHANCED    3u
+#define NAR_VULKAN_FEATURE_CLASSIC_RENDER_PASS (UINT64_C(1) << 0)
+#define NAR_VULKAN_FEATURE_CPU_CULL             (UINT64_C(1) << 1)
+#define NAR_VULKAN_FEATURE_SWAPCHAIN           (UINT64_C(1) << 2)
+#define NAR_VULKAN_FEATURE_DYNAMIC_RENDERING   (UINT64_C(1) << 3)
+#define NAR_VULKAN_FEATURE_SYNCHRONIZATION2    (UINT64_C(1) << 4)
+#define NAR_VULKAN_FEATURE_PUSH_DESCRIPTOR     (UINT64_C(1) << 5)
+#define NAR_VULKAN_FEATURE_VERTEX_DIVISOR      (UINT64_C(1) << 6)
+#define NAR_VULKAN_FEATURE_GPU_CULL            (UINT64_C(1) << 7)
+
+typedef struct nar_vulkan_capability_report_data {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t api_version;
+    uint32_t tier;
+    uint64_t features;
+    uint32_t physical_device_count;
+    uint32_t graphics_queue_available;
+    uint32_t present_queue_available;
+    uint32_t reserved;
+    char device_name[256];
+    char diagnostic[512];
+} nar_vulkan_capability_report;
+
+typedef struct nar_vulkan_session nar_vulkan_session;
+
+/* Optional WSI/swapchain ABI. This is deliberately separate from the headless
+ * session ABI so older companion libraries remain binary-compatible. Handles
+ * and native window values are opaque; no Xlib, SDL, Vulkan SDK, or loader
+ * headers are required by consumers. */
+#define NAR_VULKAN_WSI_ABI_VERSION 1u
+#define NAR_VULKAN_WSI_PLATFORM_XLIB   1u
+#define NAR_VULKAN_WSI_PLATFORM_XCB    2u
+#define NAR_VULKAN_WSI_PLATFORM_WAYLAND 3u
+#define NAR_VULKAN_WSI_PLATFORM_WIN32  4u
+#define NAR_VULKAN_WSI_PLATFORM_COCOA  5u
+#define NAR_VULKAN_WSI_PLATFORM_SDL   6u
+#define NAR_VULKAN_WSI_FLAG_RESIZABLE  (UINT32_C(1) << 0)
+#define NAR_VULKAN_WSI_FLAG_HEADLESS  (UINT32_C(1) << 1)
+
+typedef struct nar_vulkan_wsi_window {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t platform;
+    uint32_t flags;
+    /* Opaque pointer value represented as a fixed-width integer for FFM/ABI stability. */
+    uint64_t native_display;
+    uint64_t native_window;
+    uint32_t width;
+    uint32_t height;
+    uint32_t reserved;
+} nar_vulkan_wsi_window;
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(nar_vulkan_wsi_window) == 48, "nar_vulkan_wsi_window ABI size");
+_Static_assert(offsetof(nar_vulkan_wsi_window, native_display) == 16, "nar_vulkan_wsi_window native_display offset");
+_Static_assert(offsetof(nar_vulkan_wsi_window, native_window) == 24, "nar_vulkan_wsi_window native_window offset");
+#endif
+
+typedef struct nar_vulkan_wsi_report {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t platform;
+    uint32_t supported;
+    uint32_t graphics_queue_family;
+    uint32_t present_queue_family;
+    uint32_t format;
+    uint32_t color_space;
+    uint32_t present_mode;
+    uint32_t image_count;
+    uint32_t width;
+    uint32_t height;
+    uint32_t status;
+    char diagnostic[384];
+} nar_vulkan_wsi_report;
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(nar_vulkan_wsi_report) == 436, "nar_vulkan_wsi_report ABI size");
+_Static_assert(offsetof(nar_vulkan_wsi_report, diagnostic) == 52, "nar_vulkan_wsi_report diagnostic offset");
+#endif
+
+typedef struct nar_vulkan_swapchain nar_vulkan_swapchain;
+
+#define NAR_VULKAN_WSI_STATUS_OK             0u
+#define NAR_VULKAN_WSI_STATUS_UNAVAILABLE    1u
+#define NAR_VULKAN_WSI_STATUS_BLOCKED        2u
+#define NAR_VULKAN_WSI_STATUS_OUT_OF_DATE    3u
+#define NAR_VULKAN_WSI_STATUS_SUBOPTIMAL     4u
+#define NAR_VULKAN_WSI_STATUS_SURFACE_LOST   5u
+#define NAR_VULKAN_WSI_STATUS_INVALID        6u
+#define NAR_VULKAN_WSI_STATUS_ERROR         7u
+#define NAR_VULKAN_WSI_STATUS_NOT_READY      8u
+#define NAR_VULKAN_WSI_STATUS_TIMEOUT        9u
+#define NAR_VULKAN_WSI_STATUS_PAUSED        10u
+#define NAR_VULKAN_WSI_STATUS_DEVICE_LOST   11u
+#define NAR_VULKAN_WSI_STATUS_UNSUPPORTED   12u
+
+/* Create a session with a real platform surface and VK_KHR_swapchain enabled.
+ * The ordinary nar_vulkan_session_create() remains headless/offscreen. */
+NAR_EXPORT nar_vulkan_session *nar_vulkan_session_create_present(
+        const nar_vulkan_wsi_window *window, uint32_t width, uint32_t height);
+NAR_EXPORT int32_t nar_vulkan_wsi_supported(uint32_t platform, nar_vulkan_wsi_report *out_report);
+NAR_EXPORT int32_t nar_vulkan_wsi_report_session(
+        const nar_vulkan_session *session, nar_vulkan_wsi_report *out_report);
+NAR_EXPORT nar_vulkan_swapchain *nar_vulkan_swapchain_create(
+        nar_vulkan_session *session, uint32_t width, uint32_t height);
+NAR_EXPORT void nar_vulkan_swapchain_destroy(
+        nar_vulkan_session *session, nar_vulkan_swapchain *swapchain);
+NAR_EXPORT int32_t nar_vulkan_swapchain_recreate(
+        nar_vulkan_session *session, nar_vulkan_swapchain *swapchain,
+        uint32_t width, uint32_t height);
+NAR_EXPORT int32_t nar_vulkan_swapchain_acquire(
+        nar_vulkan_session *session, nar_vulkan_swapchain *swapchain,
+        uint32_t *out_image_index);
+NAR_EXPORT int32_t nar_vulkan_swapchain_present(
+        nar_vulkan_session *session, nar_vulkan_swapchain *swapchain,
+        uint32_t image_index);
+NAR_EXPORT uint64_t nar_vulkan_wsi_last_error(
+        const nar_vulkan_session *session, char *dst, uint64_t capacity);
+
 #define NAR_CAP_VULKAN_LOADER        (UINT64_C(1) << 0)
 #define NAR_CAP_SCENE_DATABASE       (UINT64_C(1) << 1)
 #define NAR_CAP_ARENA_ALLOCATOR      (UINT64_C(1) << 2)
@@ -67,6 +195,183 @@ NAR_EXPORT int32_t nar_vulkan_loader_available(void);
 NAR_EXPORT uint32_t nar_vulkan_loader_api_version(void);
 NAR_EXPORT uint32_t nar_vulkan_physical_device_count(void);
 NAR_EXPORT uint64_t nar_vulkan_loader_name(char *dst, uint64_t capacity);
+/* Internal companion entry point used by the session implementation. The returned address is
+ * owned by the dynamically loaded Vulkan loader and remains valid for the process lifetime. */
+NAR_EXPORT void *nar_vulkan_get_proc_address(const char *name);
+/* Capability discovery is advisory until a session is successfully created. */
+NAR_EXPORT int32_t nar_vulkan_query_capabilities(uint32_t mode, nar_vulkan_capability_report *out_report);
+NAR_EXPORT nar_vulkan_session *nar_vulkan_session_create(uint32_t mode, uint32_t width, uint32_t height);
+NAR_EXPORT void nar_vulkan_session_destroy(nar_vulkan_session *session);
+NAR_EXPORT uint32_t nar_vulkan_session_tier(const nar_vulkan_session *session);
+NAR_EXPORT uint64_t nar_vulkan_session_features(const nar_vulkan_session *session);
+NAR_EXPORT uint64_t nar_vulkan_session_last_error(const nar_vulkan_session *session, char *dst, uint64_t capacity);
+
+/*
+ * Minimal offscreen RGBA8 rendering ABI (BASIC tier).
+ *
+ * An offscreen image is a self-contained package: a device-local VkImage (color
+ * attachment), a host-visible readback buffer, a VkImageView, and a single-subpass
+ * VkRenderPass.  The caller does not interact with Vulkan objects directly; all
+ * Vulkan handles stay inside the opaque struct.
+ *
+ * Typical usage:
+ *
+ *   nar_vulkan_session *s = nar_vulkan_session_create(NAR_VULKAN_MODE_OFFSCREEN,w,h);
+ *   nar_vulkan_offscreen_image *img = nar_vulkan_offscreen_image_create(s, w, h);
+ *   // ... record draw calls between begin and end:
+ *   nar_vulkan_offscreen_render_begin(s, img, &cb_out);
+ *   // <record into cb_out>
+ *   nar_vulkan_offscreen_render_end(s, img);
+ *   // retrieve pixels:
+ *   nar_vulkan_offscreen_readback(s, img, pixel_buf, w * h * 4);
+ *   nar_vulkan_offscreen_image_destroy(s, img);
+ *   nar_vulkan_session_destroy(s);
+ *
+ * cb_out is a void* that holds the VkCommandBuffer; the caller may cast it to
+ * record additional draw commands between begin and end.  It becomes invalid
+ * after nar_vulkan_offscreen_render_end returns.
+ *
+ * pixel_buf receives tightly packed BGRA8_UNORM pixels (Vulkan canonical
+ * swapchain order); capacity must be at least width*height*4 bytes.
+ *
+ * All functions return 0 on success, a negative value on hard error, or
+ * NAR_OFFSCREEN_RESULT_NO_VULKAN (1) when no Vulkan loader/device is present.
+ */
+
+#define NAR_OFFSCREEN_RESULT_OK        0
+#define NAR_OFFSCREEN_RESULT_NO_VULKAN 1
+
+typedef struct nar_vulkan_offscreen_image nar_vulkan_offscreen_image;
+
+NAR_EXPORT nar_vulkan_offscreen_image *nar_vulkan_offscreen_image_create(
+        nar_vulkan_session *session, uint32_t width, uint32_t height);
+NAR_EXPORT void nar_vulkan_offscreen_image_destroy(
+        nar_vulkan_session *session, nar_vulkan_offscreen_image *image);
+
+/* Begin a render pass for one offscreen frame.  On success *out_command_buffer
+ * receives a VkCommandBuffer in the recording state with the render pass already
+ * started.  May be cast to void* for external draw-call recording. */
+NAR_EXPORT int32_t nar_vulkan_offscreen_render_begin(
+        nar_vulkan_session *session,
+        nar_vulkan_offscreen_image *image,
+        void **out_command_buffer);
+
+/* End the render pass, copy the image to the readback buffer, and submit.
+ * Does NOT wait for completion; call nar_vulkan_offscreen_readback for that. */
+NAR_EXPORT int32_t nar_vulkan_offscreen_render_end(
+        nar_vulkan_session *session,
+        nar_vulkan_offscreen_image *image);
+
+/* Wait for the last submission to finish, then copy pixels into dst.
+ * capacity must be >= width * height * 4.  Pixel format is VK_FORMAT_B8G8R8A8_UNORM. */
+NAR_EXPORT int32_t nar_vulkan_offscreen_readback(
+        nar_vulkan_session *session,
+        nar_vulkan_offscreen_image *image,
+        void *dst, uint64_t capacity);
+
+/*
+ * Minimal optional Vulkan buffer resource ABI.
+ *
+ * An opaque vertex buffer backed by host-visible (and host-coherent when
+ * available) device memory.  The caller never touches Vulkan handles directly;
+ * all VkBuffer/VkDeviceMemory ownership stays inside the opaque struct.
+ * Uploads map the backing memory, copy, and unmap.  No pipelines, command
+ * buffers, or draw binding are exposed by this ABI; it only owns the buffer
+ * resource.
+ *
+ * Typical usage:
+ *
+ *   nar_vulkan_session *s = nar_vulkan_session_create(NAR_VULKAN_MODE_OFFSCREEN,w,h);
+ *   nar_vulkan_buffer *vb = nar_vulkan_buffer_create(s, 4096);
+ *   nar_vulkan_buffer_upload(s, vb, vertex_data, sizeof(vertex_data));
+ *   nar_vulkan_buffer_destroy(s, vb);
+ *   nar_vulkan_session_destroy(s);
+ *
+ * Returns NAR_VULKAN_BUFFER_RESULT_OK on success, NAR_VULKAN_BUFFER_RESULT_NO_VULKAN
+ * when no Vulkan device is present, and a negative value on hard error.
+ */
+
+#define NAR_VULKAN_BUFFER_RESULT_OK        0
+#define NAR_VULKAN_BUFFER_RESULT_NO_VULKAN 1
+
+typedef struct nar_vulkan_buffer nar_vulkan_buffer;
+
+/* Create a host-visible vertex buffer of the given byte size.  Returns NULL
+ * on failure.  The buffer is backed by host-visible memory (preferring
+ * host-coherent) and is usable for CPU-side uploads via nar_vulkan_buffer_upload. */
+NAR_EXPORT nar_vulkan_buffer *nar_vulkan_buffer_create(
+        nar_vulkan_session *session, uint64_t size);
+
+/* Destroy a buffer and free its backing memory.  Safe to call with NULL. */
+NAR_EXPORT void nar_vulkan_buffer_destroy(
+        nar_vulkan_session *session, nar_vulkan_buffer *buffer);
+
+/* Copy host data into the buffer.  size must be <= the buffer capacity.
+ * Returns NAR_VULKAN_BUFFER_RESULT_OK on success, negative on error. */
+NAR_EXPORT int32_t nar_vulkan_buffer_upload(
+        nar_vulkan_session *session,
+        nar_vulkan_buffer *buffer,
+        const void *data, uint64_t size);
+
+/* Return the buffer capacity in bytes, or 0 when NULL. */
+NAR_EXPORT uint64_t nar_vulkan_buffer_size(const nar_vulkan_buffer *buffer);
+
+/*
+ * Shader module + graphics pipeline + command recording ABI.
+ *
+ * These symbols extend the offscreen rendering ABI toward a real first triangle.
+ * A shader module wraps a VkShaderModule created from SPIR-V bytecode.  A pipeline
+ * wraps a VkGraphicsPipeline built against the render pass owned by an offscreen
+ * image, with a fixed vertex layout ({vec2 position @ location 0, vec3 color @ location 1},
+ * 20-byte stride) sufficient for a conventional hello-triangle.  The command
+ * recording functions operate on the VkCommandBuffer returned by
+ * nar_vulkan_offscreen_render_begin.
+ *
+ * Returns 0 on success, NAR_VULKAN_PIPELINE_RESULT_NO_VULKAN (1) when no Vulkan
+ * loader/device is present, and a negative value on hard error.
+ */
+
+#define NAR_VULKAN_PIPELINE_RESULT_OK        0
+#define NAR_VULKAN_PIPELINE_RESULT_NO_VULKAN 1
+
+typedef struct nar_vulkan_shader_module nar_vulkan_shader_module;
+typedef struct nar_vulkan_pipeline nar_vulkan_pipeline;
+
+/* Create a shader module from SPIR-V bytecode.  code_size is in bytes and must
+ * be a multiple of 4.  Returns NULL on failure. */
+NAR_EXPORT nar_vulkan_shader_module *nar_vulkan_shader_module_create(
+        nar_vulkan_session *session, const void *code, uint64_t code_size);
+NAR_EXPORT void nar_vulkan_shader_module_destroy(
+        nar_vulkan_session *session, nar_vulkan_shader_module *module);
+
+/* Create a graphics pipeline for the render pass owned by the given offscreen
+ * image.  The vertex layout is fixed: one binding with 20-byte stride, two
+ * attributes (vec2 position at offset 0 / location 0, vec3 color at offset 8 /
+ * location 1).  Returns NULL on failure. */
+NAR_EXPORT nar_vulkan_pipeline *nar_vulkan_pipeline_create(
+        nar_vulkan_session *session,
+        nar_vulkan_offscreen_image *image,
+        nar_vulkan_shader_module *vertex_shader,
+        nar_vulkan_shader_module *fragment_shader);
+NAR_EXPORT void nar_vulkan_pipeline_destroy(
+        nar_vulkan_session *session, nar_vulkan_pipeline *pipeline);
+
+/* Record into the VkCommandBuffer returned by nar_vulkan_offscreen_render_begin.
+ * command_buffer is the opaque handle obtained from that call.  All return 0 on
+ * success, NAR_VULKAN_PIPELINE_RESULT_NO_VULKAN when Vulkan is unavailable, or a
+ * negative value on hard error. */
+NAR_EXPORT int32_t nar_vulkan_cmd_bind_pipeline(
+        nar_vulkan_session *session,
+        void *command_buffer,
+        nar_vulkan_pipeline *pipeline);
+NAR_EXPORT int32_t nar_vulkan_cmd_bind_vertex_buffer(
+        nar_vulkan_session *session,
+        void *command_buffer,
+        nar_vulkan_buffer *buffer, uint64_t offset);
+NAR_EXPORT int32_t nar_vulkan_cmd_draw(
+        nar_vulkan_session *session,
+        void *command_buffer,
+        uint32_t vertex_count, uint32_t first_vertex);
 
 /*
  * Mesa installation selection for Unix-family hosts.

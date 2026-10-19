@@ -1,0 +1,1 @@
+/usr/bin/cc -g -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/nativeaccelerator_renderer_tests.dir/tests/renderer_tests.c.o -o nativeaccelerator_renderer_tests  -Wl,-rpath,/Users/macbook/git/nativeacceleratorsmc/native/build libnativeaccelerator_renderer_vulkan.dylib

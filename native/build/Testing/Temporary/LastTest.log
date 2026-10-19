@@ -1,0 +1,44 @@
+Start testing: Oct 18 18:48 PDT
+----------------------------------------------------------
+1/2 Testing: nativeaccelerator-kernels
+1/2 Test: nativeaccelerator-kernels
+Command: "/Users/macbook/git/nativeacceleratorsmc/native/build/nativeaccelerator_kernel_tests"
+Directory: /Users/macbook/git/nativeacceleratorsmc/native/build
+"nativeaccelerator-kernels" start time: Oct 18 18:48 PDT
+Output:
+----------------------------------------------------------
+Native Accelerator kernel tests passed
+<end of output>
+Test time =   0.08 sec
+----------------------------------------------------------
+Test Passed.
+"nativeaccelerator-kernels" end time: Oct 18 18:48 PDT
+"nativeaccelerator-kernels" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/2 Testing: nativeaccelerator-renderer
+2/2 Test: nativeaccelerator-renderer
+Command: "/Users/macbook/git/nativeacceleratorsmc/native/build/nativeaccelerator_renderer_tests"
+Directory: /Users/macbook/git/nativeacceleratorsmc/native/build
+"nativeaccelerator-renderer" start time: Oct 18 18:48 PDT
+Output:
+----------------------------------------------------------
+PASS ICD list pinned when ul_tree has no loader
+RESULT: ALL PASS
+SKIP test_offscreen_image_lifecycle: no Vulkan loader
+SKIP test_buffer_lifecycle: no Vulkan loader
+PASS test_pipeline_null_safety
+SKIP test_pipeline_lifecycle: no Vulkan loader
+Renderer backend: native-scene+vulkan-unavailable [vulkan=unavailable minecraft=unknown (server-only)]
+Platform policy: vulkan=unavailable minecraft=unknown (server-only)
+Vulkan loader available: 0, api=0x00000000, device-evidence=0
+Native Accelerator renderer tests passed
+<end of output>
+Test time =   1.89 sec
+----------------------------------------------------------
+Test Passed.
+"nativeaccelerator-renderer" end time: Oct 18 18:48 PDT
+"nativeaccelerator-renderer" time elapsed: 00:00:01
+----------------------------------------------------------
+
+End testing: Oct 18 18:48 PDT
