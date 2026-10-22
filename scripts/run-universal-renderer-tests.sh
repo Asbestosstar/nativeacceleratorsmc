@@ -15,6 +15,28 @@ TESTS=(
   com.asbestosstar.nativeaccelerator.client.LegacyShadersLocaleTest
   com.asbestosstar.nativeaccelerator.renderer.universal.CapabilityPlannerTest
   com.asbestosstar.nativeaccelerator.renderer.VulkanBackendDiagnosticsTest
+  com.asbestosstar.nativeaccelerator.renderer.BackendAttemptDiagnosticsTest
+  com.asbestosstar.nativeaccelerator.platform.VulkanRuntimePathsTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanBackendPolicyTest
+  com.asbestosstar.nativeaccelerator.renderer.metal.GraphicsBackendOrderPolicyTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanAdapterReadinessTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanOwnershipTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanMemoryAllocatorTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanGpuMemoryAllocatorTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanGpuBufferLifecycleTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanDeviceStateTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanCommandStateTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanFormatTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanSamplerPolicyTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanResourceValidationTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanWsiDescriptorTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.SdlVulkanWsiBridgeTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanSwapchainPolicyTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanSwapchainSessionTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanQueueSelectionTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanQueueFamiliesTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanOwnedResourceTest
+  com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanDeviceInfoTest
   com.asbestosstar.nativeaccelerator.renderer.universal.GlslFrontendTest
   com.asbestosstar.nativeaccelerator.renderer.universal.IslFrontendTest
   com.asbestosstar.nativeaccelerator.renderer.universal.ShaderSourceSpecTest

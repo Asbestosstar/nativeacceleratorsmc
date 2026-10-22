@@ -1,10 +1,10 @@
-Start testing: Oct 18 18:48 PDT
+Start testing: Oct 21 15:24 PDT
 ----------------------------------------------------------
 1/2 Testing: nativeaccelerator-kernels
 1/2 Test: nativeaccelerator-kernels
 Command: "/Users/macbook/git/nativeacceleratorsmc/native/build/nativeaccelerator_kernel_tests"
 Directory: /Users/macbook/git/nativeacceleratorsmc/native/build
-"nativeaccelerator-kernels" start time: Oct 18 18:48 PDT
+"nativeaccelerator-kernels" start time: Oct 21 15:24 PDT
 Output:
 ----------------------------------------------------------
 Native Accelerator kernel tests passed
@@ -12,7 +12,7 @@ Native Accelerator kernel tests passed
 Test time =   0.08 sec
 ----------------------------------------------------------
 Test Passed.
-"nativeaccelerator-kernels" end time: Oct 18 18:48 PDT
+"nativeaccelerator-kernels" end time: Oct 21 15:24 PDT
 "nativeaccelerator-kernels" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -20,7 +20,7 @@ Test Passed.
 2/2 Test: nativeaccelerator-renderer
 Command: "/Users/macbook/git/nativeacceleratorsmc/native/build/nativeaccelerator_renderer_tests"
 Directory: /Users/macbook/git/nativeacceleratorsmc/native/build
-"nativeaccelerator-renderer" start time: Oct 18 18:48 PDT
+"nativeaccelerator-renderer" start time: Oct 21 15:24 PDT
 Output:
 ----------------------------------------------------------
 PASS ICD list pinned when ul_tree has no loader
@@ -34,11 +34,11 @@ Platform policy: vulkan=unavailable minecraft=unknown (server-only)
 Vulkan loader available: 0, api=0x00000000, device-evidence=0
 Native Accelerator renderer tests passed
 <end of output>
-Test time =   1.89 sec
+Test time =   1.84 sec
 ----------------------------------------------------------
 Test Passed.
-"nativeaccelerator-renderer" end time: Oct 18 18:48 PDT
+"nativeaccelerator-renderer" end time: Oct 21 15:24 PDT
 "nativeaccelerator-renderer" time elapsed: 00:00:01
 ----------------------------------------------------------
 
-End testing: Oct 18 18:48 PDT
+End testing: Oct 21 15:24 PDT

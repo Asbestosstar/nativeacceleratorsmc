@@ -12,12 +12,18 @@ MINECRAFT_CLIENT_URL=${MINECRAFT_CLIENT_URL:-https://piston-data.mojang.com/v1/o
 MINECRAFT_CLIENT_SHA1=${MINECRAFT_CLIENT_SHA1:-e877b6a07acd633fb3bb475002175cec036e7b87}
 MINECRAFT_CLIENT_JAR=${MINECRAFT_CLIENT_JAR:-$PROJECT_DIR/target/minecraft/client.jar}
 
-if ! command -v curl >/dev/null 2>&1; then
-    printf '%s\n' 'bootstrap-minecraft-maven.sh: curl is required' >&2
+. "$PROJECT_DIR/scripts/lib/platform.sh"
+
+if ! na_digest sha1 "$0" >/dev/null 2>&1; then
+    printf '%s\n' 'bootstrap-minecraft-maven.sh: a SHA-1 tool is required (sha1sum, shasum, digest, sha1, or openssl)' >&2
     exit 1
 fi
-if ! command -v shasum >/dev/null 2>&1; then
-    printf '%s\n' 'bootstrap-minecraft-maven.sh: shasum is required' >&2
+if command -v curl >/dev/null 2>&1; then
+    download() { curl --fail --location --retry 3 --silent --show-error "$1" -o "$2"; }
+elif command -v wget >/dev/null 2>&1; then
+    download() { wget -q -O "$2" "$1"; }
+else
+    printf '%s\n' 'bootstrap-minecraft-maven.sh: curl or wget is required' >&2
     exit 1
 fi
 if ! command -v "$MVN" >/dev/null 2>&1 && [ ! -x "$MVN" ]; then
@@ -30,7 +36,7 @@ mkdir -p "$MINECRAFT_DIR"
 
 verify_client() {
     [ -s "$MINECRAFT_CLIENT_JAR" ] || return 1
-    actual=$(shasum -a 1 "$MINECRAFT_CLIENT_JAR" | awk '{print $1}')
+    actual=$(na_digest sha1 "$MINECRAFT_CLIENT_JAR")
     [ "$actual" = "$MINECRAFT_CLIENT_SHA1" ]
 }
 
@@ -41,8 +47,8 @@ else
     trap 'rm -f "$temporary"' EXIT HUP INT TERM
     rm -f "$temporary"
     printf '[minecraft-bootstrap] downloading Minecraft %s\n' "$MINECRAFT_VERSION"
-    curl --fail --location --retry 3 --silent --show-error "$MINECRAFT_CLIENT_URL" -o "$temporary"
-    actual=$(shasum -a 1 "$temporary" | awk '{print $1}')
+    download "$MINECRAFT_CLIENT_URL" "$temporary"
+    actual=$(na_digest sha1 "$temporary")
     if [ "$actual" != "$MINECRAFT_CLIENT_SHA1" ]; then
         printf 'bootstrap-minecraft-maven.sh: SHA-1 mismatch for Minecraft client (expected %s, got %s)\n' \
             "$MINECRAFT_CLIENT_SHA1" "$actual" >&2

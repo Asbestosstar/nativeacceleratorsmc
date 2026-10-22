@@ -20,6 +20,8 @@ STAMP=$(date +%Y%m%d-%H%M%S)
 RESULTS="$RESULTS_DIR/startup-$STAMP.tsv"
 printf '# Native Accelerator nativeserver0 paired cold-start benchmark v1\n# seed=%s\n# java=%s\n# javaFlags=%s\n# timeoutSeconds=%s\nrun\tmode\twallReadyMs\tserverReadyMs\tserverInitMs\tstatus\tlog\n' "$SEED" "$JAVA_BIN" "$JAVA_FLAGS" "$TIMEOUT_SECONDS" > "$RESULTS"
 now_ms() { perl -MTime::HiRes=time -e 'printf "%.0f\n", time * 1000'; }
+pause_100ms() { perl -e 'select(undef, undef, undef, 0.1)'; }
+sequence() { awk -v n="$1" 'BEGIN { for (i = 1; i <= n; i++) print i }'; }
 metric() { [[ -f "$1" ]] || return 0; awk -F '\t' -v stage="$2" -v column="$3" '$1 == stage { print $column; exit }' "$1"; }
 run_one() {
   local mode index instance log report pid start now deadline wall ready init status
@@ -40,12 +42,12 @@ run_one() {
     if [[ "$mode" == baseline ]] && grep -q 'Done (.*)! For help, type "help"' "$log"; then status=ready; break; fi
     now=$(now_ms)
     if (( now >= deadline )); then break; fi
-    sleep 0.10
+    pause_100ms
   done
   now=$(now_ms)
   wall=$((now - start))
   kill -TERM "$pid" 2>/dev/null || true
-  for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.10; done
+  for _ in $(sequence 50); do kill -0 "$pid" 2>/dev/null || break; pause_100ms; done
   kill -KILL "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   ready=$(metric "$report" server.ready 5 || true)
@@ -54,6 +56,6 @@ run_one() {
   printf '%s run %s: %s (%s ms)\n' "$mode" "$index" "$status" "$wall"
   [[ "$status" == ready ]]
 }
-for run in $(seq 1 "$RUNS"); do run_one baseline "$run"; run_one native "$run"; done
+for run in $(sequence "$RUNS"); do run_one baseline "$run"; run_one native "$run"; done
 printf '\nResults: %s\n' "$RESULTS"
 awk -F '\t' 'NR > 6 && $6 == "ready" { sum[$2] += $3; n[$2]++ } END { for (mode in sum) printf "%s mean wall-ready: %.1f ms (%d successful runs)\n", mode, sum[mode] / n[mode], n[mode] }' "$RESULTS" | sort

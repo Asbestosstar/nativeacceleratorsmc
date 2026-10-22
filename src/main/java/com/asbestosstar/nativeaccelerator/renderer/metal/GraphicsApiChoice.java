@@ -10,6 +10,7 @@ public enum GraphicsApiChoice implements StringRepresentable {
     DEFAULT("default", "nativeaccelerator.graphicsApi.default"),
     OPENGL("opengl", "nativeaccelerator.graphicsApi.opengl"),
     VULKAN("vulkan", "nativeaccelerator.graphicsApi.vulkan"),
+    NATIVE_VULKAN("native-vulkan", "nativeaccelerator.graphicsApi.nativeVulkan"),
     METAL("metal", "nativeaccelerator.graphicsApi.metal");
 
     public static final Codec<GraphicsApiChoice> CODEC = StringRepresentable.fromEnum(GraphicsApiChoice::values);

@@ -4,7 +4,13 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-MC_DIR=${MC_DIR:-"$HOME/Library/Application Support/minecraft"}
+# shellcheck source=lib/platform.sh
+. "$PROJECT_DIR/scripts/lib/platform.sh"
+if [[ "$(na_os)" != macos ]]; then
+    echo "[shaderpack-smoke] SKIP: the Metal shaderpack smoke runs only on macOS (host: $(na_os))"
+    exit 0
+fi
+MC_DIR=${MC_DIR:-$(na_minecraft_home)}
 FIXTURE="$PROJECT_DIR/src/main/resources/nativeaccelerator/shaderpacks/fixture"
 PACK_ROOT="$MC_DIR/shaderpacks/nativeaccelerator-fixture"
 LOG=${SHADERPACK_SMOKE_LOG:-"$PROJECT_DIR/target/minecraft-shaderpack-smoke.log"}

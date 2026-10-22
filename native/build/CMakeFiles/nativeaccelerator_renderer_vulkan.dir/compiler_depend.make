@@ -850,6 +850,8 @@ CMakeFiles/nativeaccelerator_renderer_vulkan.dir/src/renderer/vulkan/vk_loader.c
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/_abort.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/_bounds.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/_ctermid.h \
+  /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/_printf.h \
+  /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/_stdio.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/_stdlib.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/_string.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/_strings.h \
@@ -885,11 +887,13 @@ CMakeFiles/nativeaccelerator_renderer_vulkan.dir/src/renderer/vulkan/vk_loader.c
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/malloc/_ptrcheck.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/poll.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/secure/_common.h \
+  /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/secure/_stdio.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/secure/_string.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/secure/_strings.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/signal.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/stddef.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/stdint.h \
+  /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/stdio.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/stdlib.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/string.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/__endian.h \
@@ -943,6 +947,7 @@ CMakeFiles/nativeaccelerator_renderer_vulkan.dir/src/renderer/vulkan/vk_loader.c
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/_types/_uintptr_t.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/_types/_useconds_t.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/_types/_uuid_t.h \
+  /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/_types/_va_list.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/_types/_wchar_t.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/appleapiopts.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/cdefs.h \
@@ -951,6 +956,7 @@ CMakeFiles/nativeaccelerator_renderer_vulkan.dir/src/renderer/vulkan/vk_loader.c
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/resource.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/select.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/signal.h \
+  /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/stdio.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/unistd.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/sys/wait.h \
   /Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/include/unistd.h \

@@ -1,6 +1,8 @@
 package com.asbestosstar.nativeaccelerator.renderer.metal;
 
 import com.asbestosstar.nativeaccelerator.config.NativeAcceleratorConfig;
+import com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanBackendPolicy;
+import com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanGpuBackend;
 
 import com.mojang.renderpearl.api.device.GpuBackend;
 import com.mojang.renderpearl.backend.opengl.GlBackend;
@@ -21,10 +23,10 @@ import java.util.List;
  *
  * <p>Minecraft 26.3's {@link PreferredGraphicsApi} enum only contains Default/OpenGL/Vulkan, but its
  * persisted option is just the string-valued {@code preferredGraphicsBackend} entry in {@code options.txt}.
- * Native Accelerator extends the option's codec so that {@code "metal"} round-trips through that same
- * Minecraft option file. Internally Metal is mirrored to {@code PreferredGraphicsApi.DEFAULT} only where
- * Mojang's three-value Java enum is unavoidable; {@link #selected} remains the authoritative four-value
- * choice used by backend startup.</p>
+ * Native Accelerator extends the option's codec so that {@code "metal"} and {@code "native-vulkan"}
+ * round-trip through that same Minecraft option file. Internally Metal and Native Vulkan are mirrored to
+ * {@code PreferredGraphicsApi.DEFAULT}/{@code VULKAN} only where Mojang's three-value Java enum is
+ * unavoidable; {@link #selected} remains the authoritative five-value choice used by backend startup.</p>
  */
 public final class GraphicsBackendPreference {
     private static final String OPTIONS_KEY = "preferredGraphicsBackend";
@@ -35,6 +37,7 @@ public final class GraphicsBackendPreference {
             System.getProperty("user.dir", "."), "etc", "nativeaccelerator-graphics-api.txt").toAbsolutePath();
     private static final Path METAL_PENDING_FILE = GAME_DIRECTORY.resolve(
             ".nativeaccelerator/renderer/metal-startup.pending");
+    private static volatile GraphicsApiChoice configuredChoice;
 
     /** null means options.txt had no renderer preference Native Accelerator could recognize. */
     private static volatile GraphicsApiChoice selected = loadStoredChoice();
@@ -56,12 +59,12 @@ public final class GraphicsBackendPreference {
                     + "'; using default");
             choice = GraphicsApiChoice.DEFAULT;
         }
-        selected = choice;
+        if (configuredChoice == null) selected = choice;
         if (startupChoice == null) startupChoice = choice;
         return vanillaMirror(choice);
     }
 
-    /** Encode the authoritative four-value choice back into Minecraft's normal options.txt entry. */
+    /** Encode the authoritative five-value choice back into Minecraft's normal options.txt entry. */
     public static synchronized String encodeMinecraftOption(PreferredGraphicsApi vanillaValue) {
         GraphicsApiChoice choice = selected;
         if (choice == null) choice = fromVanilla(vanillaValue);
@@ -106,10 +109,17 @@ public final class GraphicsBackendPreference {
         return now != start;
     }
 
-    /** Skip Minecraft's eager Vulkan probe whenever Native Accelerator owns a non-Vulkan startup path. */
+    /**
+     * Whether Minecraft's eager official-Vulkan probe should run before the candidate loop.
+     *
+     * <p>Native-first requests must reach their own candidate even when the official Vulkan probe
+     * reports unavailable. The official candidate still remains in the ordered list as a fallback.</p>
+     */
     public static boolean shouldRunVanillaVulkanProbe() {
         GraphicsApiChoice forced = forcedPropertyChoice();
-        if (forced != null) return forced == GraphicsApiChoice.VULKAN;
+        if (forced != null) return forced == GraphicsApiChoice.VULKAN
+                && !NativeVulkanBackendPolicy.explicitNativeFirst();
+        if (NativeVulkanBackendPolicy.explicitNativeFirst()) return false;
         GraphicsApiChoice choice = selected;
         if (choice == null) return true;
         return choice == GraphicsApiChoice.VULKAN;
@@ -123,6 +133,9 @@ public final class GraphicsBackendPreference {
         if (forced != null) {
             choice = forced;
             source = "system-property";
+        } else if (configuredChoice != null) {
+            choice = configuredChoice;
+            source = "config";
         } else if (selected != null) {
             choice = selected;
             source = "options.txt";
@@ -145,31 +158,105 @@ public final class GraphicsBackendPreference {
 
         MetalLogging.info("Graphics preference source=" + source
                 + " choice=" + choice.getSerializedName());
+        if (choice == GraphicsApiChoice.VULKAN || choice == GraphicsApiChoice.NATIVE_VULKAN) {
+            logVulkanRuntimePaths();
+        }
 
+        boolean nativeEligible = NativeVulkanBackendPolicy.shouldOffer();
+        boolean nativeFirst = NativeVulkanBackendPolicy.explicitNativeFirst();
         return switch (choice) {
             case METAL -> {
                 metalAttemptThisRun = true;
                 metalBackendCreatedThisRun = false;
                 markMetalPending();
                 MetalLogging.info("Graphics backend preference=metal; trying Metal then OpenGL fallback");
-                yield new GpuBackend[]{new MetalBackend(), new GlBackend()};
+                yield backendsFor(GraphicsBackendOrderPolicy.orderedCandidates(
+                        GraphicsBackendOrderPolicy.Selection.METAL,
+                        List.of(GraphicsBackendOrderPolicy.BackendKind.METAL,
+                                GraphicsBackendOrderPolicy.BackendKind.OPENGL),
+                        true, false, false));
             }
             case OPENGL -> {
                 MetalLogging.info("Graphics backend preference=opengl; Vulkan will not be probed");
-                yield new GpuBackend[]{new GlBackend()};
+                yield backendsFor(GraphicsBackendOrderPolicy.orderedCandidates(
+                        GraphicsBackendOrderPolicy.Selection.OPENGL,
+                        List.of(GraphicsBackendOrderPolicy.BackendKind.OPENGL),
+                        false, false, false));
             }
-            case VULKAN -> {
-                MetalLogging.info("Graphics backend preference=vulkan; trying Vulkan then OpenGL fallback");
-                yield new GpuBackend[]{new VulkanBackend(), new GlBackend()};
+            case VULKAN, NATIVE_VULKAN -> {
+                List<GraphicsBackendOrderPolicy.BackendKind> order =
+                        GraphicsBackendOrderPolicy.orderedCandidates(
+                                choice == GraphicsApiChoice.NATIVE_VULKAN
+                                        ? GraphicsBackendOrderPolicy.Selection.NATIVE_VULKAN
+                                        : GraphicsBackendOrderPolicy.Selection.VULKAN,
+                                List.of(GraphicsBackendOrderPolicy.BackendKind.VULKAN,
+                                        GraphicsBackendOrderPolicy.BackendKind.OPENGL),
+                                false, nativeEligible,
+                                choice == GraphicsApiChoice.NATIVE_VULKAN || nativeFirst);
+                MetalLogging.info("Graphics backend preference=" + choice.getSerializedName()
+                        + "; trying " + describe(order));
+                yield backendsFor(order);
             }
             case DEFAULT -> {
-                if (MetalBackend.shouldOffer()) {
-                    MetalLogging.info("Graphics backend preference=default; trying Metal, OpenGL, then Vulkan");
-                    yield new GpuBackend[]{new MetalBackend(), new GlBackend(), new VulkanBackend()};
-                }
-                yield vanillaSelection.getBackendsToTry();
+                boolean metalEligible = MetalBackend.shouldOffer();
+                List<GraphicsBackendOrderPolicy.BackendKind> vanilla = metalEligible
+                        ? List.of(GraphicsBackendOrderPolicy.BackendKind.METAL,
+                                GraphicsBackendOrderPolicy.BackendKind.OPENGL,
+                                GraphicsBackendOrderPolicy.BackendKind.VULKAN)
+                        : backendKinds(vanillaSelection.getBackendsToTry());
+                List<GraphicsBackendOrderPolicy.BackendKind> order =
+                        GraphicsBackendOrderPolicy.orderedCandidates(
+                                GraphicsBackendOrderPolicy.Selection.DEFAULT,
+                                vanilla, metalEligible, nativeEligible, nativeFirst);
+                MetalLogging.info("Graphics backend preference=default; trying " + describe(order));
+                yield backendsFor(order);
             }
         };
+    }
+
+    private static List<GraphicsBackendOrderPolicy.BackendKind> backendKinds(GpuBackend[] candidates) {
+        List<GraphicsBackendOrderPolicy.BackendKind> result = new ArrayList<>(candidates.length);
+        for (GpuBackend candidate : candidates) {
+            if (candidate instanceof MetalBackend) result.add(GraphicsBackendOrderPolicy.BackendKind.METAL);
+            else if (candidate instanceof GlBackend) result.add(GraphicsBackendOrderPolicy.BackendKind.OPENGL);
+            else if (candidate instanceof VulkanBackend) result.add(GraphicsBackendOrderPolicy.BackendKind.VULKAN);
+            else if (candidate instanceof NativeVulkanGpuBackend) {
+                result.add(GraphicsBackendOrderPolicy.BackendKind.NATIVE_VULKAN);
+            }
+        }
+        return result;
+    }
+
+    private static GpuBackend[] backendsFor(List<GraphicsBackendOrderPolicy.BackendKind> order) {
+        List<GpuBackend> result = new ArrayList<>(order.size());
+        for (GraphicsBackendOrderPolicy.BackendKind kind : order) {
+            result.add(switch (kind) {
+                case METAL -> new MetalBackend();
+                case OPENGL -> new GlBackend();
+                case VULKAN -> new VulkanBackend();
+                case NATIVE_VULKAN -> new NativeVulkanGpuBackend();
+            });
+        }
+        return result.toArray(GpuBackend[]::new);
+    }
+
+    private static String describe(List<GraphicsBackendOrderPolicy.BackendKind> order) {
+        return order.stream().map(Enum::name).map(String::toLowerCase).toList().toString();
+    }
+
+    private static void logVulkanRuntimePaths() {
+        String loader = System.getenv("MC_VULKAN_LIBRARY_NAME");
+        String loaderPath = System.getenv("VULKAN_LIBRARY_PATH");
+        String drivers = System.getenv("VK_DRIVER_FILES");
+        if (loader != null || loaderPath != null || drivers != null) {
+            MetalLogging.info("Vulkan runtime paths: loader=" + valueOrDefault(loader, "<unset>")
+                    + " path=" + valueOrDefault(loaderPath, "<unset>")
+                    + " drivers=" + valueOrDefault(drivers, "<unset>"));
+        }
+    }
+
+    private static String valueOrDefault(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     /** Called only after a backend successfully creates its GpuDevice. */
@@ -198,7 +285,7 @@ public final class GraphicsBackendPreference {
 
     public static PreferredGraphicsApi vanillaMirror(GraphicsApiChoice choice) {
         return switch (choice) {
-            case VULKAN -> PreferredGraphicsApi.VULKAN;
+            case VULKAN, NATIVE_VULKAN -> PreferredGraphicsApi.VULKAN;
             case OPENGL -> PreferredGraphicsApi.OPENGL;
             case METAL, DEFAULT -> PreferredGraphicsApi.DEFAULT;
         };
@@ -214,7 +301,10 @@ public final class GraphicsBackendPreference {
         String configured = NativeAcceleratorConfig.stringValue("renderer.backend", "inherit");
         if (!"inherit".equalsIgnoreCase(configured)) {
             GraphicsApiChoice configChoice = parseChoice(configured);
-            if (configChoice != null) return configChoice;
+            if (configChoice != null) {
+                configuredChoice = configChoice;
+                return configChoice;
+            }
         }
         GraphicsApiChoice optionsChoice = readOptionsChoice(OPTIONS_FILE);
         if (optionsChoice != null) return optionsChoice;

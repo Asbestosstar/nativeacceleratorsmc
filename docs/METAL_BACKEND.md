@@ -4,7 +4,7 @@ This tree adds an experimental Metal backend for Minecraft 26.3 RenderPearl usin
 
 ## Integration
 
-Native Accelerator exposes its own four-value Graphics API selector in `VideoSettingsScreen` and redirects Minecraft's constructor-time backend-list lookup. This avoids modifying the JVM's fixed `PreferredGraphicsApi` enum while still preserving explicit OpenGL and Vulkan selections and Minecraft's boot fallback behavior.
+Native Accelerator exposes its own five-value Graphics API selector in `VideoSettingsScreen` and redirects Minecraft's constructor-time backend-list lookup. This avoids modifying the JVM's fixed `PreferredGraphicsApi` enum while still preserving explicit OpenGL and Vulkan selections and Minecraft's boot fallback behavior.
 
 The backend implements the RenderPearl backend interfaces under:
 

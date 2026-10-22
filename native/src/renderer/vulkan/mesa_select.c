@@ -481,8 +481,13 @@ static void nar_mesa_add_defaults(size_t *count) {
 
 static size_t nar_mesa_collect(void) {
     size_t count = 0;
-    nar_mesa_add_colon_list(&count, getenv("NATIVE_ACCELERATOR_MESA_PREFIX"), 1);
-    nar_mesa_add_colon_list(&count, getenv("NATIVE_ACCELERATOR_MESA_SEARCH_PATH"), 1);
+    const char *explicit_prefix = getenv("NATIVE_ACCELERATOR_MESA_PREFIX");
+    const char *search_path = getenv("NATIVE_ACCELERATOR_MESA_SEARCH_PATH");
+#if defined(NAR_DEFAULT_MESA_PREFIX)
+    if (explicit_prefix == NULL || explicit_prefix[0] == '\0') explicit_prefix = NAR_DEFAULT_MESA_PREFIX;
+#endif
+    nar_mesa_add_colon_list(&count, explicit_prefix, 1);
+    nar_mesa_add_colon_list(&count, search_path, 1);
     nar_mesa_add_defaults(&count);
     return count;
 }

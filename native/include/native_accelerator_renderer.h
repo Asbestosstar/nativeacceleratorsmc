@@ -386,6 +386,9 @@ NAR_EXPORT int32_t nar_vulkan_cmd_draw(
  * Candidates come from NATIVE_ACCELERATOR_MESA_PREFIX and NATIVE_ACCELERATOR_MESA_SEARCH_PATH.
  * Both name roots, and a root contributes itself plus its immediate subdirectories; the prefixes
  * are examined first and the platform defaults follow. Nothing here is tied to a driver vendor.
+ * The Vulkan loader probe also honors NATIVE_ACCELERATOR_VULKAN_LIBRARY, MC_VULKAN_LIBRARY_NAME,
+ * and VULKAN_LIBRARY_PATH. The first two may identify a full library path; the latter is a directory
+ * used to construct absolute candidates and is never passed directly to dlopen.
  *
  * nar_vulkan_mesa_prefix() reports the selected tree; nar_vulkan_mesa_loader() reports the Vulkan
  * loader inside it when that tree ships one. Both return the string length and may be called with

@@ -1,6 +1,7 @@
 package com.asbestosstar.nativeaccelerator.platform;
 
 import java.util.Properties;
+import java.util.UUID;
 
 /**
  * Process-wide, classloader-independent run-once claim.
@@ -46,7 +47,7 @@ public final class ProcessInitializationGuard {
         // own monitor makes this safe even when two loaders call in from different threads at once.
         synchronized (properties) {
             if (properties.get(key) != null) return false;
-            properties.put(key, "claimed by " + claimerDescription());
+            properties.put(key, UUID.randomUUID() + " claimed by " + claimerDescription());
             return true;
         }
     }
@@ -64,12 +65,45 @@ public final class ProcessInitializationGuard {
         return value == null ? null : String.valueOf(value);
     }
 
-    /** Drop a claim. Intended for tests; production startup claims once and never releases. */
+    /** Drop a claim unconditionally. Intended for isolated tests and legacy callers. */
     public static void release(String key) {
         requireKey(key);
         Properties properties = System.getProperties();
         synchronized (properties) {
             properties.remove(key);
+        }
+    }
+
+    /**
+     * Drops a claim only when its value is still the value observed by the claimant.
+     *
+     * <p>This is the rollback primitive for speculative startup. A losing concurrent attempt must not
+     * be able to remove the winner's process-wide claim while it is unwinding.</p>
+     */
+    public static boolean releaseIfValue(String key, String expectedValue) {
+        requireKey(key);
+        if (expectedValue == null) return false;
+        Properties properties = System.getProperties();
+        synchronized (properties) {
+            Object current = properties.get(key);
+            if (!expectedValue.equals(current)) return false;
+            properties.remove(key);
+            return true;
+        }
+    }
+
+    /** Atomically converts an owned claim into a committed claim. */
+    public static boolean commitIfValue(String claimKey, String expectedValue, String committedKey) {
+        requireKey(claimKey);
+        requireKey(committedKey);
+        if (expectedValue == null) return false;
+        Properties properties = System.getProperties();
+        synchronized (properties) {
+            Object current = properties.get(claimKey);
+            if (!expectedValue.equals(current)) return false;
+            if (properties.get(committedKey) != null) return false;
+            properties.put(committedKey, "committed");
+            return true;
         }
     }
 

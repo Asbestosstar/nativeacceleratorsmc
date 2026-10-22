@@ -23,8 +23,8 @@ fi
 
 printf 'NATIVE-VULKAN: building companion tests\n'
 cmake -S "$ROOT/native" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON
-cmake --build "$BUILD_DIR" --parallel
-ctest --test-dir "$BUILD_DIR" --output-on-failure
+cmake --build "$BUILD_DIR" --config RelWithDebInfo --parallel
+(cd "$BUILD_DIR" && ctest -C RelWithDebInfo --output-on-failure)
 printf 'NATIVE-VULKAN: PASS (CPU/ABI/scene tests; no GPU execution claimed)\n'
 
 if [[ -n "${NATIVEACCELERATOR_NATIVE_VULKAN_PROBE_COMMAND:-}" ]]; then

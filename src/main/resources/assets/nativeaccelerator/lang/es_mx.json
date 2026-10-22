@@ -91,5 +91,6 @@
   "nativeaccelerator.shaderpacks.runtime.preparing": "Preparando %s…",
   "nativeaccelerator.shaderpacks.runtime.active": "Activo: %s",
   "nativeaccelerator.shaderpacks.runtime.failed": "No se pudo activar %s: %s",
-  "nativeaccelerator.shaderpacks.runtime.waiting": "%s está guardado. Se comprobará al iniciar el renderizador."
+  "nativeaccelerator.shaderpacks.runtime.waiting": "%s está guardado. Se comprobará al iniciar el renderizador.",
+  "nativeaccelerator.graphicsApi.nativeVulkan": "Vulkan nativo"
 }

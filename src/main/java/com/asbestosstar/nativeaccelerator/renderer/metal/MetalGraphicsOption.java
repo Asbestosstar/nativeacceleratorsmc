@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/** Creates Native Accelerator's four-value renderer option. */
+/** Creates Native Accelerator's five-value renderer option. */
 public final class MetalGraphicsOption {
     private static final Map<Options, OptionInstance<GraphicsApiChoice>> INSTANCES = new WeakHashMap<>();
     private static final Map<Options, Boolean> INSERTED_BY_DISPLAY_OPTIONS = new WeakHashMap<>();
@@ -36,7 +36,10 @@ public final class MetalGraphicsOption {
                 "nativeaccelerator.options.renderer",
                 OptionInstance.cachedConstantTooltip(GraphicsMenuText.component(options, "nativeaccelerator.options.renderer.tooltip")),
                 (caption, value) -> Options.genericValueLabel(caption, value.caption(options)),
-                new OptionInstance.Enum<>(List.of(GraphicsApiChoice.values()), GraphicsApiChoice.CODEC),
+                new OptionInstance.Enum<>(List.of(GraphicsApiChoice.DEFAULT,
+                        GraphicsApiChoice.OPENGL,
+                        GraphicsApiChoice.VULKAN,
+                        GraphicsApiChoice.METAL), GraphicsApiChoice.CODEC),
                 GraphicsApiChoice.CODEC,
                 initial,
                 value -> {

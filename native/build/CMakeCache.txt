@@ -232,8 +232,22 @@ MEMORYCHECK_SUPPRESSIONS_FILE:FILEPATH=
 //Path to a library.
 NA_MATH_LIBRARY:FILEPATH=/Library/Developer/CommandLineTools/SDKs/MacOSX26.2.sdk/usr/lib/libm.tbd
 
+//Preferred Mesa prefix for runtime ICD selection (optional)
+NA_MESA_PREFIX:PATH=
+
 //Keep native symbols visible for reference/debugging
 NA_REFERENCE_SYMBOLS:BOOL=OFF
+
+//Optional shaderc/glslc installation hint (not linked by the native
+// renderer)
+NA_SHADERC_ROOT:PATH=
+
+//Runtime Vulkan loader name or absolute path (optional)
+NA_VULKAN_LIBRARY_NAME:STRING=
+
+//Directory containing the runtime Vulkan loader (optional; no
+// link-time dependency)
+NA_VULKAN_LIBRARY_PATH:PATH=
 
 //Name of the computer/site where compile is being run
 SITE:STRING=MBP-de-macbook

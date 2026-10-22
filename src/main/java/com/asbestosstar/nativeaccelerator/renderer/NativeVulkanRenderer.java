@@ -92,6 +92,13 @@ public final class NativeVulkanRenderer {
             System.out.println("[Native Accelerator] Vulkan loader: " + loaded.vulkanLoaderName()
                     + " api=0x" + Integer.toHexString(loaded.vulkanLoaderApiVersion())
                     + " devices=" + deviceCount);
+            String mesaPrefix = loaded.vulkanMesaPrefix();
+            String mesaLoader = loaded.vulkanMesaLoader();
+            if (!mesaPrefix.isBlank() || !mesaLoader.isBlank()) {
+                System.out.println("[Native Accelerator] Vulkan Mesa selection: prefix="
+                        + (mesaPrefix.isBlank() ? "none" : mesaPrefix)
+                        + " loader=" + (mesaLoader.isBlank() ? "system" : mesaLoader));
+            }
             RendererPlatformPolicy.minecraftOptionsPath().ifPresent(
                     path -> System.out.println("[Native Accelerator] Minecraft options.txt: " + path));
             System.out.println("[Native Accelerator] Renderer capabilities: " + RendererCapabilities.names(loaded.capabilities()));

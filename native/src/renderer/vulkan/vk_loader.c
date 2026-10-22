@@ -1,6 +1,7 @@
 #include "native_accelerator_renderer.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 #if defined(_WIN32)
@@ -8,11 +9,13 @@
 typedef HMODULE nar_library_handle;
 static nar_library_handle nar_open_library(const char *name) { return LoadLibraryA(name); }
 static void *nar_find_symbol(nar_library_handle h, const char *name) { return (void *)GetProcAddress(h, name); }
+static void nar_close_library(nar_library_handle h) { if (h != NULL) FreeLibrary(h); }
 #else
 #include <dlfcn.h>
 typedef void *nar_library_handle;
 static nar_library_handle nar_open_library(const char *name) { return dlopen(name, RTLD_NOW | RTLD_LOCAL); }
 static void *nar_find_symbol(nar_library_handle h, const char *name) { return dlsym(h, name); }
+static void nar_close_library(nar_library_handle h) { if (h != NULL) dlclose(h); }
 #endif
 
 #if !defined(_WIN32)
@@ -87,14 +90,89 @@ static void nar_apply_moltenvk_defaults(void) {
 #endif
 }
 
+/* Add an explicit loader path without relying on the process' global library search path.
+ * Solaris launchers commonly provide VULKAN_LIBRARY_PATH while Minecraft also exposes the
+ * exact file as MC_VULKAN_LIBRARY_NAME.  dlopen() does not interpret the former as a search
+ * path, so the renderer must turn directory entries into absolute candidates itself. */
+static void nar_add_loader_candidate(const char **candidates, size_t *count, size_t capacity,
+                                     char storage[][1024], size_t *storage_count,
+                                     const char *value) {
+    if (candidates == NULL || count == NULL || storage == NULL || storage_count == NULL
+            || value == NULL || value[0] == '\0') return;
+    if (*count >= capacity || *storage_count >= 32u) return;
+    size_t length = strlen(value);
+    if (length >= 1024u) return;
+    memcpy(storage[*storage_count], value, length + 1u);
+    candidates[(*count)++] = storage[(*storage_count)++];
+}
+
+static void nar_add_loader_directory(const char **candidates, size_t *count, size_t capacity,
+                                     char storage[][1024], size_t *storage_count,
+                                     const char *directory) {
+    if (directory == NULL || directory[0] == '\0') return;
+    static const char *names[] = {
+        "libvulkan.so.1", "libvulkan.so", "libvulkan.sl", "libvulkan.sl.1", "libvulkan.a"
+    };
+    char path[1024];
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        int written = snprintf(path, sizeof(path), "%s/%s", directory, names[i]);
+        if (written <= 0 || (size_t)written >= sizeof(path)) continue;
+        nar_add_loader_candidate(candidates, count, capacity, storage, storage_count, path);
+    }
+}
+
 static void nar_probe_loader(void) {
     if (g_loader.initialized) return;
     g_loader.initialized = 1;
 
     const char *override_name = getenv("NATIVE_ACCELERATOR_VULKAN_LIBRARY");
-    const char *candidates[10];
+    const char *explicit_name = getenv("MC_VULKAN_LIBRARY_NAME");
+    const char *library_path = getenv("VULKAN_LIBRARY_PATH");
+#if defined(NAR_DEFAULT_VULKAN_LIBRARY_NAME)
+    if (explicit_name == NULL || explicit_name[0] == '\0') explicit_name = NAR_DEFAULT_VULKAN_LIBRARY_NAME;
+#endif
+#if defined(NAR_DEFAULT_VULKAN_LIBRARY_PATH)
+    if (library_path == NULL || library_path[0] == '\0') library_path = NAR_DEFAULT_VULKAN_LIBRARY_PATH;
+#endif
+    const char *candidates[32];
+    char candidate_storage[32][1024];
+    size_t candidate_storage_count = 0;
     size_t count = 0;
-    if (override_name != NULL && override_name[0] != '0') candidates[count++] = override_name;
+    if (override_name != NULL && override_name[0] != '\0') candidates[count++] = override_name;
+    /* MC_VULKAN_LIBRARY_NAME may be an absolute path. If it is only a basename, try it below
+     * the explicit VULKAN_LIBRARY_PATH before allowing the process default search path to win. */
+    if (explicit_name != NULL && explicit_name[0] == '/') candidates[count++] = explicit_name;
+
+    /* Unix-family hosts commonly carry several Mesa trees; select the newest Vulkan-enabled one
+     * before anything is opened so the system loader and VK_DRIVER_FILES agree on that tree. */
+    nar_vulkan_mesa_apply_selection();
+
+    nar_apply_moltenvk_defaults();
+
+    /* Explicit launcher paths take precedence over bare names. The generated absolute candidates
+     * are retained in local storage until the dlopen loop finishes. When a basename was supplied,
+     * try that exact requested file before generic loader names in the same directory. */
+    if (library_path != NULL && library_path[0] != '\0') {
+        if (explicit_name != NULL && explicit_name[0] != '\0' && explicit_name[0] != '/') {
+            char explicit_path[1024];
+            int written = snprintf(explicit_path, sizeof(explicit_path), "%s/%s", library_path, explicit_name);
+            if (written > 0 && (size_t)written < sizeof(explicit_path)) {
+                nar_add_loader_candidate(candidates, &count, sizeof(candidates) / sizeof(candidates[0]),
+                                         candidate_storage, &candidate_storage_count, explicit_path);
+            }
+        }
+        nar_add_loader_directory(candidates, &count, sizeof(candidates) / sizeof(candidates[0]),
+                                 candidate_storage, &candidate_storage_count, library_path);
+    } else if (explicit_name != NULL && explicit_name[0] != '\0' && explicit_name[0] != '/') {
+        candidates[count++] = explicit_name;
+    }
+
+    char mesa_loader[1024];
+    if (nar_vulkan_mesa_loader(mesa_loader, sizeof(mesa_loader)) > 0 && mesa_loader[0] != '\0'
+            && count < sizeof(candidates) / sizeof(candidates[0])) {
+        candidates[count++] = mesa_loader;
+    }
+
 #if defined(_WIN32)
     candidates[count++] = "vulkan-1.dll";
 #elif defined(__APPLE__)
@@ -111,22 +189,13 @@ static void nar_probe_loader(void) {
     candidates[count++] = "libvulkan.a";
 #endif
 
-    /* Unix-family hosts commonly carry several Mesa trees; select the newest Vulkan-enabled one
-     * before anything is opened so the system loader and VK_DRIVER_FILES agree on that tree. */
-    nar_vulkan_mesa_apply_selection();
-
-    nar_apply_moltenvk_defaults();
-
-    /* Prefer the Vulkan loader shipped inside the selected Mesa tree when it has one. */
-    char mesa_loader[256];
-    if (nar_vulkan_mesa_loader(mesa_loader, sizeof(mesa_loader)) > 0 && mesa_loader[0] != '\0') {
-        candidates[count++] = mesa_loader;
-    }
-
     for (size_t i = 0; i < count; ++i) {
         nar_library_handle h = nar_open_library(candidates[i]);
         if (h == 0) continue;
-        if (nar_find_symbol(h, "vkGetInstanceProcAddr") == NULL) continue;
+        if (nar_find_symbol(h, "vkGetInstanceProcAddr") == NULL) {
+            nar_close_library(h);
+            continue;
+        }
         g_loader.handle = h;
         strncpy(g_loader.name, candidates[i], sizeof(g_loader.name) - 1u);
         g_loader.name[sizeof(g_loader.name) - 1u] = '\0';

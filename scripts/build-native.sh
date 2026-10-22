@@ -52,9 +52,25 @@ OS=$(normalize_os)
 # local-symbol information. NA_REFERENCE_SYMBOLS disables hidden-by-default
 # visibility for this reference-friendly distribution build. Nothing here
 # invokes strip(1), and the original binary placed in the JAR stays unstripped.
-cmake -S "$PROJECT_DIR/native" -B "$BUILD_DIR" \
-    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-    -DNA_REFERENCE_SYMBOLS=ON
+# Vulkan remains a runtime-loaded optional dependency. Pass the launcher/installation hints through
+# CMake so Solaris builds report exactly which /opt tree they were configured against, without
+# introducing a link-time SDK dependency.
+# Build the argument vector without concatenating shell text. Vulkan installation paths may contain
+# spaces, and must remain one CMake argument all the way through configuration.
+set -- -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DNA_REFERENCE_SYMBOLS=ON
+if [ -n "${VULKAN_LIBRARY_PATH:-}" ]; then
+    set -- "$@" "-DNA_VULKAN_LIBRARY_PATH=$VULKAN_LIBRARY_PATH"
+fi
+if [ -n "${MC_VULKAN_LIBRARY_NAME:-}" ]; then
+    set -- "$@" "-DNA_VULKAN_LIBRARY_NAME=$MC_VULKAN_LIBRARY_NAME"
+fi
+if [ -n "${NATIVE_ACCELERATOR_MESA_PREFIX:-}" ]; then
+    set -- "$@" "-DNA_MESA_PREFIX=$NATIVE_ACCELERATOR_MESA_PREFIX"
+fi
+if [ -n "${SHADERC_ROOT:-}" ]; then
+    set -- "$@" "-DNA_SHADERC_ROOT=$SHADERC_ROOT"
+fi
+cmake -S "$PROJECT_DIR/native" -B "$BUILD_DIR" "$@"
 cmake --build "$BUILD_DIR" --config "$BUILD_TYPE" --parallel
 
 # CMake owns architecture/endian normalization. This avoids shell and Java disagreeing

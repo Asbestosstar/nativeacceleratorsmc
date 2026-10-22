@@ -1,13 +1,33 @@
 # Independent Vulkan renderer architecture
 
+## Complete RenderPearl adapter status
+
+The independent native Vulkan companion and Minecraft's RenderPearl device are separate ownership
+boundaries. `NativeVulkanUrdBackend` may create an offscreen native session for validation, but it is
+not a `GpuBackend` and must not be inserted into Minecraft's backend candidate list. The complete
+RenderPearl adapter is being implemented as an independently authored Java/LWJGL backend with real
+buffers, textures, samplers, command encoders, render passes, pipelines, synchronization, and platform
+surfaces. `renderer.nativeBackend=auto` is the default fallback policy: in an explicit Vulkan selection official
+Vulkan remains first, then Native Vulkan, then OpenGL, while the existing DEFAULT Metal/OpenGL/Vulkan
+ordering is preserved and Native Vulkan is inserted immediately after official Vulkan. Every Native Vulkan
+candidate remains behind the complete conformance gate. `off` disables the candidate; explicit `on`,
+`force`, or `native-vulkan` may request Native Vulkan first, still fail-closed.
+The adapter does not create a second Vulkan device beside RenderPearl's selected device. The current
+native companion is an independent URD/offscreen implementation and is not a Minecraft `GpuDevice`.
+macOS OCLP is not eligible until an actual Cocoa/SDL surface path is implemented and tested; a loader or
+physical-device probe alone is insufficient.
+
 Native Accelerator has two independent performance layers:
 
 1. the portable compute/game-engine acceleration ABI (`libnativeaccelerator`); and
 2. the optional Vulkan renderer (`libnativeaccelerator_renderer_vulkan`).
 
-The Vulkan renderer is selected by runtime capability, not an operating-system allow-list. If a target
-has a working Vulkan loader and physical device, it is eligible. If it does not, the ordinary game
-renderer remains available while the compute accelerator can still operate.
+The independent Vulkan companion is selected by runtime capability, not an operating-system allow-list.
+A working loader and physical device can make that companion diagnostically usable, but they do not make
+the Minecraft RenderPearl adapter eligible. The RenderPearl candidate additionally requires the complete
+resource, command, synchronization, real-window surface/swapchain, acquire-render-present, and teardown
+gates described above. If those gates are absent, the ordinary game renderer remains available while the
+compute accelerator can still operate.
 
 ## Vulkan startup diagnostics
 

@@ -20,7 +20,7 @@ typedef nar_vk_result (*nar_vk_create_xlib_surface_fn)(nar_vk_instance,
 
 /* VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR. Kept local so the optional
  * renderer does not need an installed Vulkan SDK or Xlib development headers. */
-#define NAR_VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR 1000006000
+#define NAR_VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR 1000004000
 #define NAR_VK_SUCCESS 0
 
 int nar_vulkan_wsi_create_platform_surface(

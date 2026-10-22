@@ -430,7 +430,7 @@ enum {
     NAR_VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO = 1,
     NAR_VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO = 2,
     NAR_VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO = 3,
-    NAR_VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO = 1000006000,
+    NAR_VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO = 1000004000,
     NAR_VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO = 1000001000,
     NAR_VK_STRUCTURE_TYPE_PRESENT_INFO = 1000001001,
     NAR_VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO = 39,
@@ -807,6 +807,7 @@ static int create_session(uint32_t mode, uint32_t width, uint32_t height,
     uint64_t optional_features = 0;
     int swapchain_extension_available = 0;
     for (uint32_t d = 0; d < device_count && selected == NULL; ++d) {
+        selected_present_family = UINT32_MAX;
         uint32_t family_count = 0;
         get_queue_properties(devices[d], &family_count, NULL);
         if (family_count == 0) continue;
@@ -1505,8 +1506,15 @@ int32_t nar_vulkan_swapchain_recreate(nar_vulkan_session *session, nar_vulkan_sw
     if (width == 0 || height == 0) return NAR_VULKAN_WSI_STATUS_PAUSED;
     nar_vulkan_swapchain *replacement = nar_vulkan_swapchain_create(session, width, height);
     if (replacement == NULL) return NAR_VULKAN_WSI_STATUS_ERROR;
+    if (session->swapchains != replacement) {
+        nar_vulkan_swapchain_destroy(session, replacement);
+        return NAR_VULKAN_WSI_STATUS_ERROR;
+    }
+    session->swapchains = replacement->next;
     struct nar_vulkan_swapchain old = *swapchain;
+    nar_vulkan_swapchain *list_next = swapchain->next;
     *swapchain = *replacement;
+    swapchain->next = list_next;
     free(replacement);
     destroy_swapchain_resources(session, &old, 0);
     return NAR_VULKAN_WSI_STATUS_OK;
@@ -1519,13 +1527,9 @@ int32_t nar_vulkan_swapchain_acquire(nar_vulkan_session *session, nar_vulkan_swa
     struct nar_vulkan_swapchain_frame *frame = &swapchain->frames[swapchain->frame_index];
     nar_vk_wait_for_fences_fn wait =
             (nar_vk_wait_for_fences_fn)dp(session->gdpa, session->device, "vkWaitForFences");
-    nar_vk_reset_fences_fn reset =
-            (nar_vk_reset_fences_fn)dp(session->gdpa, session->device, "vkResetFences");
-    if (wait == NULL || reset == NULL || frame->fence == NULL || frame->image_available == NULL)
+    if (wait == NULL || frame->fence == NULL || frame->image_available == NULL)
         return NAR_VULKAN_WSI_STATUS_UNSUPPORTED;
     nar_vk_result result = wait(session->device, 1, &frame->fence, 1, UINT64_MAX);
-    if (result != NAR_VK_SUCCESS) return wsi_status_from_vk(result);
-    result = reset(session->device, 1, &frame->fence);
     if (result != NAR_VK_SUCCESS) return wsi_status_from_vk(result);
     result = session->acquire_next_image(session->device, swapchain->handle, UINT64_MAX,
             frame->image_available, NULL, out_image_index);
@@ -1578,6 +1582,10 @@ int32_t nar_vulkan_swapchain_present(nar_vulkan_session *session, nar_vulkan_swa
     begin_render_pass(frame->command_buffer, &pass_info, NAR_VK_SUBPASS_CONTENTS_INLINE);
     end_render_pass(frame->command_buffer);
     if (end_command_buffer(frame->command_buffer) != NAR_VK_SUCCESS) return NAR_VULKAN_WSI_STATUS_ERROR;
+    nar_vk_reset_fences_fn reset_fences =
+            (nar_vk_reset_fences_fn)dp(session->gdpa, session->device, "vkResetFences");
+    if (reset_fences == NULL || reset_fences(session->device, 1, &frame->fence) != NAR_VK_SUCCESS)
+        return NAR_VULKAN_WSI_STATUS_ERROR;
     uint32_t wait_stage = NAR_VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     nar_vk_submit_info submit;
     memset(&submit, 0, sizeof(submit));

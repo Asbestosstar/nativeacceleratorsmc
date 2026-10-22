@@ -4,6 +4,7 @@
   "nativeaccelerator.graphicsApi.default": "Automatic",
   "nativeaccelerator.graphicsApi.opengl": "SGI OpenGL",
   "nativeaccelerator.graphicsApi.vulkan": "Vulkan",
+  "nativeaccelerator.graphicsApi.nativeVulkan": "Native Vulkan",
   "nativeaccelerator.graphicsApi.metal": "Metal",
   "nativeaccelerator.legacyShaders": "Legacy Shaders",
   "nativeaccelerator.shaderpacks": "Shaderpacks",

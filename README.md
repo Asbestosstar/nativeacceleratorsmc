@@ -181,7 +181,12 @@ A system can therefore use the compute accelerator without Vulkan.
 
 There is **no operating-system allow-list**.
 
-The renderer asks the platform whether a Vulkan loader can be opened and whether an actual physical device can be enumerated. If those checks succeed, that OS/architecture combination is eligible for the Vulkan path. Surface/window-system differences are isolated later at the platform boundary rather than leaking into scene, meshing, culling, or arena code.
+The independent companion asks the platform whether a Vulkan loader can be opened and whether an actual
+physical device can be enumerated. Those checks are diagnostic evidence for the companion, not eligibility
+for the Minecraft RenderPearl adapter. The adapter additionally requires real window-system surface,
+swapchain, acquire-render-present, resource, command, synchronization, pipeline, and teardown evidence.
+Surface/window-system differences remain isolated at the platform boundary rather than leaking into scene,
+meshing, culling, or arena code.
 
 This is important to the project because Vulkan-capable Unix systems outside the usual desktop Linux/Windows combinations should not be rejected merely because of their OS name.
 
@@ -515,9 +520,27 @@ The Java renderer bootstrap supports:
 -Dnativeaccelerator.renderer.vulkan=auto
 -Dnativeaccelerator.renderer.vulkan=off
 -Dnativeaccelerator.renderer.vulkan=required
+-Dnativeaccelerator.renderer.nativeBackend=auto
+-Dnativeaccelerator.renderer.nativeBackend=off
+-Dnativeaccelerator.renderer.nativeBackend=on
+-Dnativeaccelerator.renderer.nativeBackend=force
+-Dnativeaccelerator.renderer.nativeBackend=native-vulkan
 ```
 
-`auto` attempts the native Vulkan probe and falls back when the renderer cannot be used.
+`renderer.nativeBackend=auto` is the default fallback policy for the planned complete Java/LWJGL
+RenderPearl adapter. In an explicit Vulkan selection, official Vulkan is tried first, then Native Vulkan,
+then OpenGL, but only when the complete readiness gate passes. In Minecraft's existing `DEFAULT` path,
+the normal Metal/OpenGL/Vulkan ordering is preserved and Native Vulkan is inserted immediately after the
+official Vulkan candidate. It does **not** make the incomplete adapter usable: the existing native Vulkan
+companion is an independent URD/offscreen implementation, not a Minecraft `GpuDevice`, so it is never
+inserted into Minecraft's candidate array today. `off` disables the candidate; `on`, `force`, or
+`native-vulkan` may request Native Vulkan first, still subject to the same gate. Do not enable it expecting
+a fixed triangle or a fabricated device. Eligibility requires complete resource, command, pipeline,
+synchronization, surface, and real-WSI conformance. A full Minecraft rendering rewrite is intentionally
+not used because it would lose RenderPearl's compatibility and fallback lifecycle.
+
+`renderer.vulkan=auto` controls the existing native companion policy and does not claim that the complete
+RenderPearl adapter is available.
 
 Worker count:
 
@@ -532,6 +555,33 @@ A custom Vulkan-loader path/name can be supplied through:
 ```text
 NATIVE_ACCELERATOR_VULKAN_LIBRARY
 ```
+
+On Solaris and other Unix-family launchers, the Minecraft/LWJGL conventions are also honored:
+
+```text
+MC_VULKAN_LIBRARY_NAME=/opt/vulkan-1.3.250/lib/sparcv9/libvulkan.so.1
+VULKAN_LIBRARY_PATH=/opt/vulkan-1.3.250/lib/sparcv9
+VK_DRIVER_FILES=/opt/mesa-lavapipe-21.3.8/share/vulkan/icd.d/lvp_icd.sun4v.json
+# or let the selector discover the tree:
+NATIVE_ACCELERATOR_MESA_PREFIX=/opt/mesa-lavapipe-21.3.8
+NATIVE_ACCELERATOR_MESA_PIN=1
+```
+
+The precedence is explicit loader override, `MC_VULKAN_LIBRARY_NAME`, the directory/name pair,
+selected Mesa loader, then platform loader names. `VULKAN_LIBRARY_PATH` is a directory and is never
+passed directly to `dlopen`. These variables must be exported in the same process that launches Minecraft; setting them only during
+a separate Maven/native build does not affect runtime. Native Accelerator applies the Vulkan loader
+name/path to LWJGL before RenderPearl initializes, while the ICD variables remain consumed by the
+Vulkan loader. Existing `-Dorg.lwjgl.vulkan.libname`, `-Dorg.lwjgl.librarypath`, and
+`-Dorg.lwjgl.util.shaderc.libname` values always win. The LWJGL library-path property is process-wide;
+use it only when its contents are intentionally compatible with every LWJGL native module in the launch.
+`SHADERC_ROOT` is only an installation hint;
+use `MC_SHADERC_LIBRARY_NAME` or the LWJGL property when an exact compatible shaderc JNI library is
+available. The native CMake configure step accepts the same values as hints
+(`NA_VULKAN_LIBRARY_PATH`, `NA_VULKAN_LIBRARY_NAME`, `NA_MESA_PREFIX`) and an optional
+`SHADERC_ROOT`/`NA_SHADERC_ROOT` installation hint. The native renderer does not compile shaders or
+link shaderc; the Java RenderPearl GLSL frontend still requires the matching LWJGL shaderc native
+classifier. These hints do not add a link-time Vulkan or shaderc dependency.
 
 When RenderPearl rejects a Vulkan physical device, Native Accelerator logs the exact reason and
 missing requirements from RenderPearl's `BackendCreationException`, for example

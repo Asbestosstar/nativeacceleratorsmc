@@ -5,6 +5,45 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Runtime Vulkan paths are deliberately configuration hints rather than link-time dependencies.
+# The renderer resolves the loader with dlopen at runtime, but recording the Solaris installation
+# in the native configure step makes cross/native builds auditable and catches a mistyped path early.
+set(NA_VULKAN_LIBRARY_PATH "$ENV{VULKAN_LIBRARY_PATH}" CACHE PATH
+    "Directory containing the runtime Vulkan loader (optional; no link-time dependency)")
+set(NA_VULKAN_LIBRARY_NAME "$ENV{MC_VULKAN_LIBRARY_NAME}" CACHE STRING
+    "Runtime Vulkan loader name or absolute path (optional)")
+set(NA_MESA_PREFIX "$ENV{NATIVE_ACCELERATOR_MESA_PREFIX}" CACHE PATH
+    "Preferred Mesa prefix for runtime ICD selection (optional)")
+set(NA_SHADERC_ROOT "$ENV{SHADERC_ROOT}" CACHE PATH
+    "Optional shaderc/glslc installation hint (not linked by the native renderer)")
+# Do not infer deployment paths from directories on the build host. Cross-builds and reproducible
+# distribution builds must receive these values explicitly through the environment or -D cache entries;
+# runtime discovery remains available when they are omitted.
+if(NA_VULKAN_LIBRARY_PATH)
+    if(IS_DIRECTORY "${NA_VULKAN_LIBRARY_PATH}")
+        message(STATUS "Native Accelerator Vulkan loader path: ${NA_VULKAN_LIBRARY_PATH}")
+    else()
+        message(WARNING "Native Accelerator Vulkan loader path does not exist: ${NA_VULKAN_LIBRARY_PATH}")
+    endif()
+endif()
+if(NA_VULKAN_LIBRARY_NAME)
+    message(STATUS "Native Accelerator Vulkan loader name: ${NA_VULKAN_LIBRARY_NAME}")
+endif()
+if(NA_MESA_PREFIX)
+    if(IS_DIRECTORY "${NA_MESA_PREFIX}")
+        message(STATUS "Native Accelerator Mesa prefix: ${NA_MESA_PREFIX}")
+    else()
+        message(WARNING "Native Accelerator Mesa prefix does not exist: ${NA_MESA_PREFIX}")
+    endif()
+endif()
+if(NA_SHADERC_ROOT)
+    if(IS_DIRECTORY "${NA_SHADERC_ROOT}")
+        message(STATUS "Native Accelerator shaderc/glslc hint: ${NA_SHADERC_ROOT}")
+    else()
+        message(WARNING "Native Accelerator shaderc/glslc hint does not exist: ${NA_SHADERC_ROOT}")
+    endif()
+endif()
+
 # POSIX declarations (setenv, unsetenv, dlopen, pthread_*, dirent, mkdir...) are
 # only exposed once the matching feature-test macro is defined. Linux and macOS
 # default builds happen to expose them, but the strict toolchains used by the
@@ -86,6 +125,20 @@ target_include_directories(nativeaccelerator_renderer_vulkan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/common
 )
 target_compile_definitions(nativeaccelerator_renderer_vulkan PRIVATE ${NA_POSIX_DEFINITIONS})
+# When a deployment build is configured with explicit Solaris paths, retain those hints in the
+# companion as fallback defaults. Process environment variables still take precedence at runtime.
+if(NA_VULKAN_LIBRARY_PATH)
+    target_compile_definitions(nativeaccelerator_renderer_vulkan PRIVATE
+        NAR_DEFAULT_VULKAN_LIBRARY_PATH="${NA_VULKAN_LIBRARY_PATH}")
+endif()
+if(NA_VULKAN_LIBRARY_NAME)
+    target_compile_definitions(nativeaccelerator_renderer_vulkan PRIVATE
+        NAR_DEFAULT_VULKAN_LIBRARY_NAME="${NA_VULKAN_LIBRARY_NAME}")
+endif()
+if(NA_MESA_PREFIX)
+    target_compile_definitions(nativeaccelerator_renderer_vulkan PRIVATE
+        NAR_DEFAULT_MESA_PREFIX="${NA_MESA_PREFIX}")
+endif()
 
 if(WIN32)
     target_sources(nativeaccelerator_renderer_vulkan PRIVATE src/renderer/jobs/jobs_serial.c)

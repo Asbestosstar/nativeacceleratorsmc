@@ -23,6 +23,7 @@ public final class NativeAcceleratorConfig {
     public static final String FILE_NAME = "nativeaccelerator.properties";
     private static final String DEFAULTS_RESOURCE = "/nativeaccelerator-defaults.properties";
     private static final Object LOCK = new Object();
+    private static final Properties MIRRORED_SYSTEM_PROPERTIES = new Properties();
     private static final Properties DEFAULTS = loadDefaults();
     private static final Properties VALUES = loadAndMerge();
 
@@ -85,12 +86,10 @@ public final class NativeAcceleratorConfig {
             VALUES.setProperty(key, normalized);
             String systemKey = "nativeaccelerator." + key;
             if (normalized.isBlank()) {
-                // An explicit reset must clear the mirrored JVM value too; otherwise the old system
-                // property would continue to outrank the newly persisted empty file value.
-                System.clearProperty(systemKey);
-            } else if (!"auto".equalsIgnoreCase(normalized)
-                    && System.getProperty(systemKey) == null) {
-                System.setProperty(systemKey, normalized);
+                clearMirroredSystemProperty(systemKey);
+            } else if (isMirroredSystemProperty(systemKey)
+                    || (!"auto".equalsIgnoreCase(normalized) && System.getProperty(systemKey) == null)) {
+                setMirroredSystemProperty(systemKey, normalized);
             }
             saveLocked();
         }
@@ -139,7 +138,7 @@ public final class NativeAcceleratorConfig {
             String systemKey = "nativeaccelerator." + key;
             if (!configured.isBlank() && !"auto".equalsIgnoreCase(configured)
                     && System.getProperty(systemKey) == null) {
-                System.setProperty(systemKey, configured);
+                setMirroredSystemProperty(systemKey, configured);
             }
         }
 
@@ -152,6 +151,22 @@ public final class NativeAcceleratorConfig {
         }
         System.out.println("[Native Accelerator] Config: " + path);
         return values;
+    }
+
+    private static boolean isMirroredSystemProperty(String key) {
+        return MIRRORED_SYSTEM_PROPERTIES.containsKey(key);
+    }
+
+    private static void setMirroredSystemProperty(String key, String value) {
+        System.setProperty(key, value);
+        MIRRORED_SYSTEM_PROPERTIES.setProperty(key, value);
+    }
+
+    private static void clearMirroredSystemProperty(String key) {
+        if (MIRRORED_SYSTEM_PROPERTIES.containsKey(key)) {
+            System.clearProperty(key);
+            MIRRORED_SYSTEM_PROPERTIES.remove(key);
+        }
     }
 
     private static void saveLocked() {

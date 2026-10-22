@@ -6,6 +6,9 @@ set -euo pipefail
 : "${PROJECT_DIR:?run-harness-common.sh requires PROJECT_DIR}"
 : "${LABEL:?run-harness-common.sh requires LABEL}"
 
+# shellcheck source=lib/platform.sh
+source "$PROJECT_DIR/scripts/lib/platform.sh"
+
 MVN=${MVN:-mvn}
 BUILD_DIR=${BUILD_DIR:-$PROJECT_DIR/target}
 TEST_CLASSES=${TEST_CLASSES:-$BUILD_DIR/test-classes}
@@ -74,7 +77,7 @@ harness_classpath() {
     local resolved separator
     resolved=$(<"$CP_FILE")
     separator=':'
-    if [[ "${OS:-}" == "Windows_NT" || "$(uname -s 2>/dev/null || true)" == MINGW* || "$(uname -s 2>/dev/null || true)" == MSYS* ]]; then
+    if [[ "${OS:-}" == "Windows_NT" || "$(na_os)" == windows ]]; then
         separator=';'
     fi
     printf '%s%s%s' "$TEST_CLASSES" "$separator" "$MAIN_CLASSES"

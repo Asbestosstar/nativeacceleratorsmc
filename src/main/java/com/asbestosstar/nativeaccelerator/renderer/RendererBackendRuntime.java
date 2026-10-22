@@ -2,6 +2,7 @@ package com.asbestosstar.nativeaccelerator.renderer;
 
 import com.asbestosstar.nativeaccelerator.renderer.metal.MetalBackend;
 import com.asbestosstar.nativeaccelerator.renderer.universal.UniversalRendererRuntime;
+import com.asbestosstar.nativeaccelerator.renderer.vulkan.NativeVulkanGpuBackend;
 import com.mojang.renderpearl.api.device.GpuBackend;
 import com.mojang.renderpearl.api.device.GpuDevice;
 import com.mojang.renderpearl.backend.opengl.GlBackend;
@@ -66,7 +67,7 @@ public final class RendererBackendRuntime {
 
     private static Backend classify(GpuBackend backend) {
         if (backend instanceof MetalBackend) return Backend.METAL;
-        if (backend instanceof VulkanBackend) return Backend.VULKAN;
+        if (backend instanceof NativeVulkanGpuBackend || backend instanceof VulkanBackend) return Backend.VULKAN;
         if (backend instanceof GlBackend) return Backend.OPENGL;
         return Backend.OTHER;
     }

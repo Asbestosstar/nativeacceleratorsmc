@@ -37,6 +37,14 @@ public final class NativeAccelerator {
         // Bootstrap config before anything else so MetalDevice reads the correct mac1 flags
         // regardless of class-loading order.
         NativeAcceleratorConfig.bootstrapSystemProperties();
+        // RenderPearl/LWJGL resolves its Vulkan and shaderc libraries independently of the native
+        // companion. Apply launcher-provided paths before any client renderer class is initialized.
+        try {
+            com.asbestosstar.nativeaccelerator.platform.VulkanRuntimePaths.configure();
+        } catch (Throwable pathFailure) {
+            System.err.println("[Native Accelerator] Vulkan runtime path configuration skipped: "
+                    + pathFailure.getClass().getSimpleName() + ": " + pathFailure.getMessage());
+        }
 
         // Cross-loader guard: a copy of this class loaded by another classloader has its own INITIALIZED
         // flag, but the shared system properties let it see that initialization already ran in this JVM.

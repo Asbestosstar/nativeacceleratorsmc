@@ -7,6 +7,7 @@ import com.asbestosstar.nativeaccelerator.renderer.metal.GraphicsBackendPreferen
 import com.asbestosstar.nativeaccelerator.renderer.metal.MetalLogging;
 import com.asbestosstar.nativeaccelerator.renderer.RendererBackendRuntime;
 import com.asbestosstar.nativeaccelerator.renderer.VulkanBackendDiagnostics;
+import com.asbestosstar.nativeaccelerator.renderer.BackendAttemptDiagnostics;
 import com.mojang.renderpearl.api.device.BackendCreationException;
 import com.mojang.renderpearl.api.device.GpuBackend;
 import com.mojang.renderpearl.api.device.GpuDebugOptions;
@@ -108,6 +109,33 @@ public abstract class MinecraftStartupMixin {
     }
 
     /**
+     * Keep throwable failures from a backend's native loader inside Minecraft's normal candidate
+     * loop. RenderPearl's loop catches BackendCreationException, while SDL/GLX can expose a
+     * RuntimeException or LinkageError before createDevice is reached.
+     */
+    @Redirect(
+            method = "<init>(Lnet/minecraft/client/main/GameConfig;)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lcom/mojang/renderpearl/api/device/GpuBackend;loadLibrary()V"),
+            require = 0)
+    private void nativeaccelerator$loadGraphicsBackend(GpuBackend backend) throws BackendCreationException {
+        try {
+            backend.loadLibrary();
+        } catch (BackendCreationException failure) {
+            if (backend instanceof VulkanBackend) {
+                VulkanBackendDiagnostics.report("library load", failure);
+            } else {
+                BackendAttemptDiagnostics.report(backend, failure);
+            }
+            throw failure;
+        } catch (RuntimeException | LinkageError failure) {
+            BackendAttemptDiagnostics.report(backend, failure);
+            throw BackendAttemptDiagnostics.normalize(backend.getName(), failure);
+        }
+    }
+
+    /**
      * Observe the backend that actually succeeds. Vulkan-specific Native Accelerator services are
      * started only here, after a Vulkan GpuDevice exists. Metal/OpenGL never touch the Vulkan
      * companion library or Vulkan device probe.
@@ -126,8 +154,17 @@ public abstract class MinecraftStartupMixin {
         } catch (BackendCreationException failure) {
             if (backend instanceof VulkanBackend) {
                 VulkanBackendDiagnostics.report("device creation", failure);
+            } else {
+                BackendAttemptDiagnostics.report(backend, failure);
             }
             throw failure;
+        } catch (RuntimeException | LinkageError failure) {
+            // Minecraft's loop retries only BackendCreationException. SDL/GLX stacks can surface a
+            // throwable instead (for example GLXBadFBConfig); normalize that one backend attempt so
+            // the next candidate gets a chance. Fatal VM errors and native process aborts are not
+            // caught here and remain unrecoverable by design.
+            BackendAttemptDiagnostics.report(backend, failure);
+            throw BackendAttemptDiagnostics.normalize(backend.getName(), failure);
         }
         GraphicsBackendPreference.backendCreated(backend);
         RendererBackendRuntime.backendCreated(backend, device);
