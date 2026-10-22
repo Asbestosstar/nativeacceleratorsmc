@@ -68,6 +68,8 @@ na_arch_dir() {
                 echo x64
             fi ;;
         arm64|aarch64) echo arm64 ;;
+        sun4|sun4c|sun4m|sun4d|sun4u|sun4v|sparc64|sparcv9) echo sparc64 ;;
+        sparc|sparcv8|sparcv8plus) echo sparc ;;
         i386|i486|i586|i686) echo x86 ;;
         *) uname -m 2>/dev/null || echo unknown ;;
     esac
