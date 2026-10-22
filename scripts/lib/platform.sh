@@ -55,7 +55,22 @@ na_minecraft_natives_dir() {
         printf '%s\n' "$NATIVEACCELERATOR_MINECRAFT_NATIVES"
         return
     fi
-    printf '%s\n' "$(na_minecraft_home)/versions/fabric-loader-0.19.5-26.3/natives/lwjgl/3.4.3-snapshot/x64"
+    printf '%s\n' "$(na_minecraft_home)/versions/fabric-loader-0.19.5-26.3/natives/lwjgl/3.4.3-snapshot/$(na_arch_dir)"
+}
+
+# Prints the LWJGL natives architecture directory for this host.
+na_arch_dir() {
+    case "$(uname -m 2>/dev/null || echo unknown)" in
+        x86_64|amd64|i86pc)
+            if [ "$(uname -m)" = i86pc ] && command -v isainfo >/dev/null 2>&1 && [ "$(isainfo -n)" = i386 ]; then
+                echo x86
+            else
+                echo x64
+            fi ;;
+        arm64|aarch64) echo arm64 ;;
+        i386|i486|i586|i686) echo x86 ;;
+        *) uname -m 2>/dev/null || echo unknown ;;
+    esac
 }
 
 # Usage: na_find_native DIR STEM. Prints the first matching native library, or fails.
