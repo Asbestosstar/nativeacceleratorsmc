@@ -75,10 +75,19 @@ prepare_harness_classpath() {
 
 harness_classpath() {
     local resolved separator
-    resolved=$(<"$CP_FILE")
     separator=':'
     if [[ "${OS:-}" == "Windows_NT" || "$(na_os)" == windows ]]; then
         separator=';'
+    fi
+    # The installed game's LWJGL and support jars take precedence over Maven copies: the launcher's
+    # natives match those exact builds. Fall back to the Maven classpath only when they are unreadable.
+    resolved=
+    if command -v python3 >/dev/null 2>&1; then
+        resolved=$(python3 "$PROJECT_DIR/scripts/lib/minecraft_classpath.py" "$(na_minecraft_home)" "$CP_FILE" 2>/dev/null) || resolved=
+    fi
+    if [[ -z "$resolved" ]]; then
+        printf '[%s] Minecraft runtime libraries unavailable; using the Maven classpath\n' "$LABEL" >&2
+        resolved=$(<"$CP_FILE")
     fi
     printf '%s%s%s' "$TEST_CLASSES" "$separator" "$MAIN_CLASSES"
     if [[ -n "$resolved" ]]; then
