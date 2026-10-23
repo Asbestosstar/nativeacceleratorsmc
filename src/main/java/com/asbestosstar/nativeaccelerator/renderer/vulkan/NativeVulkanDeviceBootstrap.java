@@ -610,8 +610,18 @@ public final class NativeVulkanDeviceBootstrap implements AutoCloseable {
     }
 
     private static String safeMessage(Throwable failure) {
+        StringBuilder text = new StringBuilder(describe(failure));
+        Throwable cause = failure.getCause();
+        for (int depth = 0; cause != null && depth < 4; depth++, cause = cause.getCause()) {
+            text.append(" <- ").append(describe(cause));
+        }
+        return text.toString();
+    }
+
+    private static String describe(Throwable failure) {
         String message = failure.getMessage();
-        return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
+        String name = failure.getClass().getName();
+        return message == null || message.isBlank() ? name : name + ": " + message;
     }
 
     private static final class FloatBufferHolder {
