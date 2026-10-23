@@ -556,6 +556,9 @@ A custom Vulkan-loader path/name can be supplied through:
 NATIVE_ACCELERATOR_VULKAN_LIBRARY
 ```
 
+For the full Solaris/illumos build and test procedure, including every exported variable, see
+[`docs/SOLARIS_BUILD_AND_TEST.md`](docs/SOLARIS_BUILD_AND_TEST.md).
+
 On Solaris and other Unix-family launchers, the Minecraft/LWJGL conventions are also honored:
 
 ```text

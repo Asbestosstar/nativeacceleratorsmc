@@ -621,7 +621,9 @@ public final class NativeVulkanDeviceBootstrap implements AutoCloseable {
     private static String describe(Throwable failure) {
         String message = failure.getMessage();
         String name = failure.getClass().getName();
-        return message == null || message.isBlank() ? name : name + ": " + message;
+        String text = message == null || message.isBlank() ? name : name + ": " + message;
+        StackTraceElement[] frames = failure.getStackTrace();
+        return frames.length == 0 ? text : text + " at " + frames[0];
     }
 
     private static final class FloatBufferHolder {
