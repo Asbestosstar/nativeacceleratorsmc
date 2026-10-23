@@ -50,12 +50,25 @@ na_minecraft_home() {
     esac
 }
 
+# Prints the LWJGL natives directory for this host, searching the installed Minecraft versions in
+# preference order: the 26.3 Fabric profile, then the 26.3 vanilla profile, then any other profile.
 na_minecraft_natives_dir() {
     if [ -n "${NATIVEACCELERATOR_MINECRAFT_NATIVES:-}" ]; then
         printf '%s\n' "$NATIVEACCELERATOR_MINECRAFT_NATIVES"
         return
     fi
-    printf '%s\n' "$(na_minecraft_home)/versions/fabric-loader-0.19.5-26.3/natives/lwjgl/3.4.3-snapshot/$(na_arch_dir)"
+    na_natives_home=$(na_minecraft_home)
+    na_natives_arch=$(na_arch_dir)
+    for na_natives_candidate in \
+        "$na_natives_home"/versions/fabric-loader-0.19.5-26.3/natives/lwjgl/*/"$na_natives_arch" \
+        "$na_natives_home"/versions/26.3/natives/lwjgl/*/"$na_natives_arch" \
+        "$na_natives_home"/versions/*/natives/lwjgl/*/"$na_natives_arch"; do
+        if [ -d "$na_natives_candidate" ]; then
+            printf '%s\n' "$na_natives_candidate"
+            return
+        fi
+    done
+    printf '%s\n' "$na_natives_home/versions/fabric-loader-0.19.5-26.3/natives/lwjgl/3.4.3-snapshot/$na_natives_arch"
 }
 
 # Prints the LWJGL natives architecture directory for this host.
