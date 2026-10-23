@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Usage: minecraft_classpath.py MINECRAFT_HOME MAVEN_CLASSPATH_FILE
 # Prints the Minecraft 26.3 runtime jars followed by the Maven classpath entries whose artifact
-# the game does not already supply. The game's own LWJGL jars must win: the launcher's natives
-# were built for these exact jars, and a Maven copy with a different build breaks native binding.
+# the game does not already supply. LWJGL is always taken from the game install and Maven LWJGL jars
+# are never used, because the launcher's natives were built for the game's exact LWJGL build.
+# Exits 3 when the game install cannot provide LWJGL.
 import json
 import os
 import platform
@@ -12,6 +13,10 @@ import sys
 
 def artifact(jar):
     return re.sub(r"-\d[^/]*\.jar$", "", os.path.basename(jar))
+
+
+def is_lwjgl(jar):
+    return artifact(jar).startswith("lwjgl")
 
 
 def game_jars(home):
@@ -24,7 +29,7 @@ def game_jars(home):
     jars = {}
     for manifest in manifests:
         if not os.path.exists(manifest):
-            sys.exit(f"missing game manifest {manifest}")
+            raise RuntimeError(f"missing game manifest {manifest}")
         for lib in json.load(open(manifest)).get("libraries", []):
             parts = lib.get("name", "").split(":")
             if len(parts) < 3:
@@ -41,18 +46,28 @@ def game_jars(home):
                 path = f"{group}/{name}/{version}/{name}-{version}{suffix}.jar"
             full = os.path.join(libdir, path)
             if not os.path.exists(full):
-                sys.exit(f"missing game library {full}")
+                raise RuntimeError(f"missing game library {full}")
             jars[os.path.basename(full)] = full
     return list(jars.values())
 
 
 def main():
     home, cp_file = sys.argv[1], sys.argv[2]
-    game = game_jars(home)
+    try:
+        game = game_jars(home)
+    except RuntimeError as error:
+        print(f"minecraft_classpath: {error}", file=sys.stderr)
+        sys.exit(3)
+    lwjgl = [j for j in game if is_lwjgl(j)]
+    if not lwjgl:
+        print(f"minecraft_classpath: no Minecraft LWJGL jars found under {home}/libraries", file=sys.stderr)
+        sys.exit(3)
+    for jar in lwjgl:
+        print(f"minecraft_classpath: LWJGL {jar}", file=sys.stderr)
     game_artifacts = {artifact(j) for j in game}
     maven = [j for j in open(cp_file).read().strip().split(os.pathsep) if j]
-    entries = game + [j for j in maven if artifact(j) not in game_artifacts]
-    print(os.pathsep.join(entries))
+    kept = [j for j in maven if artifact(j) not in game_artifacts and not is_lwjgl(j)]
+    print(os.pathsep.join(game + kept))
 
 
 if __name__ == "__main__":

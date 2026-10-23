@@ -71,28 +71,29 @@ prepare_harness_classpath() {
         printf '%s: Maven did not create %s\n' "$LABEL" "$CP_FILE" >&2
         exit 1
     fi
-}
 
-harness_classpath() {
-    local resolved separator
+    # LWJGL always comes from the installed game (never Maven); see scripts/lib/minecraft_classpath.py.
+    local separator resolved
     separator=':'
     if [[ "${OS:-}" == "Windows_NT" || "$(na_os)" == windows ]]; then
         separator=';'
     fi
-    # The installed game's LWJGL and support jars take precedence over Maven copies: the launcher's
-    # natives match those exact builds. Fall back to the Maven classpath only when they are unreadable.
-    resolved=
-    if command -v python3 >/dev/null 2>&1; then
-        resolved=$(python3 "$PROJECT_DIR/scripts/lib/minecraft_classpath.py" "$(na_minecraft_home)" "$CP_FILE" 2>/dev/null) || resolved=
+    if ! command -v python3 >/dev/null 2>&1; then
+        printf '%s: python3 is required to select the Minecraft LWJGL jars\n' "$LABEL" >&2
+        exit 1
     fi
-    if [[ -z "$resolved" ]]; then
-        printf '[%s] Minecraft runtime libraries unavailable; using the Maven classpath\n' "$LABEL" >&2
-        resolved=$(<"$CP_FILE")
-    fi
-    printf '%s%s%s' "$TEST_CLASSES" "$separator" "$MAIN_CLASSES"
+    resolved=$(python3 "$PROJECT_DIR/scripts/lib/minecraft_classpath.py" "$(na_minecraft_home)" "$CP_FILE") || {
+        printf '%s: cannot build the runtime classpath from %s\n' "$LABEL" "$(na_minecraft_home)" >&2
+        exit 1
+    }
+    HARNESS_CLASSPATH="$TEST_CLASSES$separator$MAIN_CLASSES"
     if [[ -n "$resolved" ]]; then
-        printf '%s%s' "$separator" "$resolved"
+        HARNESS_CLASSPATH="$HARNESS_CLASSPATH$separator$resolved"
     fi
+}
+
+harness_classpath() {
+    printf '%s' "$HARNESS_CLASSPATH"
 }
 
 run_harness_main() {
